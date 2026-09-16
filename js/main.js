@@ -25,6 +25,7 @@ import './apps/bash/index.js';
 import './apps/monitor/index.js';
 import './apps/music/index.js';
 import './apps/weather/index.js';
+import './apps/memo/index.js';
 
 // ---- 系统对话框(sysdialog 应用)----
 import { dialogs } from './core/dialogs.js';

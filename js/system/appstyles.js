@@ -2,7 +2,7 @@
  * (零构建环境:ES Modules 无法直接 import CSS,此处统一注入 <link>) */
 const APP_STYLES = [
   'settings', 'localfiles', 'viewer', 'files', 'mail', 'todo', 'sms',
-  'notes', 'calc', 'terminal', 'monitor', 'music', 'browser', 'weather',
+  'notes', 'calc', 'terminal', 'monitor', 'music', 'browser', 'weather', 'memo',
 ];
 
 for (const name of APP_STYLES) {

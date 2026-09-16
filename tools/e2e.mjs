@@ -1237,13 +1237,7 @@ try {
     sentShown: document.querySelectorAll('.mail-item').length,
     sentTo: document.querySelector('.mail-item .m-from')?.textContent,
   }))()`);
-  await sleep(1500);
-    fitems: [...document.querySelectorAll('.win[data-app=files] .fitem')].map(f => f.textContent.trim()).slice(0, 8),
-    selected: document.querySelectorAll('.win[data-app=files] .fitem.selected').length,
-    toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent.slice(0, 30)),
-    zipInStore: WebOS.fs.exists('/home/documents/archive.zip'),
-    zipRaw: (WebOS.fs.read('/home/documents/archive.zip') || '').slice(0, 10),
-  }))()`)));   // 等自动回信
+  await sleep(1500);   // 等自动回信
   await ev(`[...document.querySelectorAll('.mail-side .list-item')].find(f => f.textContent.includes('收件箱')).click()`);
   await sleep(400);
   const m4 = await ev(`({
@@ -1692,6 +1686,87 @@ try {
   })()`);
   t('T31.1 ZIP 引擎解压(内容还原)', z2.entries?.some(e => e.includes('打包A.txt:文件A内容')), JSON.stringify(z2.entries));
   await c.shot('t31-zip');
+
+  /* ---- T32 备忘录(含加密) ---- */
+  await ev(`localStorage.removeItem('webos.memo.v1')`);
+  await c.goto('http://localhost:8080/');
+  await sleep(2000);
+  await ev(`WebOS.wm.open('memo')`);
+  await sleep(700);
+  const mm0 = await ev(`(() => ({
+    cards: document.querySelectorAll('.memo-card').length,
+    pinned: document.querySelector('.memo-pin.on') ? true : false,
+  }))()`);
+  t('T32 备忘录:种子卡片+置顶', mm0.cards === 2 && mm0.pinned, JSON.stringify(mm0));
+
+  // 新建加密备忘录(全 GUI,单 cell 内完成以保证时序)
+  await ev(`(async () => {
+    [...document.querySelectorAll('.win[data-app=memo] .btn')].find(b => b.textContent.includes('新建')).click();
+    await new Promise(r => setTimeout(r, 450));
+    const ed = document.querySelector('.memo-editor');
+    ed.querySelector('input.input').value = '银行账号';
+    ed.querySelector('textarea.input').value = '6222 0000 1234 5678';
+    ed.querySelectorAll('.memo-swatch')[3].click();
+    ed.querySelector('input[type=checkbox]').click();
+    [...ed.querySelectorAll('.btn')].find(b => b.textContent === '保存').click();
+    await new Promise(r => setTimeout(r, 550));
+    const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+    i.value = 'memo-pw';
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 800));
+  })()`);
+  await sleep(500);
+
+  // 点击解锁查看(密码) → 明文显示在对话框
+  await ev(`(() => {
+    const card = [...document.querySelectorAll('.memo-card')].find(c => c.textContent.includes('银行账号'));
+    [...card.querySelectorAll('.icon-btn')].find(b => b.title === '解锁查看').click();
+  })()`);
+  await sleep(450);
+  await ev(`(() => {
+    const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+    i.value = 'memo-pw';
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(500);
+  const mm2 = await ev(`(() => {
+    const box = [...document.querySelectorAll('.modal-box')].pop();
+    return { shown: box?.textContent.includes('6222 0000 1234 5678') };
+  })()`);
+  t('T32.2 密码解锁查看明文', mm2.shown === true, JSON.stringify(mm2));
+  await ev(`[...document.querySelectorAll('.modal-box .btn')].find(b => b.textContent === '关闭')?.click()`);
+  await sleep(300);
+
+  // 错误密码被拒
+  await ev(`(() => {
+    const card = [...document.querySelectorAll('.memo-card')].find(c => c.textContent.includes('银行账号'));
+    [...card.querySelectorAll('.icon-btn')].find(b => b.title === '解锁查看').click();
+  })()`);
+  await sleep(450);
+  await ev(`(() => {
+    const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+    i.value = 'wrong';
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(500);
+  const mm3 = await ev(`document.querySelector('.win[data-app=sysdialog] .dlg-msg')?.textContent.includes('密码错误')`);
+  t('T32.3 错误密码被拒', mm3 === true);
+  await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].pop().click()`);
+  await sleep(300);
+
+  // 搜索(明文卡)
+  await ev(`(() => {
+    const s = document.querySelector('.win[data-app=memo] .app-toolbar input');
+    s.value = '购物';
+    s.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(350);
+  const mm4 = await ev(`document.querySelectorAll('.memo-card').length`);
+  t('T32.4 搜索过滤', mm4 === 1, `cards=${mm4}`);
+
+  const errs32 = await ev(`window.__errs.length`);
+  t('T32.5 全程无错误', errs32 === 0, `errs=${errs32}`);
+  await c.shot('t32-memo');
 
   const errs31 = await ev(`window.__errs.length`);
   t('T31.3 全程无错误', errs31 === 0, `errs=${errs31}`);

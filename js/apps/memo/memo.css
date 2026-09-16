@@ -1,0 +1,24 @@
+/* 备忘录应用专属样式 */
+.memo-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px; padding: 14px; overflow-y: auto; align-content: start;
+}
+.memo-card {
+  border-radius: var(--radius); padding: 12px 13px;
+  display: flex; flex-direction: column; gap: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  transition: transform 0.12s, box-shadow 0.12s;
+  min-height: 130px;
+}
+.memo-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
+.memo-card-head { display: flex; align-items: center; gap: 6px; }
+.memo-title { flex: 1; font-weight: 700; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-pin { opacity: 0.45; }
+.memo-pin.on { color: var(--accent); opacity: 1; }
+.memo-pin.on svg { fill: var(--accent); }
+.memo-body { font-size: 12.5px; line-height: 1.6; color: var(--text); flex: 1; overflow: hidden; max-height: 90px; }
+.memo-foot { display: flex; align-items: center; gap: 2px; font-size: 11px; }
+.memo-foot .icon-btn { width: 24px; height: 24px; }
+.memo-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; outline: 1px solid var(--border); }
+.memo-swatch.on { border-color: var(--panel-solid); outline: 2px solid var(--accent); }
+.memo-editor { width: min(460px, 90%); }
