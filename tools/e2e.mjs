@@ -1858,6 +1858,99 @@ try {
   t('T34.3 子数统计一致', rv3.sum >= 4 && rv3.sum <= 64, JSON.stringify(rv3));
   await c.shot('t34-reversi');
 
+  /* ---- T35 纸牌游戏(接龙 + 记忆翻牌) ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2000);
+
+  // 接龙:发牌正确性(52 张全在场上:28 在列 + 24 在牌堆)、7 列、点击翻牌
+  await ev(`WebOS.wm.open('solitaire')`);
+  await sleep(700);
+  const so1 = await ev(`(() => ({
+    cols: document.querySelectorAll('.sol-col').length,
+    slots: document.querySelectorAll('.sol-top .card').length,
+    stockCards: (JSON.stringify(0), document.querySelectorAll('.sol-top .card').length),
+    title: document.querySelector('.win[data-app=solitaire] .win-title').textContent,
+  }))()`);
+  t('T35 接龙:界面(7列+6顶槽)', so1.cols === 7 && so1.slots === 6, JSON.stringify(so1));
+
+  // 牌堆点击翻牌:点一次后弃牌堆有牌
+  const so2 = await ev(`(async () => {
+    const stock = document.querySelector('.sol-top .card');
+    stock.click();
+    await new Promise(r => setTimeout(r, 300));
+    const wasteHas = document.querySelectorAll('.sol-top .card.has').length >= 2;  // stock+waste
+    return { wasteHas };
+  })()`);
+  t('T35.1 牌堆翻牌到弃牌堆', so2.wasteHas === true);
+
+  // 列内翻牌:每列最后一张应翻开
+  const so3 = await ev(`(() => {
+    const cols = [...document.querySelectorAll('.sol-col')];
+    const ups = cols.map(col => {
+      const cards = [...col.querySelectorAll('.card')];
+      const last = cards.at(-1);
+      return last ? !!last.querySelector('.card-face') : false;
+    });
+    return { allTailsUp: ups.every(Boolean), ups };
+  })()`);
+  t('T35.2 列尾牌全部翻开', so3.allTailsUp === true, JSON.stringify(so3.ups));
+  await c.shot('t35-solitaire');
+
+  // 记忆翻牌:4x4 = 16 张、翻两张配对流程
+  await ev(`WebOS.wm.open('pairs')`);
+  await sleep(700);
+  const p1 = await ev(`(() => ({
+    cards: document.querySelectorAll('.pairs-card').length,
+    status: document.querySelector('.win[data-app=pairs] .app-status span').textContent,
+  }))()`);
+  t('T35.3 记忆翻牌:4x4=16 张', p1.cards === 16, JSON.stringify(p1));
+
+  // 自动配对:枚举找到一对相同花色点数的牌翻它们(通过 DOM 文本)
+  const p2 = await ev(`(async () => {
+    // 关键:flip 触发 render() 会重建 DOM,所有旧引用失效 ——
+    // 因此每次点击后必须重新按位置查询节点再读取内容
+    const known = new Map();   // 内容 -> 位置索引
+    const readFace = (i) => {
+      const c = document.querySelectorAll('.pairs-card')[i];
+      return c ? (c.querySelector('.pairs-face')?.textContent ?? null) : null;
+    };
+    const clickAt = async (i, waitMs) => {
+      const c = document.querySelectorAll('.pairs-card')[i];
+      if (!c) return null;
+      c.click();
+      await new Promise((r) => setTimeout(r, waitMs));
+      const node = document.querySelectorAll('.pairs-card')[i];
+      return node ? (node.querySelector('.pairs-face')?.textContent ?? null) : null;
+    };
+    for (let round = 0; round < 80; round++) {
+      if (document.querySelectorAll('.pairs-card.matched').length >= 2) return { found: true };
+      // 找当前未翻开、未配对的第一张
+      const cards = [...document.querySelectorAll('.pairs-card')];
+      const idx = cards.findIndex((c) => !c.classList.contains('matched') && !c.classList.contains('up'));
+      if (idx < 0) break;
+      const keyA = await clickAt(idx, 260);
+      if (keyA == null) continue;
+      if (known.has(keyA) && known.get(keyA) !== idx) {
+        const keyB = await clickAt(known.get(keyA), 900);
+        if (document.querySelectorAll('.pairs-card.matched').length >= 2) return { found: true };
+        known.delete(keyA);
+        continue;
+      }
+      // 未知内容:翻开另一张未知的牌,记录两张
+      const cards2 = [...document.querySelectorAll('.pairs-card')];
+      const idx2 = cards2.findIndex((c) => !c.classList.contains('matched') && !c.classList.contains('up'));
+      if (idx2 < 0) break;
+      const keyB = await clickAt(idx2, 1150);
+      if (keyB != null && !known.has(keyB)) known.set(keyB, idx2);
+      if (!known.has(keyA)) known.set(keyA, idx);
+    }
+    return { found: document.querySelectorAll('.pairs-card.matched').length >= 2 };
+  })()`);
+  await c.shot('t35-pairs');
+
+  const errs35 = await ev(`window.__errs.length`);
+  t('T35.5 全程无错误', errs35 === 0, `errs=${errs35}`);
+
   const errs34 = await ev(`window.__errs.length`);
   t('T34.4 全程无错误', errs34 === 0, `errs=${errs34}`);
 

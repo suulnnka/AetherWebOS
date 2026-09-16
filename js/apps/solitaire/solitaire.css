@@ -1,0 +1,31 @@
+/* 接龙专属样式 */
+.sol-top { display: flex; gap: 10px; padding: 10px 12px; align-items: center; }
+.sol-cols { display: flex; gap: 10px; padding: 4px 12px 12px; flex: 1; align-items: flex-start; }
+.sol-col {
+  flex: 1; min-height: 220px; position: relative;
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding-top: 2px;
+}
+.sol-col .card { position: absolute; left: 2px; right: 2px; }
+
+.card {
+  width: 64px; height: 90px; flex: none;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: var(--panel-solid);
+  display: grid; place-items: center;
+  font-size: 15px; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition: transform 0.1s, box-shadow 0.1s;
+  position: relative;
+}
+.card:hover { transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25); }
+.card.sel { outline: 3px solid var(--accent); transform: translateY(-4px); }
+.card.down { background: linear-gradient(135deg, #2563eb, #1e3a8a); }
+.card-back { color: rgba(255, 255, 255, 0.65); font-size: 18px; }
+.card.slot { background: color-mix(in srgb, var(--accent) 7%, var(--panel-2)); border-style: dashed; }
+.card.slot .slot-mark { color: var(--text-2); font-size: 18px; }
+.card-face { display: flex; flex-direction: column; align-items: center; gap: 2px; line-height: 1.1; }
+.card-face b { font-size: 16px; }
+.card-face i { font-style: normal; font-size: 17px; }
+.card-face.red { color: #dc2626; }
+.sol-score { font-size: 13px; color: var(--text-2); }
