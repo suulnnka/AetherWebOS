@@ -1,0 +1,93 @@
+/* QQ 经典版专属样式(仿 2005 蓝白风) */
+.qq-app { background: #eef3fb; }
+
+/* 登录页 */
+.qq-login {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 20px;
+  background: linear-gradient(160deg, #cfe3ff 0%, #eef3fb 60%);
+}
+.qq-login h2 { color: #1d4ed8; font-size: 30px; letter-spacing: 6px; }
+.qq-login-tip { color: #7a94c4; font-size: 12px; margin-bottom: 8px; }
+.qq-logo {
+  width: 64px; height: 64px; border-radius: 16px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: #fff; display: grid; place-items: center;
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.4);
+}
+.qq-login label { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #4a5b7d; width: 240px; }
+.qq-login label .input { flex: 1; height: 30px; border-radius: 15px; padding: 0 12px; border: 1px solid #b9cbe8; background: #fff; }
+.qq-login-btn { width: 240px; height: 32px; border-radius: 16px; justify-content: center; }
+
+/* 主界面 */
+.qq-top {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #d6e6ff, #b8d2f5);
+  border-bottom: 1px solid #9db8dd;
+}
+.qq-avatar {
+  width: 38px; height: 38px; border-radius: 6px; flex: none;
+  display: grid; place-items: center; font-size: 20px;
+  background: #fff; border: 2px solid #9db8dd;
+}
+.qq-avatar.me { border-color: #43a047; }
+.qq-me-info b { font-size: 13.5px; }
+
+.qq-list { flex: 1; overflow-y: auto; padding: 6px; }
+.qq-group {
+  font-size: 12px; color: #4a5b7d; font-weight: 700;
+  padding: 7px 8px 4px; cursor: default;
+}
+.qq-friend {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  padding: 5px 8px; border-radius: 6px; text-align: left;
+}
+.qq-friend:hover { background: #dbe8fb; }
+.qq-friend .qq-avatar { width: 32px; height: 32px; font-size: 17px; }
+.qq-friend-name { flex: 1; font-size: 13px; }
+.qq-friend.offline { opacity: 0.5; filter: grayscale(0.9); }
+.qq-friend.online .qq-avatar { border-color: #43a047; }
+.qq-status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.qq-friend.online .qq-status-dot { background: #43a047; box-shadow: 0 0 4px #43a047; }
+.qq-friend.offline .qq-status-dot { background: #9aa5b5; }
+.qq-unread {
+  min-width: 17px; height: 17px; border-radius: 9px; flex: none;
+  background: #e53e3e; color: #fff; font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center; padding: 0 4px;
+}
+
+/* 聊天 */
+.qq-online-tag { font-size: 11.5px; color: #43a047; }
+.qq-msgs {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+  background: #f4f8ff;
+}
+.qq-msg { display: flex; gap: 8px; align-items: flex-start; }
+.qq-msg.out { flex-direction: row-reverse; }
+.qq-bubble {
+  max-width: 68%; padding: 8px 11px;
+  border-radius: 10px; font-size: 13px; line-height: 1.6;
+}
+.qq-bubble.in { background: #fff; border: 1px solid #cfdcf0; border-top-left-radius: 3px; }
+.qq-bubble.out { background: #d3e5ff; border: 1px solid #a8c8f0; border-top-right-radius: 3px; }
+.qq-bubble-time { font-size: 10px; color: #93a5c4; margin-top: 3px; text-align: right; }
+.qq-sys { text-align: center; color: #93a5c4; font-size: 11.5px; }
+.qq-typing { color: #93a5c4; font-size: 11.5px; font-style: italic; }
+
+.qq-compose { border-top: 1px solid #cfdcf0; background: #fff; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.qq-tools { display: flex; gap: 4px; position: relative; }
+.qq-emo {
+  position: absolute; bottom: 30px; left: 0; z-index: 30;
+  display: grid; grid-template-columns: repeat(6, 34px); gap: 2px;
+  background: #fff; border: 1px solid #cfdcf0; border-radius: 8px; padding: 5px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.qq-emo-item { font-size: 17px; padding: 3px; border-radius: 5px; }
+.qq-emo-item:hover { background: #e3edff; }
+.qq-input {
+  width: 100%; resize: none; border: 1px solid #cfdcf0; border-radius: 8px;
+  padding: 8px; font-size: 13px; font-family: inherit; outline: none; background: #fff;
+}
+.qq-input:focus { border-color: #5b9bd5; }

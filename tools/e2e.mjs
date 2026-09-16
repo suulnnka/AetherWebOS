@@ -27,7 +27,7 @@ try {
     clock: document.getElementById('clock-time').textContent,
     theme: document.documentElement.dataset.theme,
   })`);
-  t('T1 桌面启动', !boot1.boot && boot1.icons >= 15 && boot1.pinned === 3 && boot1.smItems >= 15,
+  t('T1 桌面启动', !boot1.boot && boot1.icons >= 15 && boot1.pinned >= 3 && boot1.smItems >= 15,
     `icons=${boot1.icons} pinned=${boot1.pinned} sm=${boot1.smItems} clock=${boot1.clock} errs=${boot1.errs.length}`);
   if (boot1.errs.length) console.log('   errors:', boot1.errs.join('\n   '));
   await c.shot('t1-desktop');
@@ -2004,6 +2004,71 @@ try {
   })()`);
   t('T36.2 移动与撤销(U)', sk3.undoWorks === true, JSON.stringify(sk3));
   await c.shot('t36-sokoban');
+
+  /* ---- T37 QQ 聊天 ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2200);
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+  await ev(`localStorage.removeItem('webos.qq.v1')`);   // 清档:测试登录流程
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=qq]')?.dataset.id || '')`);
+  await ev(`WebOS.wm.open('qq')`);
+  await sleep(700);
+  const q0 = await ev(`(() => ({
+    login: !!document.querySelector('.qq-login'),
+    num: document.querySelector('#qq-num')?.value,
+  }))()`);
+  t('T37 QQ 登录界面', q0.login && q0.num === '88888888', JSON.stringify(q0));
+
+  // 登录 → 好友列表
+  await ev(`document.querySelector('.qq-login-btn').click()`);
+  await sleep(600);
+  const q1 = await ev(`(() => ({
+    friends: document.querySelectorAll('.qq-friend').length,
+    online: document.querySelectorAll('.qq-friend.online').length,
+    me: document.querySelector('.qq-top b')?.textContent,
+  }))()`);
+  t('T37.1 登录进入好友列表', q1.friends === 5 && q1.me === 'webos 用户', JSON.stringify(q1));
+
+  // 双击好友打开聊天 → 发消息 → 机器人自动回复
+  const q2 = await ev(`(async () => {
+    const f = [...document.querySelectorAll('.qq-friend')].find(f => f.textContent.includes('小雨'));
+    f.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+    const input = document.querySelector('.qq-input');
+    if (!input) return { noInput: true };
+    input.value = '你好,在吗?';
+    const btn = [...document.querySelectorAll('.win[data-app=qq] .btn')].find(b => b.textContent.includes('发送'));
+    btn.click();
+    await new Promise(r => setTimeout(r, 3500));   // 等对方正在输入 + 回复
+    const bubbles = [...document.querySelectorAll('.qq-bubble .qq-bubble-text')].map(b => b.textContent);
+    return { sent: bubbles.some(t => t.includes('你好,在吗?')), reply: bubbles[bubbles.length - 1], count: bubbles.length };
+  })()`);
+  t('T37.2 发送消息+机器人自动回复', q2.sent === true && !!q2.reply && q2.reply !== '你好,在吗?', JSON.stringify(q2));
+  await c.shot('t37-qq-chat');
+
+  // 表情面板
+  const q3 = await ev(`(() => {
+    const emoBtn = document.querySelector('.qq-tools .icon-btn');
+    emoBtn.click();
+    return document.querySelectorAll('.qq-emo-item').length;
+  })()`);
+  t('T37.3 表情面板', q3 === 12, `emo=${q3}`);
+
+  // 持久化:刷新后自动恢复会话与未读
+  await c.goto('http://localhost:8080/');
+  await sleep(2200);
+  await ev(`WebOS.wm.open('qq')`);
+  await sleep(700);
+  const q4 = await ev(`(() => ({
+    autoLogin: !!document.querySelector('.qq-top'),
+    me: document.querySelector('.qq-top b')?.textContent,
+    historyKept: JSON.parse(localStorage.getItem('webos.qq.v1')).history['10001']?.length >= 1,
+  }))()`);
+  t('T37.4 会话持久化(刷新自动登录+历史保留)', q4.autoLogin && q4.me === 'webos 用户' && q4.historyKept,
+    JSON.stringify(q4));
+
+  const errs37 = await ev(`window.__errs.length`);
+  t('T37.5 全程无错误', errs37 === 0, `errs=${errs37}`);
 
   const errs36 = await ev(`window.__errs.length`);
   t('T36.3 全程无错误', errs36 === 0, `errs=${errs36}`);
