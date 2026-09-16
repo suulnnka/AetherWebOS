@@ -28,6 +28,7 @@ import './apps/weather/index.js';
 import './apps/memo/index.js';
 import './apps/minesweeper/index.js';
 import './apps/chess3d/index.js';
+import './apps/reversi/index.js';
 
 // ---- 系统对话框(sysdialog 应用)----
 import { dialogs } from './core/dialogs.js';

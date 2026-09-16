@@ -1814,6 +1814,53 @@ try {
   t('T33.2 3D 象棋:走子+AI 应答', g2.changed === true && g2.turn === 'w', JSON.stringify(g2));
   await c.shot('t33-chess');
 
+  /* ---- T34 黑白棋 ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2000);
+  await ev(`WebOS.wm.open('reversi')`);
+  await sleep(700);
+  const rv0 = await ev(`(() => ({
+    cells: document.querySelectorAll('.rv-cell').length,
+    black: document.querySelectorAll('.rv-piece.b').length,
+    white: document.querySelectorAll('.rv-piece.w').length,
+    hints: document.querySelectorAll('.rv-hint-dot').length,
+  }))()`);
+  t('T34 黑白棋:初始局面(4子+4合法步提示)', rv0.cells === 64 && rv0.black === 2 && rv0.white === 2 && rv0.hints === 4,
+    JSON.stringify(rv0));
+
+  // 引擎规则验证:开局黑方合法位 = d3(2,3) / c4(3,2) / f5(4,5) / e6(5,4)
+  const rv1 = await ev(`(() => {
+    const hints = [...document.querySelectorAll('.rv-cell.hint')].map(c => c.dataset.r + ',' + c.dataset.c).sort();
+    return { hints, ok: JSON.stringify(hints) === JSON.stringify(['2,3', '3,2', '4,5', '5,4']) };
+  })()`);
+  t('T34.1 合法走法位置正确(标准开局4位)', rv1.ok, JSON.stringify(rv1.hints));
+
+  // 玩家落子(第一个提示位)→ 翻子 → AI 应答 → 子数变化
+  const rv2 = await ev(`(async () => {
+    const before = document.querySelectorAll('.rv-piece').length;
+    const cell = document.querySelector('.rv-cell.hint');
+    const rc = cell.dataset.r + ',' + cell.dataset.c;
+    cell.click();
+    await new Promise(r => setTimeout(r, 900));   // 翻子 + AI
+    const n = document.querySelectorAll('.rv-piece').length;
+    const status = document.querySelector('.win[data-app=reversi] .app-status span').textContent;
+    return { rc, before, after: n, status };
+  })()`);
+  t('T34.2 落子翻子+AI 应答', rv2.after >= 4, JSON.stringify(rv2));
+
+  // 传回终端规则验证:用引擎API核对黑白棋终局计数(应用窗口直接读)
+  const rv3 = await ev(`(() => ({
+    black: document.querySelector('.win[data-app=reversi] .rv-count.black')?.textContent,
+    white: document.querySelector('.win[data-app=reversi] .rv-count.white')?.textContent,
+    sum: +(document.querySelector('.win[data-app=reversi] .rv-count.black')?.textContent || 0) +
+         +(document.querySelector('.win[data-app=reversi] .rv-count.white')?.textContent || 0),
+  }))()`);
+  t('T34.3 子数统计一致', rv3.sum >= 4 && rv3.sum <= 64, JSON.stringify(rv3));
+  await c.shot('t34-reversi');
+
+  const errs34 = await ev(`window.__errs.length`);
+  t('T34.4 全程无错误', errs34 === 0, `errs=${errs34}`);
+
   const errs33 = await ev(`window.__errs.length`);
   t('T33.3 全程无错误', errs33 === 0, `errs=${errs33}`);
 
