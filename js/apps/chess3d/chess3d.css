@@ -1,0 +1,9 @@
+/* 3D 国际象棋专属样式 */
+.chess3d-view {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #16203a, #0d1526);
+  overflow: hidden; position: relative;
+}
+.chess3d-view canvas { cursor: grab; touch-action: none; }
+.chess3d-view canvas:active { cursor: grabbing; }

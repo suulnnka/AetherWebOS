@@ -1,0 +1,35 @@
+/* 扫雷专属样式 */
+.ms-hud {
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  padding: 8px; border-bottom: 1px solid var(--border);
+}
+.ms-led {
+  font-family: var(--mono); font-size: 18px; font-weight: 700;
+  background: #1a0505; color: #ff3b30;
+  padding: 2px 8px; border-radius: 4px;
+  letter-spacing: 2px; box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.8);
+}
+.ms-face {
+  width: 40px; height: 40px; font-size: 22px;
+  border-radius: 8px; background: var(--hover);
+  border: 1px solid var(--border);
+}
+.ms-face:hover { background: color-mix(in srgb, var(--accent) 14%, var(--hover)); }
+.ms-body { display: grid; place-items: center; padding: 12px; overflow: auto; }
+.ms-board {
+  display: grid; gap: 2px;
+  background: var(--border); padding: 4px; border-radius: 6px;
+  --ms-cell: 26px;
+}
+.ms-cell {
+  width: var(--ms-cell); height: var(--ms-cell);
+  display: grid; place-items: center;
+  font-size: 13px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--text) 16%, var(--panel-2)), var(--panel-2));
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.ms-cell:hover { filter: brightness(1.12); }
+.ms-cell.open { background: var(--panel-2); box-shadow: none; }
+.ms-cell.mine { background: #fecaca; }
+.ms-cell.flag { cursor: default; }

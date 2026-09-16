@@ -27,7 +27,7 @@ try {
     clock: document.getElementById('clock-time').textContent,
     theme: document.documentElement.dataset.theme,
   })`);
-  t('T1 桌面启动', !boot1.boot && boot1.icons >= 7 && boot1.pinned === 3 && boot1.smItems >= 7,
+  t('T1 桌面启动', !boot1.boot && boot1.icons >= 15 && boot1.pinned === 3 && boot1.smItems >= 15,
     `icons=${boot1.icons} pinned=${boot1.pinned} sm=${boot1.smItems} clock=${boot1.clock} errs=${boot1.errs.length}`);
   if (boot1.errs.length) console.log('   errors:', boot1.errs.join('\n   '));
   await c.shot('t1-desktop');
@@ -1763,6 +1763,59 @@ try {
   await sleep(350);
   const mm4 = await ev(`document.querySelectorAll('.memo-card').length`);
   t('T32.4 搜索过滤', mm4 === 1, `cards=${mm4}`);
+
+  /* ---- T33 扫雷 + 3D 国际象棋 ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2000);
+
+  // 扫雷:棋盘规模 / 首击安全 / 右键插旗
+  await ev(`WebOS.wm.open('minesweeper')`);
+  await sleep(700);
+  const g1 = await ev(`(async () => {
+    const w = document.querySelector('.win[data-app=minesweeper]');
+    const cells = [...w.querySelectorAll('.ms-cell')];
+    const first = cells[40];   // 中心格
+    first.click();
+    await new Promise(r => setTimeout(r, 250));
+    const opened = w.querySelectorAll('.ms-cell.open').length;
+    // 首击安全:翻开的都不是雷(数字格即非雷)
+    const safe = !w.querySelector('.ms-cell.mine');
+    // 右键插旗
+    const target = [...w.querySelectorAll('.ms-cell:not(.open)')][0];
+    target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const flag = w.querySelectorAll('.ms-cell.flag').length;
+    return { total: cells.length, opened, safe, flag };
+  })()`);
+  t('T33 扫雷:9x9=81格+首击安全+展开', g1.total === 81 && g1.safe && g1.opened > 1, JSON.stringify(g1));
+  t('T33.1 右键插旗', g1.flag === 1);
+  await c.shot('t33-minesweeper');
+
+  // 3D 象棋:等 Three.js CDN 模块加载完成(registry 出现 chess3d)再打开
+  for (let i = 0; i < 20 && !(await ev(`!!WebOS.apps.list().find(a => a.id === 'chess3d')`)); i++) await sleep(500);
+  await ev(`WebOS.wm.open('chess3d')`);
+  await sleep(2500);
+  const g2 = await ev(`(async () => {
+    const w = document.querySelector('.win[data-app=chess3d]');
+    const canvas = w.querySelector('canvas');
+    if (!canvas) return { noCanvas: true };
+    if (!window.__chess) return { noHook: true, hasErr: (w.querySelector('.win-error')?.textContent || '').slice(0, 120) };
+    const before = JSON.stringify(window.__chess.board());
+    window.__chess.click(6, 4);   // 选中 e2 兵
+    await new Promise(r => setTimeout(r, 250));
+    window.__chess.click(4, 4);   // 走 e2-e4
+    await new Promise(r => setTimeout(r, 1300));   // 等 AI 应答
+    return {
+      changed: JSON.stringify(window.__chess.board()) !== before,
+      turn: window.__chess.turn(),
+      status: w.querySelector('.app-status span').textContent,
+    };
+  })()`);
+  t('T33.2 3D 象棋:走子+AI 应答', g2.changed === true && g2.turn === 'w', JSON.stringify(g2));
+  await c.shot('t33-chess');
+
+  const errs33 = await ev(`window.__errs.length`);
+  t('T33.3 全程无错误', errs33 === 0, `errs=${errs33}`);
 
   const errs32 = await ev(`window.__errs.length`);
   t('T32.5 全程无错误', errs32 === 0, `errs=${errs32}`);

@@ -3,6 +3,7 @@
 const APP_STYLES = [
   'settings', 'localfiles', 'viewer', 'files', 'mail', 'todo', 'sms',
   'notes', 'calc', 'terminal', 'monitor', 'music', 'browser', 'weather', 'memo',
+  'minesweeper', 'chess3d',
 ];
 
 for (const name of APP_STYLES) {
