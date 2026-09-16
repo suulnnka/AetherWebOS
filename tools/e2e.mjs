@@ -1454,6 +1454,104 @@ try {
 
   const errs28 = await ev(`window.__errs.length`);
   t('T28.6 全程无错误', errs28 === 0, `errs=${errs28}`);
+
+  /* ---- T29 文件加密(AES-GCM) ---- */
+  await ev(`WebOS.fs.write('/home/documents/机密.txt', '绝密内容 top-secret')`);
+  await ev(`WebOS.wm.open('files')`);
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(700);
+
+  // 终端加密
+  await termType('crypt encrypt /home/documents/机密.txt s3cret');
+  await sleep(700);
+  const c1 = await ev(`(() => ({
+    locked: WebOS.fs.read('/home/documents/机密.txt').startsWith('WEOS1:'),
+    plainLeak: WebOS.fs.read('/home/documents/机密.txt').includes('top-secret'),
+  }))()`);
+  t('T29 终端加密(密文落地,明文不可见)', c1.locked && !c1.plainLeak, JSON.stringify(c1));
+  await termType('crypt islocked /home/documents/机密.txt');
+  const c2 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('已加密')`);
+  t('T29.1 islocked 查询', c2 === true);
+
+  // 错误密码解密被拒
+  await termType('crypt decrypt /home/documents/机密.txt wrongpw');
+  await sleep(600);
+  const c3 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('密码错误')`);
+  t('T29.2 错误密码被拒', c3 === true);
+
+  // 正确密码解密 → 原文还原
+  await termType('crypt decrypt /home/documents/机密.txt s3cret');
+  await sleep(600);
+  const c4 = await ev(`WebOS.fs.read('/home/documents/机密.txt')`);
+  t('T29.3 正确密码解密还原', c4 === '绝密内容 top-secret', JSON.stringify(c4));
+
+  // 文件管家 GUI:重新加密(对话框双密码)→ 锁图标 → 双击解锁预览
+  await sleep(500);   // 等待 fs-changed 刷新文件列表
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    const item = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('机密.txt'));
+    if (item) return;   // 已在 documents 视图
+    // 否则进入 documents 目录
+    const doc = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('documents'));
+    doc.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(600);   // 等目录渲染
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    const item = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('机密.txt'));
+    if (!item) throw new Error('列表中无 机密.txt: ' + [...w.querySelectorAll('.fitem')].map(f => f.textContent).join(','));
+  })()`);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    const item = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('机密.txt'));
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
+  })()`);
+  await sleep(300);
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(i => i.textContent.includes('加密…')).click()`);
+  await sleep(500);
+  await ev(`(() => { document.querySelector('.win[data-app=sysdialog] .dlg-input').value = 'pw123'; document.querySelector('.win[data-app=sysdialog] .dlg-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+  await sleep(500);
+  await ev(`(() => { const i = document.querySelector('.win[data-app=sysdialog] .dlg-input'); i.value = 'pw123'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+  await sleep(700);
+  const c5 = await ev(`(() => ({
+    lockedInStore: WebOS.fs.read('/home/documents/机密.txt').startsWith('WEOS1:'),
+    lockIcon: [...document.querySelectorAll('.win[data-app=files] .fitem')].find(f => f.textContent.includes('🔒')) !== undefined,
+  }))()`);
+  t('T29.4 GUI 加密(双密码对话框+锁图标)', c5.lockedInStore && c5.lockIcon, JSON.stringify(c5));
+  await c.shot('t29-encrypt');
+
+  // 双击加密文件 → 密码解锁 → 预览器显示明文
+  await ev(`(() => {
+    const item = [...document.querySelectorAll('.win[data-app=files] .fitem')].find(f => f.textContent.includes('机密.txt'));
+    item.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(500);
+  await ev(`(() => { const i = document.querySelector('.win[data-app=sysdialog] .dlg-input'); i.value = 'pw123'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+  await sleep(700);
+  const c6 = await ev(`(() => ({
+    preview: [...document.querySelectorAll('.win[data-app=viewer] .viewer-pre')].pop()?.textContent,
+    notPersisted: !WebOS.fs.read('/home/documents/机密.txt').includes('top-secret'),
+  }))()`);
+  t('T29.5 双击解锁只读预览(明文不落盘)', c6.preview === '绝密内容 top-secret' && c6.notPersisted, JSON.stringify(c6));
+  await c.shot('t29-unlock-preview');
+
+  // bash cat 加密文件被拒
+  await ev(`WebOS.wm.open('bash')`);
+  await sleep(600);
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=bash] .term-in input');
+    inp.value = 'cat /home/documents/机密.txt';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(400);
+  const c7 = await ev(`document.querySelector('.win[data-app=bash] .term-out').textContent.includes('是加密文件')`);
+  t('T29.6 Bash cat 拒绝加密文件', c7 === true);
+
+  // 解密还原(终端)并清理
+  await termType('crypt decrypt /home/documents/机密.txt pw123');
+  await sleep(600);
+  const c8 = await ev(`({ restored: WebOS.fs.read('/home/documents/机密.txt') === '绝密内容 top-secret', errs: window.__errs.length })`);
+  t('T29.7 解密还原+无错误', c8.restored && c8.errs === 0, JSON.stringify(c8));
 } catch (e) {
   t('执行中断', false, String(e.message || e));
 } finally {

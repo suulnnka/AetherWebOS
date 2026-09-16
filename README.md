@@ -65,6 +65,7 @@ webos/
 │  │  ├─ dialogs.js      ★ 系统对话框服务
 │  │  ├─ registry.js     应用注册表
 │  │  ├─ icons.js        内联 SVG 图标库
+│  │  ├─ crypto.js       文件加密(AES-GCM + PBKDF2)
 │  │  ├─ menu.js         全局右键菜单
 │  │  ├─ ui.js           应用内模态框(confirm/prompt)
 │  │  ├─ audio.js        WebAudio 引擎(音量跟随系统)
@@ -339,6 +340,21 @@ WebOS.__errs                         // 运行期错误
 「系统设置 → 系统」可查看用量并一键重置。虚拟文件系统 API
 见 `core/fs.js`(`list/read/write/mkdir/rm/rename/stats`)。
 
+## 文件加密
+
+虚拟文件系统支持对单个文件做 AES-256-GCM 加密(密码经 PBKDF2-SHA-256
+15 万次迭代派生密钥,随机盐+IV,格式 `WEOS1:<salt>:<iv>:<ciphertext>`):
+
+- **文件管家**:文件右键「加密…」/「解密…」(密码对话框,加密需二次确认);
+  加密文件显示 🔒 锁图标;双击弹出密码解锁后以**只读预览**查看(明文不落盘)
+- **终端**:`crypt encrypt <文件> <密码>` / `crypt decrypt <文件> <密码>` /
+  `crypt islocked <文件>`(支持子命令分发)
+- **Bash 终端**:`cat` 加密文件会拒绝并提示(加密文件不可被管道/重定向读取)
+
+密码错误时解密会明确报"密码错误或文件已损坏"(GCM 认证失败),
+文件本身不受影响。控制台:`WebOS` → `import { encryptText } from './js/core/crypto.js'`。
+
+## 内置应用
 ## 内置应用
 
 - **文件管家**:目录浏览、面包屑、新建/重命名/删除、双击调用记事本

@@ -6,6 +6,7 @@ import fs from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
 import { dialogs } from '../../core/dialogs.js';
+import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 
 /** 系统对话框:输入(返回 string|null)与危险确认(返回 boolean) */
 const modalPrompt = (title, placeholder, value) =>
@@ -21,8 +22,9 @@ const QUICK = [
   { name: '下载', path: '/home/downloads', icon: 'download' },
 ];
 
-function fileIcon(item) {
+function fileIcon(item, encrypted = false) {
   if (item.dir) return { name: 'folder', color: '#4f9cf9', size: 34 };
+  if (encrypted) return { name: 'lock', color: '#a855f7', size: 30 };
   const ext = item.name.split('.').pop().toLowerCase();
   if (['txt', 'md', 'log', 'json', 'js', 'css', 'html'].includes(ext)) return { name: 'fileText', color: '#8a94a8', size: 30 };
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return { name: 'image', color: '#a78bfa', size: 30 };
@@ -46,7 +48,7 @@ register({
   min: { w: 560, h: 360 },
   singleton: true,
   order: 1,
-  mount({ root, bus, params }) {
+  mount({ root, bus, params, setTitle }) {
     let cwd = params.path && fs.isDir(params.path) ? fs.normPath(params.path) : '/home';
     let selected = null;
     let history = [];
@@ -73,7 +75,49 @@ register({
 
     function openItem(item) {
       if (item.dir) nav(item.path);
-      else open('notes', { params: { path: item.path } }); // IPC:通过参数把文件交给记事本
+      else if (isEncrypted(fs.read(item.path))) {
+        // 加密文件:解锁后只读预览(不落盘明文)
+        (async () => {
+          const pw = await dialogs.password({ title: '文件已加密', message: `输入「${item.name}」的密码以查看` });
+          if (pw == null) return;
+          try {
+            const plain = await decryptText(fs.read(item.path), pw);
+            const tmp = '/home/downloads/.' + item.name + '.preview';
+            fs.write(tmp, plain);
+            open('viewer', { params: { file: new File([plain], item.name, { type: 'text/plain' }) } });
+            fs.rm(tmp);
+          } catch (e) {
+            dialogs.error({ title: '解锁失败', message: String(e.message) });
+          }
+        })();
+      } else open('notes', { params: { path: item.path } }); // IPC:通过参数把文件交给记事本
+    }
+
+    /** 加密 / 解密文件(密码经系统对话框输入) */
+    async function toggleEncrypt(item) {
+      const content = fs.read(item.path);
+      if (content == null || item.dir) return;
+      if (isEncrypted(content)) {
+        const pw = await dialogs.password({ title: '解密文件', message: `输入「${item.name}」的密码` });
+        if (pw == null) return;
+        try {
+          const plain = await decryptText(content, pw);
+          fs.write(item.path, plain);
+          bus.notify('已解密', item.name);
+        } catch (e) {
+          dialogs.error({ title: '解密失败', message: String(e.message) });
+        }
+      } else {
+        const pw = await dialogs.password({ title: '加密文件', message: `为「${item.name}」设置密码` });
+        if (pw == null) return;
+        const pw2 = await dialogs.password({ title: '确认密码', message: '再次输入同一密码' });
+        if (pw2 == null) return;
+        if (pw !== pw2) { dialogs.error({ title: '加密失败', message: '两次输入的密码不一致' }); return; }
+        if (!pw) { dialogs.error({ title: '加密失败', message: '密码不能为空' }); return; }
+        fs.write(item.path, await encryptText(content, pw));
+        bus.notify('已加密 🔒', item.name);
+      }
+      render();
     }
 
     async function newItem(kind) {
@@ -124,10 +168,12 @@ register({
         grid.append(el('div', { class: 'empty', style: { gridColumn: '1/-1' } }, icon('folderOpen', 40), '此文件夹为空'));
       }
       for (const item of items) {
-        const fi = fileIcon(item);
+        const encrypted = !item.dir && isEncrypted(fs.read(item.path) || '');
+        const fi = fileIcon(item, encrypted);
         const node = el('button', {
           class: 'fitem' + (selected === item.path ? ' selected' : ''),
           dataset: { path: item.path },
+          title: encrypted ? '🔒 已加密' : '',
           onClick: () => { selected = selected === item.path ? null : item.path; renderStatus(); grid.querySelectorAll('.fitem').forEach(x => x.classList.toggle('selected', x.dataset.path === selected)); },
           onDblClick: () => openItem(item),
           onContextmenu: (e) => {
@@ -136,7 +182,10 @@ register({
             renderStatus();
             showMenu(e.clientX, e.clientY, [
               { label: '打开', icon: 'folderOpen', fn: () => openItem(item) },
-              ...(item.dir ? [] : [{ label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) }]),
+              ...(item.dir ? [] : [
+                { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) },
+                { label: encrypted ? '解密…' : '加密…', icon: 'lock', fn: () => toggleEncrypt(item) },
+              ]),
               { sep: true },
               { label: '重命名', icon: 'pencil', fn: () => renameItem(item) },
               { label: '删除', icon: 'trash', danger: true, fn: () => deleteItem(item) },
@@ -144,7 +193,7 @@ register({
           },
         },
           el('span', { class: 'f-ico', style: { color: fi.color } }, icon(fi.name, fi.size)),
-          el('span', { class: 'f-name', title: item.path }, item.name));
+          el('span', { class: 'f-name', title: item.path }, (encrypted ? '🔒 ' : '') + item.name));
         grid.append(node);
       }
     }
@@ -159,7 +208,7 @@ register({
       renderCrumbs();
       renderGrid();
       renderStatus();
-      bus.setTitle('文件管家 — ' + (cwd === '/' ? '根目录' : cwd));
+      setTitle('文件管家 — ' + (cwd === '/' ? '根目录' : cwd));
     }
 
     // IPC:监听文件系统变化实时刷新;响应其他应用的刷新请求

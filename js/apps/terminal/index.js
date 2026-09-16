@@ -8,6 +8,7 @@ import { open } from '../../core/wm.js';
 import { publish } from '../../core/bus.js';
 import { httpGet, sshConnect, dnsResolve } from '../../core/vnet.js';
 import { dialogs } from '../../core/dialogs.js';
+import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 
 register({
   id: 'terminal',
@@ -76,7 +77,8 @@ register({
   ping <主机>         测试连通性
   curl <URL>          抓取虚拟站点文本
   ifconfig            本机虚拟网卡
-  ssh <用户>@<主机>   连接虚拟服务器(密码登录)`, 't-dim');
+  ssh <用户>@<主机>   连接虚拟服务器(密码登录)
+  crypt encrypt|decrypt|islocked …   文件加密(AES-256)`, 't-dim');
       },
       ls(arg) {
         const p = arg ? fs.joinPath(cwd, arg) : cwd;
@@ -219,6 +221,37 @@ lo:   127.0.0.1
 DNS:  nexus-dns (10.0.0.1) —— 仅解析虚拟网络`, 't-dim');
       },
 
+      /* ---- 文件加密:crypt encrypt/decrypt/islocked ---- */
+      crypt: {
+        async encrypt(file, password) {
+          if (!file || !password) return print('用法: crypt encrypt <文件> <密码>', 't-err');
+          const p = fs.normPath(fs.joinPath(cwd, file));
+          const c = fs.read(p);
+          if (c == null) return print(`crypt: "${p}": 文件不存在`, 't-err');
+          if (isEncrypted(c)) return print('crypt: 该文件已是加密状态', 't-err');
+          fs.write(p, await encryptText(c, password));
+          print(`已加密 🔒 ${p}`, 't-ok');
+        },
+        async decrypt(file, password) {
+          if (!file || !password) return print('用法: crypt decrypt <文件> <密码>', 't-err');
+          const p = fs.normPath(fs.joinPath(cwd, file));
+          const c = fs.read(p);
+          if (c == null) return print(`crypt: "${p}": 文件不存在`, 't-err');
+          if (!isEncrypted(c)) return print('crypt: 该文件未加密', 't-err');
+          try {
+            fs.write(p, await decryptText(c, password));
+            print(`已解密 ${p}`, 't-ok');
+          } catch (e) {
+            print(`crypt: ${e.message}`, 't-err');
+          }
+        },
+        islocked(file) {
+          if (!file) return print('用法: crypt islocked <文件>', 't-err');
+          const c = fs.read(fs.normPath(fs.joinPath(cwd, file)));
+          print(c == null ? '文件不存在' : isEncrypted(c) ? '🔒 已加密' : '未加密');
+        },
+      },
+
       /* ---- 系统对话框演示 ---- */
       alert(...args) {
         if (!args.length) return print('用法: alert <文本>', 't-err');
@@ -315,10 +348,19 @@ DNS:  nexus-dns (10.0.0.1) —— 仅解析虚拟网络`, 't-dim');
       }
       print(`${promptEl.textContent}${line}`, 't-cmd');
       const parts = line.trim().split(/\s+/).filter(Boolean);
-      const cmd = parts.shift();
+      let cmd = parts.shift();
       if (!cmd) return;
-      if (commands[cmd]) {
-        try { commands[cmd](...parts); }
+      // 子命令分发:crypt encrypt … / crypt decrypt …
+      let handler = commands[cmd];
+      while (handler && typeof handler === 'object' && parts.length) {
+        const sub = parts.shift();
+        cmd += ' ' + sub;
+        handler = handler[sub];
+      }
+      if (handler && typeof handler === 'object') {
+        print(`用法:${cmd} <${Object.keys(handler).join('|')}>`, 't-dim');
+      } else if (handler) {
+        try { handler(...parts); }
         catch (e) { print(`${cmd}: ${e.message}`, 't-err'); }
       } else {
         print(`${cmd}: 未找到命令。输入 help 查看帮助`, 't-err');

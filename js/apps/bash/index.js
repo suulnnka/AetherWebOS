@@ -11,6 +11,7 @@
 import { el, fmtDate } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import fs from '../../core/fs.js';
+import { isEncrypted } from '../../core/crypto.js';
 import { settings } from '../../core/store.js';
 
 /* ---------- 词法:引号与注释 ---------- */
@@ -110,6 +111,7 @@ CMDS.cat = {
     return args.map((p) => {
       const f = fs.read(resolve(p));
       if (f == null) throw new Error(`cat: ${p}: 没有那个文件或目录`);
+      if (isEncrypted(f)) throw new Error(`cat: ${p}: 是加密文件(在文件管家中解锁后查看)`);
       return f;
     }).join('');
   },
