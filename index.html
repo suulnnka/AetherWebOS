@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-style="modern">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="WebOS —— 纯前端网页操作系统,数据保存在浏览器本地" />
+  <title>WebOS · 网页操作系统</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='9' height='9' rx='2' fill='%235b6cff'/%3E%3Crect x='13' y='2' width='9' height='9' rx='2' fill='%238b5cf6'/%3E%3Crect x='2' y='13' width='9' height='9' rx='2' fill='%238b5cf6'/%3E%3Crect x='13' y='13' width='9' height='9' rx='2' fill='%235b6cff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/shell.css" />
+  <link rel="stylesheet" href="css/window.css" />
+  <link rel="stylesheet" href="css/appkit.css" />
+  <link rel="stylesheet" href="css/apps.css" />
+  <link rel="stylesheet" href="css/themes.css" />
+</head>
+<body>
+  <!-- 桌面层:壁纸 + 桌面图标 -->
+  <div id="desktop">
+    <div id="wallpaper"></div>
+    <div id="icons"></div>
+  </div>
+
+  <!-- 窗口层:所有窗口都挂在这里 -->
+  <div id="windows"></div>
+
+  <!-- 底部程序栏(任务栏) -->
+  <div id="taskbar">
+    <button class="tb-start" id="start-btn" title="开始菜单"></button>
+    <div class="tb-pinned" id="tb-pinned"></div>
+    <div class="tb-sep"></div>
+    <div class="tb-tasks" id="tb-tasks"></div>
+    <div class="tray" id="tray">
+      <button class="tray-btn" id="tray-vol" title="音量"></button>
+      <button class="tray-btn" id="tray-bell" title="通知"><span class="badge" id="bell-badge" hidden></span></button>
+      <button class="tray-btn tray-clock" id="tray-clock" title="日期和时间">
+        <span class="t" id="clock-time">--:--</span>
+        <span class="d" id="clock-date">----</span>
+      </button>
+    </div>
+    <button class="tb-showdesk" id="show-desk" title="显示桌面"></button>
+  </div>
+
+  <!-- 开始菜单 -->
+  <div id="start-menu">
+    <div class="sm-search"><input id="sm-input" placeholder="搜索应用…" /></div>
+    <div class="sm-grid" id="sm-grid"></div>
+    <div class="sm-footer">
+      <button class="sm-user" id="sm-user"><span class="avatar" id="sm-avatar">A</span><span id="sm-username">admin</span></button>
+      <button class="sm-power" id="sm-power" title="电源"></button>
+    </div>
+  </div>
+
+  <!-- 通知吐司 / 右键菜单 / 亮度遮罩 -->
+  <div id="toasts"></div>
+  <div id="ctx" hidden></div>
+  <div id="brightness"></div>
+
+  <!-- 开机画面 -->
+  <div id="boot">
+    <div class="boot-logo"></div>
+    <div class="boot-name">WebOS</div>
+    <div class="boot-bar"><i></i></div>
+  </div>
+
+  <!-- 关机画面 -->
+  <div id="shutdown" hidden>
+    <div class="sd-center" id="sd-center"></div>
+  </div>
+
+  <script>
+    // 诊断辅助:捕获启动期错误(控制台执行 window.__errs 查看)
+    window.__errs = [];
+    window.addEventListener('error', function (e) {
+      window.__errs.push(e.message + ' @ ' + (e.filename || '') + ':' + e.lineno + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      window.__errs.push('rejection: ' + String(e.reason));
+    });
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

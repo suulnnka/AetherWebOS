@@ -1,0 +1,81 @@
+/* ============ 基础 reset + 主题变量 ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --tb: 48px;                 /* 任务栏高度 */
+  --radius: 10px;
+  --radius-s: 8px;
+  --accent: #5b6cff;
+  --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+html[data-theme="light"] {
+  --bg: #eef0f4;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-solid: #ffffff;
+  --panel-2: #f5f6f8;
+  --text: #1a2233;
+  --text-2: #66708a;
+  --border: rgba(20, 30, 60, 0.1);
+  --hover: rgba(20, 30, 60, 0.06);
+  --shadow: 0 12px 34px rgba(10, 20, 50, 0.16), 0 2px 8px rgba(10, 20, 50, 0.08);
+  --shadow-2: 0 4px 14px rgba(10, 20, 50, 0.12);
+}
+
+html[data-theme="dark"] {
+  --bg: #0c111e;
+  --panel: rgba(18, 24, 40, 0.74);
+  --panel-solid: #131a2a;
+  --panel-2: #1a2336;
+  --text: #eef1f8;
+  --text-2: #93a0bd;
+  --border: rgba(255, 255, 255, 0.1);
+  --hover: rgba(255, 255, 255, 0.07);
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* hidden 属性永远生效(防止作者 display 规则覆盖 UA 样式) */
+[hidden] { display: none !important; }
+
+body { user-select: none; -webkit-user-select: none; }
+
+button { font-family: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select, textarea { font-family: inherit; color: inherit; }
+
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-2) 35%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--text-2) 60%, transparent); background-clip: content-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 1px; }
+
+/* 关闭动效模式 */
+html.no-effects *,
+html.no-effects *::before,
+html.no-effects *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* 通用 SVG 图标默认行为 */
+svg { display: block; flex: none; }

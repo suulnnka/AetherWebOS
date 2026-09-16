@@ -1,0 +1,305 @@
+/* ============ 应用:系统设置 ============ */
+import { el, fmtDate, formatBytes } from '../core/utils.js';
+import { icon } from '../core/icons.js';
+import { register } from '../core/registry.js';
+import { settings, ACCENTS, WALLPAPERS, STYLES } from '../core/store.js';
+import { subscribe } from '../core/bus.js';
+import { beep } from '../core/audio.js';
+import { modal } from '../core/ui.js';
+import fs from '../core/fs.js';
+import { dialogs } from '../core/dialogs.js';
+
+const SECTIONS = [
+  { id: 'appearance', name: '外观', icon: 'palette' },
+  { id: 'wallpaper', name: '壁纸', icon: 'image' },
+  { id: 'desktop', name: '桌面与任务栏', icon: 'monitor' },
+  { id: 'sound', name: '声音', icon: 'volume2' },
+  { id: 'display', name: '显示', icon: 'sun' },
+  { id: 'user', name: '用户', icon: 'user' },
+  { id: 'system', name: '系统', icon: 'info' },
+];
+
+function row(label, desc, control) {
+  return el('div', { class: 'set-row' },
+    el('div', {},
+      el('div', { class: 's-label' }, label),
+      desc ? el('div', { class: 's-desc' }, desc) : null),
+    el('div', { class: 'row' }, control));
+}
+
+/** 开关 */
+function switchBox(get, set) {
+  const input = el('input', { type: 'checkbox' });
+  input.checked = !!get();
+  input.addEventListener('change', () => set(input.checked));
+  return el('label', { class: 'switch' }, input, el('i'));
+}
+
+/** 滑杆(带数值) */
+function slider(min, max, get, set, unit = '') {
+  const paint = (r) => { r.style.setProperty('--fill', ((r.value - min) / (max - min) * 100) + '%'); };
+  const range = el('input', { type: 'range', min, max, value: get() });
+  paint(range);
+  range.addEventListener('input', () => { paint(range); set(+range.value); });
+  return range;
+}
+
+function renderSection(root, sec, bus) {
+  root.innerHTML = '';
+  const s = settings.get();
+  const title = el('div', { class: 'sec-title' }, SECTIONS.find(x => x.id === sec)?.name || '');
+
+  if (sec === 'appearance') {
+    const themeSeg = el('div', { class: 'seg' },
+      ...[['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']].map(([v, name]) =>
+        el('button', {
+          class: 'seg-btn' + (s.theme === v ? ' active' : ''),
+          onClick: (e) => { settings.set({ theme: v }); [...themeSeg.children].forEach(b => b.classList.remove('active')); e.currentTarget.classList.add('active'); },
+        }, name)));
+
+    /** 风格主题选择器(迷你预览卡) */
+    const styleCards = el('div', { class: 'style-cards' },
+      ...STYLES.map(st => el('button', {
+        class: 'style-card' + (s.style === st.id ? ' selected' : ''),
+        dataset: { sty: st.id },
+        onClick: (e) => {
+          settings.set({ style: st.id });
+          bus.notify('风格已切换', st.name);
+          renderSection(root, 'appearance', bus);
+        },
+      },
+        el('span', { class: 'sp' },
+          el('span', { class: 'sp-win' },
+            el('span', { class: 'sp-bar' },
+              el('i', { class: 'sp-dot d1' }), el('i', { class: 'sp-dot d2' }), el('i', { class: 'sp-dot d3' }))),
+          el('span', { class: 'sp-task' }, el('i', { class: 'sp-start' }))),
+        el('span', { class: 'sty-name' }, st.name))));
+
+    root.append(el('div', { class: 'set-body' }, title,
+      row('风格主题', '整套系统皮肤:窗体、任务栏、开始菜单、按钮全部跟随', styleCards),
+      row('主题模式', '深色 / 浅色界面风格,可跟随系统的显示设置', themeSeg),
+      row('强调色', '应用于按钮、开关、选中态等控件', el('div', { class: 'swatches' },
+        ...ACCENTS.map(c => el('button', {
+          class: 'swatch' + (s.accent === c ? ' selected' : ''),
+          style: { background: c },
+          title: c,
+          onClick: (e) => {
+            settings.set({ accent: c });
+            [...e.currentTarget.parentElement.children].forEach(x => x.classList.remove('selected'));
+            e.currentTarget.classList.add('selected');
+          },
+        })))),
+      row('界面动效', '关闭后停用窗口与菜单动画,界面响应更快', switchBox(() => s.effects, v => settings.set({ effects: v }))),
+    ));
+  }
+
+  else if (sec === 'wallpaper') {
+    const grid = el('div', { class: 'wp-grid' },
+      ...WALLPAPERS.map(wp => el('button', {
+        class: 'wp-thumb' + (s.wallpaper === wp.id ? ' selected' : ''),
+        style: { background: wp.css },
+        onClick: () => {
+          settings.set({ wallpaper: wp.id });
+          bus.notify('壁纸已更换', wp.name);
+          renderSection(root, 'wallpaper', bus);
+        },
+      }, el('span', { class: 'wp-name' }, wp.name))));
+
+    const urlInput = el('input', {
+      class: 'input', placeholder: '粘贴图片 URL…',
+      value: s.wallpaper === 'custom' ? s.wallpaperUrl : '', style: { flex: '1' },
+    });
+    const applyUrl = () => {
+      const v = urlInput.value.trim();
+      if (!v) return;
+      settings.set({ wallpaper: 'custom', wallpaperUrl: v });
+      bus.notify('壁纸已更换', '自定义图片');
+      renderSection(root, 'wallpaper', bus);
+    };
+    urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyUrl(); });
+
+    const fileInput = el('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files[0];
+      if (!f) return;
+      if (f.size > 2.5 * 1024 * 1024) { bus.notify('图片过大', '建议小于 2.5MB,以免超出浏览器存储上限'); return; }
+      const r = new FileReader();
+      r.onload = () => {
+        settings.set({ wallpaper: 'custom', wallpaperUrl: String(r.result) });
+        bus.notify('壁纸已更换', f.name);
+        renderSection(root, 'wallpaper', bus);
+      };
+      r.readAsDataURL(f);
+    });
+
+    root.append(el('div', { class: 'set-body' }, title,
+      el('div', { class: 'field' },
+        el('div', { class: 'f-label' }, '内置壁纸'),
+        grid),
+      el('div', { class: 'field' },
+        el('div', { class: 'f-label' }, '自定义壁纸'),
+        el('div', { class: 'row' },
+          urlInput,
+          el('button', { class: 'btn', onClick: applyUrl }, '应用'),
+          el('button', { class: 'btn', onClick: () => fileInput.click() }, icon('image', 14), '上传'),
+          fileInput)),
+      el('div', { class: 'f-desc' }, '上传的图片会以 DataURL 形式保存在浏览器本地存储中。'),
+    ));
+  }
+
+  else if (sec === 'desktop') {
+    const seg = el('div', { class: 'seg' },
+      ...[['small', '小'], ['medium', '中'], ['large', '大']].map(([v, name]) =>
+        el('button', {
+          class: 'seg-btn' + (s.iconSize === v ? ' active' : ''),
+          onClick: (e) => {
+            settings.set({ iconSize: v });
+            [...seg.children].forEach(b => b.classList.remove('active'));
+            e.currentTarget.classList.add('active');
+          },
+        }, name)));
+    root.append(el('div', { class: 'set-body' }, title,
+      row('桌面图标大小', '调整桌面与开始菜单中应用磁贴的尺寸', seg),
+      row('时钟显示秒', '任务栏右侧时间显示到秒', switchBox(() => s.clockSeconds, v => settings.set({ clockSeconds: v }))),
+      row('单活动窗口模式', '同一时刻只有一个活动窗口:非活动窗口首次点击仅激活(不穿透)且内容变暗;Alt+Q 循环切换活动窗口', switchBox(() => s.singleActive, v => settings.set({ singleActive: v }))),
+    ));
+  }
+
+  else if (sec === 'sound') {
+    const volSlider = slider(0, 100, () => s.volume, v => settings.set({ volume: v }));
+    root.append(el('div', { class: 'set-body' }, title,
+      row('系统音量', '所有应用播放的声音共用此音量(试试测试音)', volSlider),
+      row('静音', '临时关闭所有声音', switchBox(() => s.muted, v => settings.set({ muted: v }))),
+      row('测试音', '以当前音量播放一段提示音', el('button', {
+        class: 'btn',
+        onClick: () => { beep(660, 0.18); setTimeout(() => beep(880, 0.22), 200); },
+      }, icon('play', 13), '播放')),
+    ));
+  }
+
+  else if (sec === 'display') {
+    root.append(el('div', { class: 'set-body' }, title,
+      row('屏幕亮度', '通过亮度遮罩模拟,不影响耗电', slider(30, 100, () => s.brightness, v => settings.set({ brightness: v }))),
+      row('当前分辨率', '', el('span', { class: 'dim mono' }, `${screen.width} × ${screen.height}`)),
+    ));
+  }
+
+  else if (sec === 'user') {
+    const input = el('input', { class: 'input', value: s.username, style: { width: '160px' } });
+    input.addEventListener('change', () => {
+      const v = input.value.trim() || 'admin';
+      settings.set({ username: v });
+      bus.notify('用户名已更新', v);
+    });
+    root.append(el('div', { class: 'set-body' }, title,
+      row('用户名', '显示在开始菜单左下角与终端提示符中', input),
+      row('用户目录', '', el('span', { class: 'dim mono' }, '/home')),
+    ));
+  }
+
+  else if (sec === 'system') {
+    const stats = fsStats();
+    root.append(el('div', { class: 'set-body' }, title,
+      el('div', { class: 'card', style: { marginBottom: '16px' } },
+        el('div', { class: 'card-title' }, icon('info', 15), '关于本系统'),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '系统名称', el('b', {}, 'WebOS')),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '版本', el('span', { class: 'mono' }, '1.0.0 (vanilla)')),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '技术栈', el('span', { class: 'dim' }, '原生 ES Modules · 零依赖 · 零后端')),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '内核类型', el('span', { class: 'dim mono' }, navigator.userAgent.includes('Firefox') ? 'Gecko' : 'Chromium')),
+      ),
+      el('div', { class: 'card', style: { marginBottom: '16px' } },
+        el('div', { class: 'card-title' }, icon('hardDrive', 15), '本地存储'),
+        el('div', { class: 'dim', style: { fontSize: '12px' } },
+          `文件 ${stats.files} 个 · 目录 ${stats.dirs} 个 · 内容 ${formatBytes(stats.bytes)}`),
+        el('div', { class: 'usage-bar' }, el('i', { style: { width: storagePercent() + '%' } })),
+        el('div', { class: 'dim', style: { fontSize: '11.5px', marginTop: '6px' } },
+          `localStorage 已用 ${formatBytes(localStorageUsage())} / 约 5MB`),
+      ),
+      row('系统对话框', '内置的模态对话框集合(错误/警告/确认/输入/进度等)',
+        el('div', { class: 'row', style: { flexWrap: 'wrap', justifyContent: 'flex-end' } },
+          el('button', { class: 'btn', onClick: () => dialogs.info({ title: '提示', message: '这是一条信息对话框。' }) }, '信息'),
+          el('button', { class: 'btn', onClick: () => dialogs.warning({ title: '警告', message: '存储空间即将耗尽。' }) }, '警告'),
+          el('button', { class: 'btn', onClick: () => dialogs.error({ title: '错误', message: '操作失败:', detail: 'E_ACCESS_DENIED (0x5)\n演示于 系统设置 → 系统' }) }, '错误'),
+          el('button', { class: 'btn', onClick: async () => { const ok = await dialogs.confirm({ title: '确认操作', message: '要继续这个演示吗?' }); dialogs.info({ title: '结果', message: `你选择了:${ok ? '确定' : '取消'}` }); } }, '确认'),
+          el('button', { class: 'btn', onClick: async () => { const v = await dialogs.prompt({ title: '输入', message: '随便输入点什么:' }); if (v != null) dialogs.success({ title: '收到', message: `你输入了:「${v}」` }); } }, '输入'),
+          el('button', { class: 'btn', onClick: () => { const h = dialogs.progress({ title: '系统自检' }); let v = 0; const t = setInterval(() => { v += 12; if (v >= 100) { clearInterval(t); h.done('自检完成,一切正常'); } else h.set(v, `检查模块 ${v}%`); }, 260); } }, '进度'))),
+      row('重置系统', '清空浏览器中保存的全部系统数据(不可恢复)',
+        el('button', {
+          class: 'btn danger',
+          onClick: async () => {
+            const ok = await modal(root, {
+              title: '重置系统', danger: true, confirmText: '全部清除',
+              body: '将删除所有设置、文件与笔记数据,系统随后会重新启动。确定继续吗?',
+            });
+            if (ok) settings.reset();
+          },
+        }, icon('trash', 13), '清除数据')),
+    ));
+  }
+}
+
+function localStorageUsage() {
+  let n = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    n += k.length + (localStorage.getItem(k) || '').length;
+  }
+  return n * 2; // UTF-16
+}
+const storagePercent = () => Math.min(100, Math.round(localStorageUsage() / (5 * 1024 * 1024) * 100));
+
+function fsStats() {
+  return fs.stats();
+}
+
+register({
+  id: 'settings',
+  neon: { a: '#8b5cf6', b: '#c084fc' },  // 霓虹灯条双色(霓虹未来皮肤)
+  name: '系统设置',
+  icon: 'settings',
+  color: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
+  width: 860, height: 600,
+  min: { w: 640, h: 420 },
+  singleton: true,
+  order: 5,
+  mount({ root, bus, params }) {
+    let current = params.section || 'appearance';
+    const navBox = el('div', { class: 'app-side' });
+    const content = el('div', { class: 'app-body', style: { userSelect: 'text' } });
+
+    function renderNav() {
+      navBox.innerHTML = '';
+      for (const sec of SECTIONS) {
+        navBox.append(el('button', {
+          class: 'nav-item' + (sec.id === current ? ' active' : ''),
+          onClick: () => { current = sec.id; renderNav(); renderSection(content, current, bus); },
+        }, el('span', { class: 'ni' }, icon(sec.icon, 15)), sec.name));
+      }
+    }
+
+    renderNav();
+    renderSection(content, current, bus);
+
+    root.append(el('div', { class: 'app' },
+      el('div', { class: 'app-toolbar' }, el('b', { style: { fontSize: '13.5px' } }, '系统设置'), el('span', { class: 'grow' }),
+        el('span', { class: 'dim', style: { fontSize: '12px' } }, fmtDate(new Date(), true))),
+      el('div', { class: 'app-mid' }, navBox, content)));
+
+    // 其他应用可以请求设置应用跳转分区,例如终端: open settings --section wallpaper
+    const off = bus.on('params', (p) => {
+      if (p?.section && SECTIONS.some(s => s.id === p.section)) {
+        current = p.section;
+        renderNav();
+        renderSection(content, current, bus);
+      }
+    });
+    // 壁纸外部变化时刷新预览选中态
+    const off2 = subscribe('sys:settings-changed', (p) => {
+      if (p?.changed?.includes('wallpaper') || p?.changed?.includes('wallpaperUrl')) renderSection(content, current, bus);
+    });
+
+    return {
+      onClose() { off(); off2(); return true; },
+    };
+  },
+});

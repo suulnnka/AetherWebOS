@@ -1,0 +1,11 @@
+{
+  "name": "webos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "纯前端网页操作系统(类群晖 DSM),零依赖零构建零后端",
+  "scripts": {
+    "start": "npx -y serve . -l 8080",
+    "start:py": "python -m http.server 8080"
+  },
+  "license": "MIT"
+}

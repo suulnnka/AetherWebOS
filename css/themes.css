@@ -1,0 +1,1011 @@
+/* ============================================================
+ * 风格主题包(Style Packs)
+ * 通过 <html data-style="..."> 切换整套系统皮肤:
+ *   modern(默认) / mac / win98 / winxp / win7
+ * 本文件必须在 base.css 之后加载,变量覆盖才能生效。
+ * ============================================================ */
+
+/* ============================================================
+ * macOS —— 悬浮 Dock、红绿灯窗口按钮、居中启动面板
+ * ============================================================ */
+html[data-style="mac"] {
+  --tb: 74px;
+  --radius: 12px;
+}
+
+/* 悬浮 Dock:壁纸铺满全屏(dock 悬浮其上),窗口仍止于 dock 上方 */
+html[data-style="mac"] #desktop { bottom: 0; }
+
+/* 悬浮 Dock 任务栏 */
+html[data-style="mac"] #taskbar {
+  left: 50%; right: auto; bottom: 10px;
+  width: auto; height: 60px;
+  transform: translateX(-50%);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(36, 38, 50, 0.55);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.42);
+  padding: 0 12px;
+}
+html[data-style="mac"] .tb-start { border-radius: 15px; background: rgba(255, 255, 255, 0.12); color: #fff; }
+html[data-style="mac"] .tb-pinned .tbtn { background: transparent; }
+html[data-style="mac"] .tbtn {
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.4), background 0.15s;
+}
+html[data-style="mac"] .tbtn:hover { transform: translateY(-5px) scale(1.12); background: rgba(255, 255, 255, 0.18); }
+html[data-style="mac"] .tbtn .t-title { display: none; }
+html[data-style="mac"] .tbtn .t-ico { width: 36px; height: 36px; }
+html[data-style="mac"] .tbtn.active::after {
+  left: 50%; right: auto; transform: translateX(-50%);
+  bottom: 2px; width: 4px; height: 4px; border-radius: 2px; background: #fff;
+}
+html[data-style="mac"] .tray-btn { color: #eef1ff; }
+html[data-style="mac"] .tray-btn.on { color: #fff; }
+html[data-style="mac"] .tray-clock .t { color: #fff; }
+html[data-style="mac"] .tray-clock .d { color: rgba(255, 255, 255, 0.72); }
+html[data-style="mac"] .tb-showdesk { display: none; }
+html[data-style="mac"] .tb-sep { opacity: 0.4; }
+
+/* 窗体:圆角大阴影 + 左侧红绿灯 */
+html[data-style="mac"] .win {
+  border-radius: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.4);
+}
+html[data-style="mac"] .win.max { border-radius: 0; }
+html[data-style="mac"] .win-head {
+  position: relative;
+  height: 42px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--panel-solid) 82%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+html[data-style="mac"] .win:not(.focused) .win-head { opacity: 0.9; }
+html[data-style="mac"] .win-ico { display: none; }
+html[data-style="mac"] .wbtn { order: -1; width: 13px; height: 13px; border-radius: 50%; margin-right: 7px; padding: 0; }
+html[data-style="mac"] .wbtn.close { order: -3; background: #ff5f57; }
+html[data-style="mac"] .wbtn.mn { order: -2; background: #febc2e; }
+html[data-style="mac"] .wbtn.mx { order: -1; background: #28c840; }
+html[data-style="mac"] .wbtn:hover { filter: brightness(0.92); }
+html[data-style="mac"] .wbtn svg { width: 8px; height: 8px; margin: auto; opacity: 0; color: rgba(60, 30, 0, 0.65); }
+html[data-style="mac"] .wbtn:hover svg { opacity: 1; }
+html[data-style="mac"] .win-title {
+  position: absolute; left: 90px; right: 24px;
+  text-align: center; font-weight: 600;
+  pointer-events: none;
+}
+
+/* 居中的启动面板 */
+html[data-style="mac"] #start-menu { left: 50%; transform: translateX(-50%); transform-origin: 50% 100%; border-radius: 18px; }
+html[data-style="mac"] #start-menu:not(.open) { transform: translateX(-50%) scale(0.85) translateY(30px); }
+
+/* 其他部件 */
+html[data-style="mac"] .popover { border-radius: 14px; }
+html[data-style="mac"] #ctx { border-radius: 12px; }
+html[data-style="mac"] .toast { border-radius: 14px; }
+html[data-style="mac"] .dicon .tile { border-radius: 26%; }
+html[data-style="mac"] .modal-box { border-radius: 14px; }
+
+/* ============================================================
+ * 霓虹未来(Neon)—— 强制暗色 + 窗框霓虹灯条 + 赛博网格桌面
+ * ============================================================ */
+html[data-style="neon"] {
+  --tb: 58px;   /* 悬浮任务栏(46px + 上下留边) */
+  --radius: 10px;
+  --accent: #00e5ff;
+  --panel: rgba(9, 14, 28, 0.86);
+  --panel-solid: #0a1020;
+  --panel-2: #0c1326;
+  --text: #d9f6ff;
+  --text-2: #6f88ad;
+  --border: rgba(0, 240, 255, 0.22);
+  --hover: rgba(0, 240, 255, 0.08);
+  --shadow: 0 0 26px rgba(0, 240, 255, 0.16), 0 18px 54px rgba(0, 0, 0, 0.65);
+  --shadow-2: 0 0 14px rgba(0, 240, 255, 0.12), 0 8px 26px rgba(0, 0, 0, 0.55);
+}
+
+/* ============ 动态桌面:压暗 + 漂移网格 + 漂浮光球 + 扫描光带 + 扫描线 ============ */
+html[data-style="neon"] #wallpaper::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 1;
+  background:
+    radial-gradient(90% 70% at 85% 100%, rgba(255, 42, 212, 0.15), transparent 55%),
+    radial-gradient(80% 60% at 8% 0%, rgba(0, 240, 255, 0.13), transparent 55%),
+    rgba(3, 6, 16, 0.78);
+}
+html[data-style="neon"] #desktop { bottom: 0; }   /* 悬浮任务栏后壁纸铺满全屏 */
+/* 漂移网格 */
+html[data-style="neon"] #desktop::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    linear-gradient(rgba(0, 240, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.055) 1px, transparent 1px);
+  background-size: 44px 44px;
+  animation: neonGridDrift 70s linear infinite;
+}
+@keyframes neonGridDrift { to { background-position: 44px 132px, 44px 132px; } }
+/* 双色漂浮光球 */
+html[data-style="neon"] #desktop::after {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(300px 220px at 22% 32%, rgba(0, 240, 255, 0.10), transparent 70%),
+    radial-gradient(360px 260px at 76% 70%, rgba(255, 42, 212, 0.09), transparent 70%);
+  animation: neonOrbs 26s ease-in-out infinite alternate;
+}
+@keyframes neonOrbs {
+  from { transform: translate(-3%, -2%) scale(1); }
+  to   { transform: translate(4%, 3%) scale(1.1); }
+}
+html[data-style="neon"] #icons { z-index: 2; }
+/* 周期性扫描光带(自上而下扫过桌面) */
+html[data-style="neon"] #icons::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 3;
+  background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.8), transparent);
+  box-shadow: 0 0 14px 2px rgba(0, 240, 255, 0.45);
+  animation: neonSweep 11s linear infinite;
+  pointer-events: none;
+}
+@keyframes neonSweep {
+  0% { transform: translateY(-4px); opacity: 0; }
+  3% { opacity: 1; }
+  96% { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+/* 全屏 CRT 扫描线氛围 */
+html[data-style="neon"] body::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 1600;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(160, 240, 255, 0.022) 0 1px, transparent 1px 3px);
+}
+
+/* ============ 窗体:每应用专属双色流光灯条 + 活动窗口呼吸辉光 ============ */
+html[data-style="neon"] .win {
+  border: 1px solid color-mix(in srgb, var(--neon-a, #00f0ff) 45%, transparent);
+  background: var(--panel-solid);
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--neon-a, #00f0ff) 18%, transparent),
+    0 0 46px color-mix(in srgb, var(--neon-b, #ff2ad4) 9%, transparent),
+    0 18px 50px rgba(0, 0, 0, 0.6);
+}
+html[data-style="neon"] .win.focused { animation: neonBreath 2.8s ease-in-out infinite; }
+@keyframes neonBreath {
+  0%, 100% {
+    box-shadow:
+      0 0 16px color-mix(in srgb, var(--neon-a, #00f0ff) 15%, transparent),
+      0 0 38px color-mix(in srgb, var(--neon-b, #ff2ad4) 7%, transparent),
+      0 18px 50px rgba(0, 0, 0, 0.6);
+  }
+  50% {
+    box-shadow:
+      0 0 34px color-mix(in srgb, var(--neon-a, #00f0ff) 36%, transparent),
+      0 0 72px color-mix(in srgb, var(--neon-b, #ff2ad4) 17%, transparent),
+      0 18px 56px rgba(0, 0, 0, 0.66);
+  }
+}
+html[data-style="neon"] .win:not(.focused) {
+  border-color: rgba(0, 240, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+html[data-style="neon"] .win-head {
+  position: relative;
+  height: 38px;
+  border-bottom: 1px solid color-mix(in srgb, var(--neon-a, #00f0ff) 35%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--neon-a, #00f0ff) 9%, transparent),
+    rgba(10, 16, 32, 0.4));
+}
+/* 顶部流光灯条:A → B → A 循环流动 */
+html[data-style="neon"] .win-head::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: linear-gradient(90deg,
+    var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4), var(--neon-a, #00f0ff));
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 3.2s linear infinite;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent);
+}
+html[data-style="neon"] .win:not(.focused) .win-head::before {
+  filter: saturate(0.4) brightness(0.55);
+  animation-play-state: paused;   /* 未聚焦:灯条停摆变暗 */
+}
+@keyframes neonFlow { to { background-position: 200% 0; } }
+html[data-style="neon"] .win-title {
+  color: #eafcff;
+  font-family: var(--mono);
+  letter-spacing: 0.5px;
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--neon-a, #00f0ff) 85%, transparent),
+    0 0 22px color-mix(in srgb, var(--neon-a, #00f0ff) 40%, transparent);
+}
+html[data-style="neon"] .win:not(.focused) .win-title { text-shadow: none; color: #7d95b8; }
+html[data-style="neon"] .win-ico { box-shadow: 0 0 8px color-mix(in srgb, var(--neon-a, #00f0ff) 55%, transparent); border-radius: 5px; }
+html[data-style="neon"] .wbtn { color: #9feaff; border-radius: 7px; }
+html[data-style="neon"] .wbtn:hover {
+  color: var(--neon-a, #00f0ff);
+  background: color-mix(in srgb, var(--neon-a, #00f0ff) 12%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 45%, transparent);
+}
+html[data-style="neon"] .wbtn.close { color: #ff9ae8; }
+html[data-style="neon"] .wbtn.close:hover {
+  color: #ff5ce0; background: rgba(255, 42, 212, 0.14);
+  box-shadow: 0 0 12px rgba(255, 42, 212, 0.55);
+}
+
+/* ============ 任务栏:悬浮切角战控台(顶部流光 + 斜纹肌理) ============ */
+html[data-style="neon"] #taskbar {
+  left: 14px; right: 14px; bottom: 10px;
+  width: auto; height: 46px;
+  background:
+    repeating-linear-gradient(115deg, rgba(0, 240, 255, 0.03) 0 2px, transparent 2px 9px),
+    rgba(6, 10, 20, 0.88);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 0;
+  clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%, 0 16px);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.13), 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+/* 顶部四色流光光线 */
+html[data-style="neon"] #taskbar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, #00f0ff, #7d5fff, #ff2ad4, #00f0ff);
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 4.5s linear infinite;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.7);
+}
+html[data-style="neon"] .tb-start,
+html[data-style="neon"] .tbtn {
+  position: relative;
+  min-height: 34px;
+  border-radius: 0;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  background: rgba(10, 16, 32, 0.72);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+html[data-style="neon"] .tb-start { color: #7ff2ff; width: 40px; }
+html[data-style="neon"] .tb-start:hover, html[data-style="neon"] .tb-start.on {
+  color: #00f0ff;
+  border-color: rgba(0, 240, 255, 0.8);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.45), inset 0 0 10px rgba(0, 240, 255, 0.15);
+}
+html[data-style="neon"] .tbtn:hover {
+  background: rgba(0, 240, 255, 0.09);
+  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 60%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--neon-a, #00f0ff) 30%, transparent);
+}
+/* 活动芯片:专属双色迷你流光灯条 + 呼吸 */
+html[data-style="neon"] .tbtn.active {
+  background: color-mix(in srgb, var(--neon-a, #00f0ff) 8%, transparent);
+  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent);
+  animation: neonChipBreath 2.8s ease-in-out infinite;
+}
+html[data-style="neon"] .tbtn.active::after {
+  content: ""; position: absolute;
+  left: 0; right: 0; top: 0; bottom: auto;
+  height: 2px; border-radius: 0;
+  background: linear-gradient(90deg, var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4), var(--neon-a, #00f0ff));
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 3.2s linear infinite;
+  box-shadow: none;
+}
+@keyframes neonChipBreath {
+  50% { box-shadow: 0 0 16px color-mix(in srgb, var(--neon-a, #00f0ff) 40%, transparent); }
+}
+html[data-style="neon"] .tbtn .t-ico { box-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
+html[data-style="neon"] .tray-btn { color: #7fa8c8; }
+html[data-style="neon"] .tray-btn:hover {
+  color: #00f0ff; border-radius: 8px;
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+html[data-style="neon"] .tray-btn.on { color: #00f0ff; }
+html[data-style="neon"] .tray-clock .t {
+  color: #eafcff; font-family: var(--mono); font-size: 13px;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+}
+html[data-style="neon"] .tray-clock .d { color: #6f88ad; font-family: var(--mono); }
+html[data-style="neon"] .tb-showdesk {
+  width: 8px; border-radius: 2px;
+  border-left: 1px solid rgba(0, 240, 255, 0.4);
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.15), rgba(255, 42, 212, 0.25));
+}
+html[data-style="neon"] .tb-sep {
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(0, 240, 255, 0.6), transparent);
+}
+
+/* 开始菜单与弹层:暗色玻璃 + 霓虹描边 */
+html[data-style="neon"] #start-menu,
+html[data-style="neon"] .popover,
+html[data-style="neon"] #ctx,
+html[data-style="neon"] .toast,
+html[data-style="neon"] .modal-box {
+  background: rgba(8, 12, 24, 0.92);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.14), 0 16px 44px rgba(0, 0, 0, 0.6);
+}
+html[data-style="neon"] .sm-search input { background: rgba(0, 240, 255, 0.06); color: #d9f6ff; border-color: rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .sm-search input:focus { border-color: #00f0ff; box-shadow: 0 0 12px rgba(0, 240, 255, 0.35); }
+html[data-style="neon"] .sm-item .name { color: #cfeeff; }
+html[data-style="neon"] .sm-item:hover { background: rgba(0, 240, 255, 0.1); box-shadow: inset 0 0 12px rgba(0, 240, 255, 0.12); }
+html[data-style="neon"] .sm-footer { border-top-color: rgba(0, 240, 255, 0.25); background: rgba(0, 240, 255, 0.04); }
+html[data-style="neon"] .ctx-item:hover { background: rgba(0, 240, 255, 0.1); }
+html[data-style="neon"] .ctx-item .ci-ico { color: #52c8e8; }
+
+/* 控件:霓虹描边 + 辉光 */
+html[data-style="neon"] .btn { border-color: rgba(0, 240, 255, 0.35); }
+html[data-style="neon"] .btn:hover {
+  border-color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+}
+html[data-style="neon"] .btn.primary {
+  background: #00e5ff; border-color: #00e5ff; color: #02141a;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+}
+html[data-style="neon"] .btn.primary:hover { background: #4df1ff; box-shadow: 0 0 20px rgba(0, 240, 255, 0.7); }
+html[data-style="neon"] .btn.danger { color: #ff5ce0; border-color: rgba(255, 42, 212, 0.45); }
+html[data-style="neon"] .btn.danger:hover { box-shadow: 0 0 10px rgba(255, 42, 212, 0.4); }
+html[data-style="neon"] .input, html[data-style="neon"] .select { background: rgba(0, 240, 255, 0.05); border-color: rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .input:focus, html[data-style="neon"] .select:focus { border-color: #00f0ff; box-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .dicon .tile { box-shadow: 0 0 14px rgba(0, 240, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.55); }
+html[data-style="neon"] .table th { background: #0c1326; }
+html[data-style="neon"] .term { background: #060a16; }
+
+/* ============================================================
+ * Win3.1 —— 更古老的味道:系统菜单盒在左、纯海军蓝细标题栏
+ * ============================================================ */
+html[data-style="win31"] {
+  --tb: 28px;
+  --radius: 0px;
+  --font: "MS Sans Serif", Tahoma, "Microsoft YaHei", SimSun, sans-serif;
+  --panel: #c0c0c0;
+  --panel-solid: #c0c0c0;
+  --panel-2: #c0c0c0;
+  --text: #101010;
+  --text-2: #474747;
+  --border: #868a8e;
+  --hover: rgba(0, 0, 0, 0.09);
+  --shadow: none;
+  --shadow-2: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* 窗体:细斜面 + 纯色海军蓝标题 */
+html[data-style="win31"] .win {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #fff, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .win-head {
+  height: 22px;
+  padding: 0 2px 0 5px;
+  background: #000080;   /* 纯色,无渐变 */
+  border-bottom: none;
+}
+html[data-style="win31"] .win:not(.focused) .win-head { background: #c0c0c0; }
+html[data-style="win31"] .win-title { color: #fff; font-weight: 700; font-size: 11.5px; }
+html[data-style="win31"] .win:not(.focused) .win-title { color: #555; }
+html[data-style="win31"] .win-ico { width: 13px; height: 13px; border-radius: 0; margin-right: 5px; }
+/* 关闭按钮 = 左侧「系统菜单盒」(▬ 图形) */
+html[data-style="win31"] .wbtn.close { order: -4; margin-right: 9px; }
+html[data-style="win31"] .wbtn.close svg { display: none; }
+html[data-style="win31"] .wbtn.close::after {
+  content: ""; display: block; width: 8px; height: 3px;
+  background: #000; margin: auto;
+}
+html[data-style="win31"] .wbtn {
+  width: 19px; height: 16px; border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .wbtn:hover { background: #d6d2ca; color: #000; }
+html[data-style="win31"] .wbtn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win31"] .wbtn svg { width: 9px; height: 9px; color: #000; }
+
+/* 任务栏:更细的银条 */
+html[data-style="win31"] #taskbar {
+  height: 28px;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #fff;
+  box-shadow: inset 0 1px 0 #dfdfdf;
+  padding: 0 3px;
+}
+html[data-style="win31"] .tb-start {
+  width: 26px; height: 20px; padding: 0; border-radius: 0; color: #000;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .tb-start:active { border-color: #000 #dfdfdf #dfdfdf #000; }
+html[data-style="win31"] .tb-pinned .tbtn { box-shadow: none; border: none; background: transparent; height: 22px; }
+html[data-style="win31"] .tbtn {
+  height: 21px; border-radius: 0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .tbtn .t-title { font-size: 11px; color: #000; }
+html[data-style="win31"] .tbtn.active {
+  background: #d8d4cc; font-weight: 700;
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  box-shadow: inset 1px 1px 0 #808080;
+}
+html[data-style="win31"] .tbtn.active::after { display: none; }
+html[data-style="win31"] .tray-btn { color: #000; height: 21px; }
+html[data-style="win31"] .tray-clock {
+  flex-direction: row; height: 21px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px 0 #6e6e6e;
+}
+html[data-style="win31"] .tray-clock .t { color: #000; font-size: 11px; }
+html[data-style="win31"] .tray-clock .d { color: #333; font-size: 10.5px; }
+html[data-style="win31"] .tb-showdesk { border-left: 1px solid #808080; box-shadow: inset 1px 0 0 #fff; height: 21px; }
+html[data-style="win31"] .tb-sep { background: transparent; border-left: 1px solid #808080; border-right: 1px solid #fff; }
+
+/* 开始菜单:程序管理器味道(无侧边条、更紧凑) */
+html[data-style="win31"] #start-menu {
+  transform-origin: 0 100%;
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .sm-search input {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff; color: #000;
+  font-size: 12px;
+}
+html[data-style="win31"] .sm-item { color: #000; }
+html[data-style="win31"] .sm-item:hover { background: #000080; color: #fff; }
+html[data-style="win31"] .sm-footer { background: #c0c0c0; border-top: 1px solid #808080; box-shadow: inset 0 1px 0 #fff; }
+html[data-style="win31"] .sm-user { color: #000; }
+html[data-style="win31"] .sm-user .avatar { background: #000080; }
+
+/* 弹层与控件 */
+html[data-style="win31"] .popover,
+html[data-style="win31"] #ctx,
+html[data-style="win31"] .toast,
+html[data-style="win31"] .modal-box {
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .btn {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .btn:hover { background: #d6d2ca; }
+html[data-style="win31"] .btn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win31"] .btn.primary { background: #000080; color: #fff; }
+html[data-style="win31"] .input, html[data-style="win31"] .select {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+}
+html[data-style="win31"] .dicon .tile { border-radius: 0; }
+html[data-style="win31"] .app-toolbar, html[data-style="win31"] .app-side, html[data-style="win31"] .app-status { border-color: #9a9a9a; }
+
+/* ============================================================
+ * Ubuntu —— GNOME 顶栏 + Yaru 橙 + headerbar 窗口
+ * ============================================================ */
+html[data-style="ubuntu"] {
+  --tb: 32px;
+  --radius: 12px;
+  --accent: #e95420;   /* Yaru 橙:整套系统强调色跟随 */
+  --font: Ubuntu, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* 顶栏:任务栏移到屏幕顶部 */
+html[data-style="ubuntu"] #taskbar {
+  top: 0; bottom: auto;
+  height: 32px;
+  background: #262626;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+html[data-style="ubuntu"] #desktop { top: var(--tb); bottom: 0; }
+html[data-style="ubuntu"] #windows { top: var(--tb); bottom: 0; }
+
+html[data-style="ubuntu"] .tb-start { width: 40px; height: 26px; border-radius: 999px; color: #ececec; }
+html[data-style="ubuntu"] .tb-start:hover, html[data-style="ubuntu"] .tb-start.on { background: rgba(255, 255, 255, 0.14); }
+html[data-style="ubuntu"] .tbtn { border-radius: 999px; height: 26px; color: #ececec; }
+html[data-style="ubuntu"] .tbtn .t-title { color: #ececec; }
+html[data-style="ubuntu"] .tbtn:hover { background: rgba(255, 255, 255, 0.12); }
+html[data-style="ubuntu"] .tbtn.active { background: rgba(255, 255, 255, 0.2); }
+html[data-style="ubuntu"] .tbtn.active::after { background: #fff; }
+html[data-style="ubuntu"] .tray-btn { color: #ececec; }
+/* GNOME 居中时钟 */
+html[data-style="ubuntu"] .tray-clock {
+  position: absolute; left: 50%; bottom: auto;
+  transform: translateX(-50%);
+  flex-direction: row; gap: 0;
+}
+html[data-style="ubuntu"] .tray-clock .t { color: #fff; font-weight: 700; font-size: 12.5px; }
+html[data-style="ubuntu"] .tray-clock .d { display: none; }
+html[data-style="ubuntu"] .tb-showdesk { border-left: 1px solid rgba(255, 255, 255, 0.12); }
+html[data-style="ubuntu"] .tb-sep { opacity: 0.3; }
+
+/* headerbar 窗口:标题居中、圆形按钮、橙色关闭 */
+html[data-style="ubuntu"] .win {
+  border-radius: 12px 12px 0 0;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+html[data-style="ubuntu"] .win.max { border-radius: 0; }
+html[data-style="ubuntu"] .win-head {
+  position: relative;
+  height: 46px;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-solid);
+}
+html[data-style="ubuntu"] .win-title {
+  position: absolute; left: 60px; right: 80px;
+  text-align: center; font-weight: 700;
+  pointer-events: none;
+}
+html[data-style="ubuntu"] .win-ico { width: 18px; height: 18px; border-radius: 5px; }
+html[data-style="ubuntu"] .wbtn {
+  width: 20px; height: 20px; border-radius: 50%; padding: 0; margin-left: 4px;
+  background: var(--hover); color: var(--text);
+}
+/* 标题已绝对定位(脱离 flex 流),用 margin 把按钮组推回右侧 */
+html[data-style="ubuntu"] .wbtn.mn { margin-left: auto; }
+html[data-style="ubuntu"] .wbtn:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
+html[data-style="ubuntu"] .wbtn.close { background: #e95420; color: #fff; }
+html[data-style="ubuntu"] .wbtn.close:hover { background: #ed7146; }
+html[data-style="ubuntu"] .wbtn svg { width: 10px; height: 10px; margin: auto; }
+
+/* 从顶栏下方弹出的开始菜单 */
+html[data-style="ubuntu"] #start-menu {
+  top: calc(var(--tb) + 8px); bottom: auto;
+  transform-origin: 20px 0;
+  border-radius: 16px;
+}
+html[data-style="ubuntu"] #start-menu:not(.open) { transform: scale(0.92) translateY(-14px); }
+html[data-style="ubuntu"] .sm-search input { border-radius: 999px; }
+
+/* GNOME 通知:顶部居中的黑色胶囊 */
+html[data-style="ubuntu"] #toasts {
+  top: calc(var(--tb) + 10px); bottom: auto;
+  left: 50%; right: auto;
+  transform: translateX(-50%);
+  align-items: center;
+}
+html[data-style="ubuntu"] .toast {
+  border-radius: 999px;
+  background: rgba(28, 28, 30, 0.94);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+html[data-style="ubuntu"] .toast .ni-title { color: #fff; }
+html[data-style="ubuntu"] .toast .ni-body { color: rgba(255, 255, 255, 0.65); }
+
+/* 其他部件 */
+html[data-style="ubuntu"] .popover { border-radius: 14px; }
+html[data-style="ubuntu"] #ctx { border-radius: 12px; }
+html[data-style="ubuntu"] .dicon .tile { border-radius: 30%; }
+html[data-style="ubuntu"] .modal-box { border-radius: 14px; }
+
+/* ============================================================
+ * Win98 —— 经典银灰立体斜面、海军蓝标题栏、方角
+ * ============================================================ */
+html[data-style="win98"] {
+  --tb: 30px;
+  --radius: 0px;
+  --font: Tahoma, "Microsoft YaHei", SimSun, sans-serif;
+  --panel: #c0c0c0;
+  --panel-solid: #c0c0c0;
+  --panel-2: #c0c0c0;
+  --text: #101010;
+  --text-2: #474747;
+  --border: #868a8e;
+  --hover: rgba(0, 0, 0, 0.09);
+  --shadow: none;
+  --shadow-2: 3px 3px 0 rgba(0, 0, 0, 0.32);
+}
+
+/* 窗体:双斜面立体边框 */
+html[data-style="win98"] .win {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #fff, 3px 3px 0 rgba(0, 0, 0, 0.35);
+}
+html[data-style="win98"] .win.focused { border-color: color-mix(in srgb, var(--accent) 45%, #000); }
+html[data-style="win98"] .win-head {
+  height: 26px; padding: 0 2px 0 7px;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  border-bottom: none;
+}
+html[data-style="win98"] .win:not(.focused) .win-head { background: #7b7b7b; }
+html[data-style="win98"] .win-ico { width: 15px; height: 15px; border-radius: 2px; }
+html[data-style="win98"] .win-title { color: #fff; font-weight: 700; font-size: 12px; }
+html[data-style="win98"] .win:not(.focused) .win-title { color: #d4d4d4; }
+html[data-style="win98"] .wbtn {
+  width: 22px; height: 19px; border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .wbtn:hover { background: #d6d2ca; color: #000; }
+html[data-style="win98"] .wbtn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win98"] .wbtn svg { width: 10px; height: 10px; color: #000; }
+html[data-style="win98"] .wbtn.close:hover { background: #c0c0c0; }
+
+/* 任务栏 */
+html[data-style="win98"] #taskbar {
+  height: 30px;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #fff;
+  box-shadow: inset 0 1px 0 #dfdfdf;
+  padding: 0 3px;
+}
+html[data-style="win98"] .tb-start {
+  display: inline-flex; align-items: center; gap: 5px;
+  width: auto; height: 23px; padding: 0 8px;
+  font-weight: 700; font-size: 12px; color: #000;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .tb-start::after { content: "开始"; }
+html[data-style="win98"] .tb-start:active { border-color: #000 #dfdfdf #dfdfdf #000; }
+html[data-style="win98"] .tb-pinned .tbtn { box-shadow: none; border: none; background: transparent; height: 24px; }
+html[data-style="win98"] .tbtn {
+  height: 23px; border-radius: 0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .tbtn:hover { background: #d6d2ca; }
+html[data-style="win98"] .tbtn .t-title { font-size: 11.5px; color: #000; }
+html[data-style="win98"] .tbtn.active {
+  background: #d8d4cc;
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  box-shadow: inset 1px 1px 0 #808080;
+  font-weight: 700;
+}
+html[data-style="win98"] .tbtn.active::after { display: none; }
+html[data-style="win98"] .tray-btn { color: #000; height: 23px; }
+html[data-style="win98"] .tray-btn.on { color: #000080; }
+html[data-style="win98"] .tray-clock {
+  flex-direction: row; height: 23px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px 0 #6e6e6e;
+}
+html[data-style="win98"] .tray-clock .t { color: #000; font-size: 11.5px; }
+html[data-style="win98"] .tray-clock .d { color: #333; font-size: 11px; }
+html[data-style="win98"] .tb-showdesk { border-left: 1px solid #808080; box-shadow: inset 1px 0 0 #fff; height: 23px; }
+html[data-style="win98"] .tb-sep { background: transparent; border-left: 1px solid #808080; border-right: 1px solid #fff; }
+
+/* 开始菜单:经典侧边条 */
+html[data-style="win98"] #start-menu {
+  transform-origin: 0 100%;
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 3px 3px 0 rgba(0, 0, 0, 0.35);
+  padding-left: 32px;
+}
+html[data-style="win98"] #start-menu::before {
+  content: "WebOS 98";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 27px;
+  background: linear-gradient(180deg, #000080, #1084d0);
+  color: #c0c0c0;
+  font-size: 12px; font-weight: 700;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  display: flex; align-items: center; padding: 8px 0;
+}
+html[data-style="win98"] .sm-search input {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff; color: #000;
+}
+html[data-style="win98"] .sm-item { color: #000; }
+html[data-style="win98"] .sm-item:hover { background: #000080; color: #fff; }
+html[data-style="win98"] .sm-footer {
+  background: #c0c0c0;
+  border-top: 1px solid #808080;
+  box-shadow: inset 0 1px 0 #fff;
+}
+html[data-style="win98"] .sm-user { color: #000; }
+html[data-style="win98"] .sm-user .avatar { background: #000080; }
+
+/* 弹出层与控件 */
+html[data-style="win98"] .popover,
+html[data-style="win98"] #ctx,
+html[data-style="win98"] .toast,
+html[data-style="win98"] .modal-box {
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 3px 3px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win98"] .btn {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .btn:hover { background: #d6d2ca; }
+html[data-style="win98"] .btn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win98"] .btn.primary { background: #000080; color: #fff; }
+html[data-style="win98"] .btn.danger { color: #800000; }
+html[data-style="win98"] .input, html[data-style="win98"] .select {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+}
+html[data-style="win98"] .dicon .tile { border-radius: 2px; }
+html[data-style="win98"] .app-toolbar, html[data-style="win98"] .app-side, html[data-style="win98"] .app-status { border-color: #9a9a9a; }
+
+/* ============================================================
+ * WinXP —— Luna 蓝色渐变、圆角窗框、绿色开始按钮
+ * ============================================================ */
+html[data-style="winxp"] {
+  --tb: 32px;
+  --radius: 6px;
+  --font: Tahoma, "Microsoft YaHei", sans-serif;
+  --panel: #ece9d8;
+  --panel-solid: #ece9d8;
+  --panel-2: #ece9d8;
+  --text: #1c1c14;
+  --text-2: #5c5c50;
+  --border: #aca899;
+  --hover: rgba(0, 0, 0, 0.08);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+/* 窗体:Luna 蓝边框 + 渐变标题栏 */
+html[data-style="winxp"] .win {
+  border-radius: 8px 8px 0 0;
+  border: 0;
+  padding: 0 3px 3px;
+  background: #0055ea;
+  box-shadow: var(--shadow);
+}
+html[data-style="winxp"] .win.max { border-radius: 0; padding: 0; }
+html[data-style="winxp"] .win-head {
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border-radius: 7px 7px 0 0;
+  border-bottom: none;
+  background: linear-gradient(180deg,
+    #0058ee 0%, #3f8cf3 8%, #1a7ef0 20%, #036ffc 34%,
+    #0057e5 52%, #005bf5 68%, #0062ef 80%, #0043ae 96%, #0038a0 100%);
+}
+html[data-style="winxp"] .win:not(.focused) .win-head { filter: saturate(0.45) brightness(1.18); }
+html[data-style="winxp"] .win-title { color: #fff; font-weight: 700; font-size: 12.5px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6); }
+html[data-style="winxp"] .win:not(.focused) .win-title { color: #e6ecf8; }
+html[data-style="winxp"] .win-ico { border-radius: 3px; width: 18px; height: 18px; }
+html[data-style="winxp"] .wbtn {
+  width: 22px; height: 20px; border-radius: 4px;
+  border: 1px solid #fff;
+  background: linear-gradient(180deg, #9db9f7 0%, #4d8bec 45%, #2c6ee0 55%, #4379e4 100%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7);
+}
+html[data-style="winxp"] .wbtn svg { color: #fff; width: 11px; height: 11px; }
+html[data-style="winxp"] .wbtn:hover { filter: brightness(1.15); }
+html[data-style="winxp"] .wbtn.close { background: linear-gradient(180deg, #f5b093 0%, #e2684a 45%, #d94f2f 55%, #e0633f 100%); }
+
+/* 任务栏:Luna 蓝 */
+html[data-style="winxp"] #taskbar {
+  height: 30px;
+  background: linear-gradient(180deg, #245edb 0%, #3f8cf3 9%, #245edb 18%, #2057d0 92%, #1941a5 100%);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #0831d9;
+  box-shadow: inset 0 1px 0 #4a90f7;
+}
+html[data-style="winxp"] .tb-start {
+  display: inline-flex; align-items: center; gap: 5px;
+  width: auto; height: 29px; padding: 0 12px 0 9px;
+  border-radius: 0 10px 10px 0;
+  background: linear-gradient(180deg, #3c9338 0%, #3d9e39 8%, #369336 40%, #2f8f2f 88%, #207720 100%);
+  color: #fff; font-weight: 700; font-style: italic; font-size: 12.5px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 0 5px rgba(255, 255, 255, 0.35);
+}
+html[data-style="winxp"] .tb-start::after { content: "开始"; }
+html[data-style="winxp"] .tbtn { color: #fff; border-radius: 3px; }
+html[data-style="winxp"] .tbtn .t-title { color: #fff; }
+html[data-style="winxp"] .tbtn:hover { background: rgba(255, 255, 255, 0.2); }
+html[data-style="winxp"] .tbtn.active { background: rgba(0, 0, 0, 0.25); box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.45); }
+html[data-style="winxp"] .tray-btn { color: #fff; }
+html[data-style="winxp"] .tray-clock {
+  border-left: 1px solid #0b3168;
+  box-shadow: inset 1px 0 0 #5a9af7;
+}
+html[data-style="winxp"] .tray-clock .t { color: #fff; }
+html[data-style="winxp"] .tray-clock .d { color: #cfe0fb; }
+html[data-style="winxp"] .tb-showdesk { border-left: 1px solid #0b3168; box-shadow: inset 1px 0 0 #5a9af7; }
+
+/* 开始菜单:白底蓝框 */
+html[data-style="winxp"] #start-menu {
+  transform-origin: 10px 100%;
+  border-radius: 8px 8px 0 0;
+  background: #fff;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid #0831d9;
+}
+html[data-style="winxp"] .sm-search input { border-radius: 3px; border-color: #7f9db9; background: #fff; color: #000; }
+html[data-style="winxp"] .sm-item { color: #00136b; }
+html[data-style="winxp"] .sm-item:hover { background: #316ac5; color: #fff; }
+html[data-style="winxp"] .sm-footer {
+  background: linear-gradient(180deg, #3f8cf3 0%, #1c60cf 60%, #0d47a8 100%);
+  border-top: none;
+}
+html[data-style="winxp"] .sm-user { color: #fff; }
+html[data-style="winxp"] .sm-user .avatar { background: #e8a33d; }
+
+/* 控件 */
+html[data-style="winxp"] .btn {
+  border-radius: 3px;
+  border: 1px solid #003c74;
+  background: linear-gradient(180deg, #fff 0%, #f2efe3 45%, #d9d4c2 100%);
+}
+html[data-style="winxp"] .btn:hover { box-shadow: 0 0 0 2px rgba(255, 176, 64, 0.5); }
+html[data-style="winxp"] .btn.primary { background: linear-gradient(180deg, #7ba2e8 0%, #3260c8 50%, #2854b0 100%); color: #fff; }
+html[data-style="winxp"] .input, html[data-style="winxp"] .select { border-radius: 3px; border-color: #7f9db9; }
+html[data-style="winxp"] .popover,
+html[data-style="winxp"] #ctx,
+html[data-style="winxp"] .toast,
+html[data-style="winxp"] .modal-box {
+  border-radius: 6px;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  background: var(--panel-solid);
+  border-color: #7f9db9;
+}
+html[data-style="winxp"] .dicon .tile { border-radius: 4px; }
+
+/* ============================================================
+ * Win7 —— Aero 玻璃质感、圆形开始球、辉光标题
+ * ============================================================ */
+html[data-style="win7"] {
+  --tb: 46px;
+  --radius: 8px;
+}
+
+/* 玻璃任务栏 */
+html[data-style="win7"] #taskbar {
+  height: 42px;
+  background: rgba(14, 24, 52, 0.66);
+  border-top: 1px solid rgba(130, 178, 255, 0.4);
+  box-shadow: inset 0 1px 0 rgba(170, 210, 255, 0.22), inset 0 2px 8px rgba(120, 170, 255, 0.12);
+}
+html[data-style="win7"] .tb-start {
+  width: 40px; height: 40px; margin: 0 4px; padding: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #a8d8ff 0%, #58a5e8 26%, #1c62b4 58%, #0a3a76 82%, #052a56 100%);
+  box-shadow: 0 0 10px rgba(110, 180, 255, 0.55), inset 0 0 6px rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+html[data-style="win7"] .tb-start:hover { box-shadow: 0 0 16px rgba(140, 200, 255, 0.85), inset 0 0 8px rgba(255, 255, 255, 0.6); }
+html[data-style="win7"] .tb-start.on { box-shadow: 0 0 20px rgba(160, 215, 255, 0.95), inset 0 0 10px rgba(255, 255, 255, 0.7); }
+html[data-style="win7"] .tbtn {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+html[data-style="win7"] .tbtn:hover { background: rgba(160, 210, 255, 0.28); }
+html[data-style="win7"] .tbtn.active { background: rgba(160, 210, 255, 0.4); border-color: rgba(200, 230, 255, 0.5); }
+html[data-style="win7"] .tbtn .t-title { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85); }
+html[data-style="win7"] .tbtn.active::after { background: #bfe2ff; }
+html[data-style="win7"] .tray-btn { color: #eaf2ff; }
+html[data-style="win7"] .tray-btn.on { color: #bfe2ff; }
+html[data-style="win7"] .tray-clock .t { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85); }
+html[data-style="win7"] .tray-clock .d { color: rgba(230, 240, 255, 0.75); }
+html[data-style="win7"] .tb-showdesk { border-left: 1px solid rgba(130, 178, 255, 0.35); }
+
+/* Aero 玻璃窗体 */
+html[data-style="win7"] .win {
+  border-radius: 9px;
+  border: 1px solid rgba(2, 18, 52, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 16px 44px rgba(0, 8, 36, 0.55);
+}
+html[data-style="win7"] .win-head {
+  height: 33px;
+  padding: 0 5px 0 10px;
+  border-radius: 8px 8px 0 0;
+  border-bottom: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.16) 30%, rgba(255, 255, 255, 0.05) 49%, rgba(0, 0, 0, 0.05) 51%, rgba(255, 255, 255, 0.12) 100%),
+    linear-gradient(180deg, #31508f, #17294e);
+}
+html[data-style="win7"] .win:not(.focused) .win-head { filter: saturate(0.35) brightness(1.3); }
+html[data-style="win7"] .win-title {
+  color: #fff; font-size: 12.5px;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.95), 0 0 3px rgba(255, 255, 255, 0.6), 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+html[data-style="win7"] .win:not(.focused) .win-title { color: #cdd8ee; }
+html[data-style="win7"] .wbtn {
+  width: 30px; height: 21px;
+  border-radius: 0 0 7px 7px;
+  margin-left: 2px; padding: 0;
+  border: 1px solid rgba(2, 18, 52, 0.55);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.16) 45%, rgba(0, 0, 0, 0.14) 55%, rgba(255, 255, 255, 0.22));
+  color: #fff;
+}
+html[data-style="win7"] .wbtn svg { color: #fff; width: 10px; height: 10px; }
+html[data-style="win7"] .wbtn:hover { background: linear-gradient(180deg, rgba(190, 230, 255, 0.75), rgba(110, 175, 240, 0.4) 50%, rgba(70, 140, 220, 0.45)); }
+html[data-style="win7"] .wbtn.close { background: linear-gradient(180deg, #f6b08e 0%, #e0683a 45%, #d14e20 55%, #e06034 100%); }
+html[data-style="win7"] .wbtn.close:hover { background: linear-gradient(180deg, #ffc2a2, #ef7442 50%, #e3632e); }
+
+/* 深色玻璃开始菜单 */
+html[data-style="win7"] #start-menu {
+  border-radius: 10px;
+  background: rgba(16, 28, 58, 0.9);
+  backdrop-filter: blur(30px) saturate(1.4);
+  -webkit-backdrop-filter: blur(30px) saturate(1.4);
+  border: 1px solid rgba(130, 178, 255, 0.4);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset, var(--shadow);
+  transform-origin: 20px 100%;
+}
+html[data-style="win7"] .sm-item .name { color: #f0f5ff; }
+html[data-style="win7"] .sm-item:hover { background: rgba(150, 200, 255, 0.22); }
+html[data-style="win7"] .sm-search input {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-color: rgba(130, 178, 255, 0.45);
+}
+html[data-style="win7"] .sm-search input::placeholder { color: rgba(220, 235, 255, 0.55); }
+html[data-style="win7"] .sm-empty { color: rgba(230, 240, 255, 0.6); }
+html[data-style="win7"] .sm-footer { border-top-color: rgba(130, 178, 255, 0.3); background: rgba(255, 255, 255, 0.06); }
+html[data-style="win7"] .sm-user { color: #f0f5ff; }
+html[data-style="win7"] #sm-username { color: #fff; }
+
+/* 玻璃弹出层 */
+html[data-style="win7"] .popover,
+html[data-style="win7"] #ctx,
+html[data-style="win7"] .toast {
+  border-radius: 10px;
+  background: rgba(22, 34, 64, 0.92);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border-color: rgba(130, 178, 255, 0.35);
+  color: #eef4ff;
+}
+html[data-style="win7"] .popover .pct, html[data-style="win7"] .popover b { color: #fff; }
+html[data-style="win7"] .ctx-item { color: #eef4ff; }
+html[data-style="win7"] .cal-grid .wd, html[data-style="win7"] .cal-grid .day.dim { color: rgba(220, 232, 255, 0.45); }
+html[data-style="win7"] .cal-grid .day { color: #eef4ff; }
+html[data-style="win7"] .cal-now .n-date { color: rgba(220, 232, 255, 0.6); }
+html[data-style="win7"] .noti-item { background: rgba(255, 255, 255, 0.07); border-color: rgba(130, 178, 255, 0.25); }
+html[data-style="win7"] .pn-empty, html[data-style="win7"] .ni-time { color: rgba(220, 232, 255, 0.55); }
+html[data-style="win7"] .dicon .tile { border-radius: 22%; }
