@@ -1,0 +1,164 @@
+/* ============================================================
+ * Win98 —— 经典银灰立体斜面、海军蓝标题栏、方角
+ * ============================================================ */
+html[data-style="win98"] {
+  --tb: 30px;
+  --radius: 0px;
+  --font: Tahoma, "Microsoft YaHei", SimSun, sans-serif;
+  --panel: #c0c0c0;
+  --panel-solid: #c0c0c0;
+  --panel-2: #c0c0c0;
+  --text: #101010;
+  --text-2: #474747;
+  --border: #868a8e;
+  --hover: rgba(0, 0, 0, 0.09);
+  --shadow: none;
+  --shadow-2: 3px 3px 0 rgba(0, 0, 0, 0.32);
+}
+
+/* 窗体:双斜面立体边框 */
+html[data-style="win98"] .win {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #fff, 3px 3px 0 rgba(0, 0, 0, 0.35);
+}
+html[data-style="win98"] .win.focused { border-color: color-mix(in srgb, var(--accent) 45%, #000); }
+html[data-style="win98"] .win-head {
+  height: 26px; padding: 0 2px 0 7px;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  border-bottom: none;
+}
+html[data-style="win98"] .win:not(.focused) .win-head { background: #7b7b7b; }
+html[data-style="win98"] .win-ico { width: 15px; height: 15px; border-radius: 2px; }
+html[data-style="win98"] .win-title { color: #fff; font-weight: 700; font-size: 12px; }
+html[data-style="win98"] .win:not(.focused) .win-title { color: #d4d4d4; }
+html[data-style="win98"] .wbtn {
+  width: 22px; height: 19px; border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .wbtn:hover { background: #d6d2ca; color: #000; }
+html[data-style="win98"] .wbtn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win98"] .wbtn svg { width: 10px; height: 10px; color: #000; }
+html[data-style="win98"] .wbtn.close:hover { background: #c0c0c0; }
+
+/* 任务栏 */
+html[data-style="win98"] #taskbar {
+  height: 30px;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #fff;
+  box-shadow: inset 0 1px 0 #dfdfdf;
+  padding: 0 3px;
+}
+html[data-style="win98"] .tb-start {
+  display: inline-flex; align-items: center; gap: 5px;
+  width: auto; height: 23px; padding: 0 8px;
+  font-weight: 700; font-size: 12px; color: #000;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .tb-start::after { content: "开始"; }
+html[data-style="win98"] .tb-start:active { border-color: #000 #dfdfdf #dfdfdf #000; }
+html[data-style="win98"] .tb-pinned .tbtn { box-shadow: none; border: none; background: transparent; height: 24px; }
+html[data-style="win98"] .tbtn {
+  height: 23px; border-radius: 0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .tbtn:hover { background: #d6d2ca; }
+html[data-style="win98"] .tbtn .t-title { font-size: 11.5px; color: #000; }
+html[data-style="win98"] .tbtn.active {
+  background: #d8d4cc;
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  box-shadow: inset 1px 1px 0 #808080;
+  font-weight: 700;
+}
+html[data-style="win98"] .tbtn.active::after { display: none; }
+html[data-style="win98"] .tray-btn { color: #000; height: 23px; }
+html[data-style="win98"] .tray-btn.on { color: #000080; }
+html[data-style="win98"] .tray-clock {
+  flex-direction: row; height: 23px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px 0 #6e6e6e;
+}
+html[data-style="win98"] .tray-clock .t { color: #000; font-size: 11.5px; }
+html[data-style="win98"] .tray-clock .d { color: #333; font-size: 11px; }
+html[data-style="win98"] .tb-showdesk { border-left: 1px solid #808080; box-shadow: inset 1px 0 0 #fff; height: 23px; }
+html[data-style="win98"] .tb-sep { background: transparent; border-left: 1px solid #808080; border-right: 1px solid #fff; }
+
+/* 开始菜单:经典侧边条 */
+html[data-style="win98"] #start-menu {
+  transform-origin: 0 100%;
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 3px 3px 0 rgba(0, 0, 0, 0.35);
+  padding-left: 32px;
+}
+html[data-style="win98"] #start-menu::before {
+  content: "WebOS 98";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 27px;
+  background: linear-gradient(180deg, #000080, #1084d0);
+  color: #c0c0c0;
+  font-size: 12px; font-weight: 700;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  display: flex; align-items: center; padding: 8px 0;
+}
+html[data-style="win98"] .sm-search input {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff; color: #000;
+}
+html[data-style="win98"] .sm-item { color: #000; }
+html[data-style="win98"] .sm-item:hover { background: #000080; color: #fff; }
+html[data-style="win98"] .sm-footer {
+  background: #c0c0c0;
+  border-top: 1px solid #808080;
+  box-shadow: inset 0 1px 0 #fff;
+}
+html[data-style="win98"] .sm-user { color: #000; }
+html[data-style="win98"] .sm-user .avatar { background: #000080; }
+
+/* 弹出层与控件 */
+html[data-style="win98"] .popover,
+html[data-style="win98"] #ctx,
+html[data-style="win98"] .toast,
+html[data-style="win98"] .modal-box {
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 3px 3px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win98"] .btn {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win98"] .btn:hover { background: #d6d2ca; }
+html[data-style="win98"] .btn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win98"] .btn.primary { background: #000080; color: #fff; }
+html[data-style="win98"] .btn.danger { color: #800000; }
+html[data-style="win98"] .input, html[data-style="win98"] .select {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+}
+html[data-style="win98"] .dicon .tile { border-radius: 2px; }
+html[data-style="win98"] .app-toolbar, html[data-style="win98"] .app-side, html[data-style="win98"] .app-status { border-color: #9a9a9a; }
+

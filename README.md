@@ -51,8 +51,7 @@ webos/
 │  ├─ shell.css          桌面、任务栏、开始菜单、托盘、通知、开关机画面
 │  ├─ window.css         窗体、窗头、窗口按钮、缩放手柄
 │  ├─ appkit.css         应用通用组件(按钮/表单/列表/模态框/系统对话框…)
-│  ├─ themes.css         风格主题包(neon/mac/win31/win98/winxp/win7/ubuntu)
-│  └─ apps/              各应用专属样式(css/apps/<id>.css,由加载器注入)
+│  └─ themes/            风格主题包,每套一个文件(css/themes/<id>.css,modern 免样式表)
 ├─ js/
 │  ├─ main.js            启动入口:装配应用与外壳(纯 import 清单)
 │  ├─ core/              内核
@@ -78,7 +77,7 @@ webos/
 │  │  ├─ startmenu.js    开始菜单
 │  │  ├─ tray.js         系统托盘(音量/日历/通知/开关机)
 │  │  ├─ shortcuts.js    布局按钮 + 全局快捷键
-│  │  └─ appstyles.js    应用样式注入器
+│  │  └─ appstyles.js    应用样式注入器(加载 js/apps/<id>/<id>.css)
 │  └─ apps/              应用(每个应用一个目录)
 │     └─ <id>/index.js   应用代码(mount + 逻辑)
 ├─ js/game/index.js      内置游戏内容(示例谜题链)
@@ -86,7 +85,7 @@ webos/
 ```
 
 **新增应用**:在 `js/apps/<id>/index.js` 实现 mount 并 register,在
-`js/main.js` 加一行 import;若有专属样式,放 `css/apps/<id>.css` 并在
+`js/main.js` 加一行 import;若有专属样式,放 `js/apps/<id>/<id>.css` 并在
 `js/system/appstyles.js` 的清单里加名字即可。
 
 ## 一、窗口系统
@@ -288,7 +287,8 @@ node tools/e2e.mjs                # 25 项断言 + .shots/ 全程截图
 
 ### 风格主题架构
 
-皮肤通过 `<html data-style="...">` 属性驱动,全部实现在 `css/themes.css`,
+皮肤通过 `<html data-style="...">` 属性驱动,全部实现在 `css/themes/<id>.css`
+(modern 为默认外观,无需样式表),
 不改动任何 DOM 与 JS 结构即可新增皮肤:
 
 - 各皮肤覆盖 CSS 变量(调色板、圆角、任务栏高度 `--tb`、字体)与组件样式
@@ -312,8 +312,9 @@ node tools/e2e.mjs                # 25 项断言 + .shots/ 全程截图
   强制 Yaru 橙强调色(整套系统的选中态/主按钮变橙)、
   顶部居中黑色胶囊通知;托盘弹出面板自动改为从顶栏下方弹出。
 
-新增皮肤:在 `store.js` 的 `STYLES` 加一项,在 `themes.css` 写一段
-`html[data-style="xxx"] { ... }` 即可,设置界面自动出现新选项。
+新增皮肤:在 `store.js` 的 `STYLES` 加一项,新建 `css/themes/xxx.css` 写一段
+`html[data-style="xxx"] { ... }` 并在 `index.html` 加一行 `<link>` 即可,
+设置界面自动出现新选项。
 
 ## 开发调试
 

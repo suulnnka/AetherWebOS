@@ -1,0 +1,119 @@
+/* ============================================================
+ * WinXP —— Luna 蓝色渐变、圆角窗框、绿色开始按钮
+ * ============================================================ */
+html[data-style="winxp"] {
+  --tb: 32px;
+  --radius: 6px;
+  --font: Tahoma, "Microsoft YaHei", sans-serif;
+  --panel: #ece9d8;
+  --panel-solid: #ece9d8;
+  --panel-2: #ece9d8;
+  --text: #1c1c14;
+  --text-2: #5c5c50;
+  --border: #aca899;
+  --hover: rgba(0, 0, 0, 0.08);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+/* 窗体:Luna 蓝边框 + 渐变标题栏 */
+html[data-style="winxp"] .win {
+  border-radius: 8px 8px 0 0;
+  border: 0;
+  padding: 0 3px 3px;
+  background: #0055ea;
+  box-shadow: var(--shadow);
+}
+html[data-style="winxp"] .win.max { border-radius: 0; padding: 0; }
+html[data-style="winxp"] .win-head {
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border-radius: 7px 7px 0 0;
+  border-bottom: none;
+  background: linear-gradient(180deg,
+    #0058ee 0%, #3f8cf3 8%, #1a7ef0 20%, #036ffc 34%,
+    #0057e5 52%, #005bf5 68%, #0062ef 80%, #0043ae 96%, #0038a0 100%);
+}
+html[data-style="winxp"] .win:not(.focused) .win-head { filter: saturate(0.45) brightness(1.18); }
+html[data-style="winxp"] .win-title { color: #fff; font-weight: 700; font-size: 12.5px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.6); }
+html[data-style="winxp"] .win:not(.focused) .win-title { color: #e6ecf8; }
+html[data-style="winxp"] .win-ico { border-radius: 3px; width: 18px; height: 18px; }
+html[data-style="winxp"] .wbtn {
+  width: 22px; height: 20px; border-radius: 4px;
+  border: 1px solid #fff;
+  background: linear-gradient(180deg, #9db9f7 0%, #4d8bec 45%, #2c6ee0 55%, #4379e4 100%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7);
+}
+html[data-style="winxp"] .wbtn svg { color: #fff; width: 11px; height: 11px; }
+html[data-style="winxp"] .wbtn:hover { filter: brightness(1.15); }
+html[data-style="winxp"] .wbtn.close { background: linear-gradient(180deg, #f5b093 0%, #e2684a 45%, #d94f2f 55%, #e0633f 100%); }
+
+/* 任务栏:Luna 蓝 */
+html[data-style="winxp"] #taskbar {
+  height: 30px;
+  background: linear-gradient(180deg, #245edb 0%, #3f8cf3 9%, #245edb 18%, #2057d0 92%, #1941a5 100%);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #0831d9;
+  box-shadow: inset 0 1px 0 #4a90f7;
+}
+html[data-style="winxp"] .tb-start {
+  display: inline-flex; align-items: center; gap: 5px;
+  width: auto; height: 29px; padding: 0 12px 0 9px;
+  border-radius: 0 10px 10px 0;
+  background: linear-gradient(180deg, #3c9338 0%, #3d9e39 8%, #369336 40%, #2f8f2f 88%, #207720 100%);
+  color: #fff; font-weight: 700; font-style: italic; font-size: 12.5px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 0 5px rgba(255, 255, 255, 0.35);
+}
+html[data-style="winxp"] .tb-start::after { content: "开始"; }
+html[data-style="winxp"] .tbtn { color: #fff; border-radius: 3px; }
+html[data-style="winxp"] .tbtn .t-title { color: #fff; }
+html[data-style="winxp"] .tbtn:hover { background: rgba(255, 255, 255, 0.2); }
+html[data-style="winxp"] .tbtn.active { background: rgba(0, 0, 0, 0.25); box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.45); }
+html[data-style="winxp"] .tray-btn { color: #fff; }
+html[data-style="winxp"] .tray-clock {
+  border-left: 1px solid #0b3168;
+  box-shadow: inset 1px 0 0 #5a9af7;
+}
+html[data-style="winxp"] .tray-clock .t { color: #fff; }
+html[data-style="winxp"] .tray-clock .d { color: #cfe0fb; }
+html[data-style="winxp"] .tb-showdesk { border-left: 1px solid #0b3168; box-shadow: inset 1px 0 0 #5a9af7; }
+
+/* 开始菜单:白底蓝框 */
+html[data-style="winxp"] #start-menu {
+  transform-origin: 10px 100%;
+  border-radius: 8px 8px 0 0;
+  background: #fff;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid #0831d9;
+}
+html[data-style="winxp"] .sm-search input { border-radius: 3px; border-color: #7f9db9; background: #fff; color: #000; }
+html[data-style="winxp"] .sm-item { color: #00136b; }
+html[data-style="winxp"] .sm-item:hover { background: #316ac5; color: #fff; }
+html[data-style="winxp"] .sm-footer {
+  background: linear-gradient(180deg, #3f8cf3 0%, #1c60cf 60%, #0d47a8 100%);
+  border-top: none;
+}
+html[data-style="winxp"] .sm-user { color: #fff; }
+html[data-style="winxp"] .sm-user .avatar { background: #e8a33d; }
+
+/* 控件 */
+html[data-style="winxp"] .btn {
+  border-radius: 3px;
+  border: 1px solid #003c74;
+  background: linear-gradient(180deg, #fff 0%, #f2efe3 45%, #d9d4c2 100%);
+}
+html[data-style="winxp"] .btn:hover { box-shadow: 0 0 0 2px rgba(255, 176, 64, 0.5); }
+html[data-style="winxp"] .btn.primary { background: linear-gradient(180deg, #7ba2e8 0%, #3260c8 50%, #2854b0 100%); color: #fff; }
+html[data-style="winxp"] .input, html[data-style="winxp"] .select { border-radius: 3px; border-color: #7f9db9; }
+html[data-style="winxp"] .popover,
+html[data-style="winxp"] #ctx,
+html[data-style="winxp"] .toast,
+html[data-style="winxp"] .modal-box {
+  border-radius: 6px;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  background: var(--panel-solid);
+  border-color: #7f9db9;
+}
+html[data-style="winxp"] .dicon .tile { border-radius: 4px; }
+

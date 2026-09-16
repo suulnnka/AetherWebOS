@@ -1,0 +1,270 @@
+/* ============================================================
+ * 霓虹未来(Neon)—— 强制暗色 + 窗框霓虹灯条 + 赛博网格桌面
+ * ============================================================ */
+html[data-style="neon"] {
+  --tb: 58px;   /* 悬浮任务栏(46px + 上下留边) */
+  --radius: 10px;
+  --accent: #00e5ff;
+  --panel: rgba(9, 14, 28, 0.86);
+  --panel-solid: #0a1020;
+  --panel-2: #0c1326;
+  --text: #d9f6ff;
+  --text-2: #6f88ad;
+  --border: rgba(0, 240, 255, 0.22);
+  --hover: rgba(0, 240, 255, 0.08);
+  --shadow: 0 0 26px rgba(0, 240, 255, 0.16), 0 18px 54px rgba(0, 0, 0, 0.65);
+  --shadow-2: 0 0 14px rgba(0, 240, 255, 0.12), 0 8px 26px rgba(0, 0, 0, 0.55);
+}
+
+/* ============ 动态桌面:压暗 + 漂移网格 + 漂浮光球 + 扫描光带 + 扫描线 ============ */
+html[data-style="neon"] #wallpaper::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 1;
+  background:
+    radial-gradient(90% 70% at 85% 100%, rgba(255, 42, 212, 0.15), transparent 55%),
+    radial-gradient(80% 60% at 8% 0%, rgba(0, 240, 255, 0.13), transparent 55%),
+    rgba(3, 6, 16, 0.78);
+}
+html[data-style="neon"] #desktop { bottom: 0; }   /* 悬浮任务栏后壁纸铺满全屏 */
+/* 漂移网格 */
+html[data-style="neon"] #desktop::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    linear-gradient(rgba(0, 240, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.055) 1px, transparent 1px);
+  background-size: 44px 44px;
+  animation: neonGridDrift 70s linear infinite;
+}
+@keyframes neonGridDrift { to { background-position: 44px 132px, 44px 132px; } }
+/* 双色漂浮光球 */
+html[data-style="neon"] #desktop::after {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(300px 220px at 22% 32%, rgba(0, 240, 255, 0.10), transparent 70%),
+    radial-gradient(360px 260px at 76% 70%, rgba(255, 42, 212, 0.09), transparent 70%);
+  animation: neonOrbs 26s ease-in-out infinite alternate;
+}
+@keyframes neonOrbs {
+  from { transform: translate(-3%, -2%) scale(1); }
+  to   { transform: translate(4%, 3%) scale(1.1); }
+}
+html[data-style="neon"] #icons { z-index: 2; }
+/* 周期性扫描光带(自上而下扫过桌面) */
+html[data-style="neon"] #icons::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 3;
+  background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.8), transparent);
+  box-shadow: 0 0 14px 2px rgba(0, 240, 255, 0.45);
+  animation: neonSweep 11s linear infinite;
+  pointer-events: none;
+}
+@keyframes neonSweep {
+  0% { transform: translateY(-4px); opacity: 0; }
+  3% { opacity: 1; }
+  96% { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+/* 全屏 CRT 扫描线氛围 */
+html[data-style="neon"] body::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 1600;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(160, 240, 255, 0.022) 0 1px, transparent 1px 3px);
+}
+
+/* ============ 窗体:每应用专属双色流光灯条 + 活动窗口呼吸辉光 ============ */
+html[data-style="neon"] .win {
+  border: 1px solid color-mix(in srgb, var(--neon-a, #00f0ff) 45%, transparent);
+  background: var(--panel-solid);
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--neon-a, #00f0ff) 18%, transparent),
+    0 0 46px color-mix(in srgb, var(--neon-b, #ff2ad4) 9%, transparent),
+    0 18px 50px rgba(0, 0, 0, 0.6);
+}
+html[data-style="neon"] .win.focused { animation: neonBreath 2.8s ease-in-out infinite; }
+@keyframes neonBreath {
+  0%, 100% {
+    box-shadow:
+      0 0 16px color-mix(in srgb, var(--neon-a, #00f0ff) 15%, transparent),
+      0 0 38px color-mix(in srgb, var(--neon-b, #ff2ad4) 7%, transparent),
+      0 18px 50px rgba(0, 0, 0, 0.6);
+  }
+  50% {
+    box-shadow:
+      0 0 34px color-mix(in srgb, var(--neon-a, #00f0ff) 36%, transparent),
+      0 0 72px color-mix(in srgb, var(--neon-b, #ff2ad4) 17%, transparent),
+      0 18px 56px rgba(0, 0, 0, 0.66);
+  }
+}
+html[data-style="neon"] .win:not(.focused) {
+  border-color: rgba(0, 240, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+html[data-style="neon"] .win-head {
+  position: relative;
+  height: 38px;
+  border-bottom: 1px solid color-mix(in srgb, var(--neon-a, #00f0ff) 35%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--neon-a, #00f0ff) 9%, transparent),
+    rgba(10, 16, 32, 0.4));
+}
+/* 顶部流光灯条:A → B → A 循环流动 */
+html[data-style="neon"] .win-head::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: linear-gradient(90deg,
+    var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4), var(--neon-a, #00f0ff));
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 3.2s linear infinite;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent);
+}
+html[data-style="neon"] .win:not(.focused) .win-head::before {
+  filter: saturate(0.4) brightness(0.55);
+  animation-play-state: paused;   /* 未聚焦:灯条停摆变暗 */
+}
+@keyframes neonFlow { to { background-position: 200% 0; } }
+html[data-style="neon"] .win-title {
+  color: #eafcff;
+  font-family: var(--mono);
+  letter-spacing: 0.5px;
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--neon-a, #00f0ff) 85%, transparent),
+    0 0 22px color-mix(in srgb, var(--neon-a, #00f0ff) 40%, transparent);
+}
+html[data-style="neon"] .win:not(.focused) .win-title { text-shadow: none; color: #7d95b8; }
+html[data-style="neon"] .win-ico { box-shadow: 0 0 8px color-mix(in srgb, var(--neon-a, #00f0ff) 55%, transparent); border-radius: 5px; }
+html[data-style="neon"] .wbtn { color: #9feaff; border-radius: 7px; }
+html[data-style="neon"] .wbtn:hover {
+  color: var(--neon-a, #00f0ff);
+  background: color-mix(in srgb, var(--neon-a, #00f0ff) 12%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 45%, transparent);
+}
+html[data-style="neon"] .wbtn.close { color: #ff9ae8; }
+html[data-style="neon"] .wbtn.close:hover {
+  color: #ff5ce0; background: rgba(255, 42, 212, 0.14);
+  box-shadow: 0 0 12px rgba(255, 42, 212, 0.55);
+}
+
+/* ============ 任务栏:悬浮切角战控台(顶部流光 + 斜纹肌理) ============ */
+html[data-style="neon"] #taskbar {
+  left: 14px; right: 14px; bottom: 10px;
+  width: auto; height: 46px;
+  background:
+    repeating-linear-gradient(115deg, rgba(0, 240, 255, 0.03) 0 2px, transparent 2px 9px),
+    rgba(6, 10, 20, 0.88);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 0;
+  clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%, 0 16px);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.13), 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+/* 顶部四色流光光线 */
+html[data-style="neon"] #taskbar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, #00f0ff, #7d5fff, #ff2ad4, #00f0ff);
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 4.5s linear infinite;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.7);
+}
+html[data-style="neon"] .tb-start,
+html[data-style="neon"] .tbtn {
+  position: relative;
+  min-height: 34px;
+  border-radius: 0;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  background: rgba(10, 16, 32, 0.72);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+html[data-style="neon"] .tb-start { color: #7ff2ff; width: 40px; }
+html[data-style="neon"] .tb-start:hover, html[data-style="neon"] .tb-start.on {
+  color: #00f0ff;
+  border-color: rgba(0, 240, 255, 0.8);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.45), inset 0 0 10px rgba(0, 240, 255, 0.15);
+}
+html[data-style="neon"] .tbtn:hover {
+  background: rgba(0, 240, 255, 0.09);
+  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 60%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--neon-a, #00f0ff) 30%, transparent);
+}
+/* 活动芯片:专属双色迷你流光灯条 + 呼吸 */
+html[data-style="neon"] .tbtn.active {
+  background: color-mix(in srgb, var(--neon-a, #00f0ff) 8%, transparent);
+  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent);
+  animation: neonChipBreath 2.8s ease-in-out infinite;
+}
+html[data-style="neon"] .tbtn.active::after {
+  content: ""; position: absolute;
+  left: 0; right: 0; top: 0; bottom: auto;
+  height: 2px; border-radius: 0;
+  background: linear-gradient(90deg, var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4), var(--neon-a, #00f0ff));
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  animation: neonFlow 3.2s linear infinite;
+  box-shadow: none;
+}
+@keyframes neonChipBreath {
+  50% { box-shadow: 0 0 16px color-mix(in srgb, var(--neon-a, #00f0ff) 40%, transparent); }
+}
+html[data-style="neon"] .tbtn .t-ico { box-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
+html[data-style="neon"] .tray-btn { color: #7fa8c8; }
+html[data-style="neon"] .tray-btn:hover {
+  color: #00f0ff; border-radius: 8px;
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+html[data-style="neon"] .tray-btn.on { color: #00f0ff; }
+html[data-style="neon"] .tray-clock .t {
+  color: #eafcff; font-family: var(--mono); font-size: 13px;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+}
+html[data-style="neon"] .tray-clock .d { color: #6f88ad; font-family: var(--mono); }
+html[data-style="neon"] .tb-showdesk {
+  width: 8px; border-radius: 2px;
+  border-left: 1px solid rgba(0, 240, 255, 0.4);
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.15), rgba(255, 42, 212, 0.25));
+}
+html[data-style="neon"] .tb-sep {
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(0, 240, 255, 0.6), transparent);
+}
+
+/* 开始菜单与弹层:暗色玻璃 + 霓虹描边 */
+html[data-style="neon"] #start-menu,
+html[data-style="neon"] .popover,
+html[data-style="neon"] #ctx,
+html[data-style="neon"] .toast,
+html[data-style="neon"] .modal-box {
+  background: rgba(8, 12, 24, 0.92);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.14), 0 16px 44px rgba(0, 0, 0, 0.6);
+}
+html[data-style="neon"] .sm-search input { background: rgba(0, 240, 255, 0.06); color: #d9f6ff; border-color: rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .sm-search input:focus { border-color: #00f0ff; box-shadow: 0 0 12px rgba(0, 240, 255, 0.35); }
+html[data-style="neon"] .sm-item .name { color: #cfeeff; }
+html[data-style="neon"] .sm-item:hover { background: rgba(0, 240, 255, 0.1); box-shadow: inset 0 0 12px rgba(0, 240, 255, 0.12); }
+html[data-style="neon"] .sm-footer { border-top-color: rgba(0, 240, 255, 0.25); background: rgba(0, 240, 255, 0.04); }
+html[data-style="neon"] .ctx-item:hover { background: rgba(0, 240, 255, 0.1); }
+html[data-style="neon"] .ctx-item .ci-ico { color: #52c8e8; }
+
+/* 控件:霓虹描边 + 辉光 */
+html[data-style="neon"] .btn { border-color: rgba(0, 240, 255, 0.35); }
+html[data-style="neon"] .btn:hover {
+  border-color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+}
+html[data-style="neon"] .btn.primary {
+  background: #00e5ff; border-color: #00e5ff; color: #02141a;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+}
+html[data-style="neon"] .btn.primary:hover { background: #4df1ff; box-shadow: 0 0 20px rgba(0, 240, 255, 0.7); }
+html[data-style="neon"] .btn.danger { color: #ff5ce0; border-color: rgba(255, 42, 212, 0.45); }
+html[data-style="neon"] .btn.danger:hover { box-shadow: 0 0 10px rgba(255, 42, 212, 0.4); }
+html[data-style="neon"] .input, html[data-style="neon"] .select { background: rgba(0, 240, 255, 0.05); border-color: rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .input:focus, html[data-style="neon"] .select:focus { border-color: #00f0ff; box-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .dicon .tile { box-shadow: 0 0 14px rgba(0, 240, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.55); }
+html[data-style="neon"] .table th { background: #0c1326; }
+html[data-style="neon"] .term { background: #060a16; }
+

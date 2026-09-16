@@ -8,6 +8,6 @@ const APP_STYLES = [
 for (const name of APP_STYLES) {
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = `css/apps/${name}.css`;
+  link.href = `js/apps/${name}/${name}.css`;
   document.head.append(link);
 }

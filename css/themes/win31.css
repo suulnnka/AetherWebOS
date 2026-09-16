@@ -1,0 +1,150 @@
+/* ============================================================
+ * Win3.1 —— 更古老的味道:系统菜单盒在左、纯海军蓝细标题栏
+ * ============================================================ */
+html[data-style="win31"] {
+  --tb: 28px;
+  --radius: 0px;
+  --font: "MS Sans Serif", Tahoma, "Microsoft YaHei", SimSun, sans-serif;
+  --panel: #c0c0c0;
+  --panel-solid: #c0c0c0;
+  --panel-2: #c0c0c0;
+  --text: #101010;
+  --text-2: #474747;
+  --border: #868a8e;
+  --hover: rgba(0, 0, 0, 0.09);
+  --shadow: none;
+  --shadow-2: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* 窗体:细斜面 + 纯色海军蓝标题 */
+html[data-style="win31"] .win {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #fff, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .win-head {
+  height: 22px;
+  padding: 0 2px 0 5px;
+  background: #000080;   /* 纯色,无渐变 */
+  border-bottom: none;
+}
+html[data-style="win31"] .win:not(.focused) .win-head { background: #c0c0c0; }
+html[data-style="win31"] .win-title { color: #fff; font-weight: 700; font-size: 11.5px; }
+html[data-style="win31"] .win:not(.focused) .win-title { color: #555; }
+html[data-style="win31"] .win-ico { width: 13px; height: 13px; border-radius: 0; margin-right: 5px; }
+/* 关闭按钮 = 左侧「系统菜单盒」(▬ 图形) */
+html[data-style="win31"] .wbtn.close { order: -4; margin-right: 9px; }
+html[data-style="win31"] .wbtn.close svg { display: none; }
+html[data-style="win31"] .wbtn.close::after {
+  content: ""; display: block; width: 8px; height: 3px;
+  background: #000; margin: auto;
+}
+html[data-style="win31"] .wbtn {
+  width: 19px; height: 16px; border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .wbtn:hover { background: #d6d2ca; color: #000; }
+html[data-style="win31"] .wbtn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win31"] .wbtn svg { width: 9px; height: 9px; color: #000; }
+
+/* 任务栏:更细的银条 */
+html[data-style="win31"] #taskbar {
+  height: 28px;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: 1px solid #fff;
+  box-shadow: inset 0 1px 0 #dfdfdf;
+  padding: 0 3px;
+}
+html[data-style="win31"] .tb-start {
+  width: 26px; height: 20px; padding: 0; border-radius: 0; color: #000;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .tb-start:active { border-color: #000 #dfdfdf #dfdfdf #000; }
+html[data-style="win31"] .tb-pinned .tbtn { box-shadow: none; border: none; background: transparent; height: 22px; }
+html[data-style="win31"] .tbtn {
+  height: 21px; border-radius: 0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .tbtn .t-title { font-size: 11px; color: #000; }
+html[data-style="win31"] .tbtn.active {
+  background: #d8d4cc; font-weight: 700;
+  border-color: #000 #dfdfdf #dfdfdf #000;
+  box-shadow: inset 1px 1px 0 #808080;
+}
+html[data-style="win31"] .tbtn.active::after { display: none; }
+html[data-style="win31"] .tray-btn { color: #000; height: 21px; }
+html[data-style="win31"] .tray-clock {
+  flex-direction: row; height: 21px;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px 0 #6e6e6e;
+}
+html[data-style="win31"] .tray-clock .t { color: #000; font-size: 11px; }
+html[data-style="win31"] .tray-clock .d { color: #333; font-size: 10.5px; }
+html[data-style="win31"] .tb-showdesk { border-left: 1px solid #808080; box-shadow: inset 1px 0 0 #fff; height: 21px; }
+html[data-style="win31"] .tb-sep { background: transparent; border-left: 1px solid #808080; border-right: 1px solid #fff; }
+
+/* 开始菜单:程序管理器味道(无侧边条、更紧凑) */
+html[data-style="win31"] #start-menu {
+  transform-origin: 0 100%;
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .sm-search input {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff; color: #000;
+  font-size: 12px;
+}
+html[data-style="win31"] .sm-item { color: #000; }
+html[data-style="win31"] .sm-item:hover { background: #000080; color: #fff; }
+html[data-style="win31"] .sm-footer { background: #c0c0c0; border-top: 1px solid #808080; box-shadow: inset 0 1px 0 #fff; }
+html[data-style="win31"] .sm-user { color: #000; }
+html[data-style="win31"] .sm-user .avatar { background: #000080; }
+
+/* 弹层与控件 */
+html[data-style="win31"] .popover,
+html[data-style="win31"] #ctx,
+html[data-style="win31"] .toast,
+html[data-style="win31"] .modal-box {
+  border-radius: 0;
+  background: #c0c0c0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080, 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-style="win31"] .btn {
+  border-radius: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #000 #000 #dfdfdf;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+html[data-style="win31"] .btn:hover { background: #d6d2ca; }
+html[data-style="win31"] .btn:active { border-color: #000 #dfdfdf #dfdfdf #000; box-shadow: inset 1px 1px 0 #808080; }
+html[data-style="win31"] .btn.primary { background: #000080; color: #fff; }
+html[data-style="win31"] .input, html[data-style="win31"] .select {
+  border-radius: 0;
+  border: 1px solid;
+  border-color: #808080 #fff #fff #808080;
+  background: #fff;
+}
+html[data-style="win31"] .dicon .tile { border-radius: 0; }
+html[data-style="win31"] .app-toolbar, html[data-style="win31"] .app-side, html[data-style="win31"] .app-status { border-color: #9a9a9a; }
+

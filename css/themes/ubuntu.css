@@ -1,0 +1,103 @@
+/* ============================================================
+ * Ubuntu —— GNOME 顶栏 + Yaru 橙 + headerbar 窗口
+ * ============================================================ */
+html[data-style="ubuntu"] {
+  --tb: 32px;
+  --radius: 12px;
+  --accent: #e95420;   /* Yaru 橙:整套系统强调色跟随 */
+  --font: Ubuntu, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* 顶栏:任务栏移到屏幕顶部 */
+html[data-style="ubuntu"] #taskbar {
+  top: 0; bottom: auto;
+  height: 32px;
+  background: #262626;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-top: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+html[data-style="ubuntu"] #desktop { top: var(--tb); bottom: 0; }
+html[data-style="ubuntu"] #windows { top: var(--tb); bottom: 0; }
+
+html[data-style="ubuntu"] .tb-start { width: 40px; height: 26px; border-radius: 999px; color: #ececec; }
+html[data-style="ubuntu"] .tb-start:hover, html[data-style="ubuntu"] .tb-start.on { background: rgba(255, 255, 255, 0.14); }
+html[data-style="ubuntu"] .tbtn { border-radius: 999px; height: 26px; color: #ececec; }
+html[data-style="ubuntu"] .tbtn .t-title { color: #ececec; }
+html[data-style="ubuntu"] .tbtn:hover { background: rgba(255, 255, 255, 0.12); }
+html[data-style="ubuntu"] .tbtn.active { background: rgba(255, 255, 255, 0.2); }
+html[data-style="ubuntu"] .tbtn.active::after { background: #fff; }
+html[data-style="ubuntu"] .tray-btn { color: #ececec; }
+/* GNOME 居中时钟 */
+html[data-style="ubuntu"] .tray-clock {
+  position: absolute; left: 50%; bottom: auto;
+  transform: translateX(-50%);
+  flex-direction: row; gap: 0;
+}
+html[data-style="ubuntu"] .tray-clock .t { color: #fff; font-weight: 700; font-size: 12.5px; }
+html[data-style="ubuntu"] .tray-clock .d { display: none; }
+html[data-style="ubuntu"] .tb-showdesk { border-left: 1px solid rgba(255, 255, 255, 0.12); }
+html[data-style="ubuntu"] .tb-sep { opacity: 0.3; }
+
+/* headerbar 窗口:标题居中、圆形按钮、橙色关闭 */
+html[data-style="ubuntu"] .win {
+  border-radius: 12px 12px 0 0;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+html[data-style="ubuntu"] .win.max { border-radius: 0; }
+html[data-style="ubuntu"] .win-head {
+  position: relative;
+  height: 46px;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-solid);
+}
+html[data-style="ubuntu"] .win-title {
+  position: absolute; left: 60px; right: 80px;
+  text-align: center; font-weight: 700;
+  pointer-events: none;
+}
+html[data-style="ubuntu"] .win-ico { width: 18px; height: 18px; border-radius: 5px; }
+html[data-style="ubuntu"] .wbtn {
+  width: 20px; height: 20px; border-radius: 50%; padding: 0; margin-left: 4px;
+  background: var(--hover); color: var(--text);
+}
+/* 标题已绝对定位(脱离 flex 流),用 margin 把按钮组推回右侧 */
+html[data-style="ubuntu"] .wbtn.mn { margin-left: auto; }
+html[data-style="ubuntu"] .wbtn:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
+html[data-style="ubuntu"] .wbtn.close { background: #e95420; color: #fff; }
+html[data-style="ubuntu"] .wbtn.close:hover { background: #ed7146; }
+html[data-style="ubuntu"] .wbtn svg { width: 10px; height: 10px; margin: auto; }
+
+/* 从顶栏下方弹出的开始菜单 */
+html[data-style="ubuntu"] #start-menu {
+  top: calc(var(--tb) + 8px); bottom: auto;
+  transform-origin: 20px 0;
+  border-radius: 16px;
+}
+html[data-style="ubuntu"] #start-menu:not(.open) { transform: scale(0.92) translateY(-14px); }
+html[data-style="ubuntu"] .sm-search input { border-radius: 999px; }
+
+/* GNOME 通知:顶部居中的黑色胶囊 */
+html[data-style="ubuntu"] #toasts {
+  top: calc(var(--tb) + 10px); bottom: auto;
+  left: 50%; right: auto;
+  transform: translateX(-50%);
+  align-items: center;
+}
+html[data-style="ubuntu"] .toast {
+  border-radius: 999px;
+  background: rgba(28, 28, 30, 0.94);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+html[data-style="ubuntu"] .toast .ni-title { color: #fff; }
+html[data-style="ubuntu"] .toast .ni-body { color: rgba(255, 255, 255, 0.65); }
+
+/* 其他部件 */
+html[data-style="ubuntu"] .popover { border-radius: 14px; }
+html[data-style="ubuntu"] #ctx { border-radius: 12px; }
+html[data-style="ubuntu"] .dicon .tile { border-radius: 30%; }
+html[data-style="ubuntu"] .modal-box { border-radius: 14px; }
+
