@@ -1237,7 +1237,13 @@ try {
     sentShown: document.querySelectorAll('.mail-item').length,
     sentTo: document.querySelector('.mail-item .m-from')?.textContent,
   }))()`);
-  await sleep(1500);   // 等自动回信
+  await sleep(1500);
+    fitems: [...document.querySelectorAll('.win[data-app=files] .fitem')].map(f => f.textContent.trim()).slice(0, 8),
+    selected: document.querySelectorAll('.win[data-app=files] .fitem.selected').length,
+    toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent.slice(0, 30)),
+    zipInStore: WebOS.fs.exists('/home/documents/archive.zip'),
+    zipRaw: (WebOS.fs.read('/home/documents/archive.zip') || '').slice(0, 10),
+  }))()`)));   // 等自动回信
   await ev(`[...document.querySelectorAll('.mail-side .list-item')].find(f => f.textContent.includes('收件箱')).click()`);
   await sleep(400);
   const m4 = await ev(`({
@@ -1630,6 +1636,65 @@ try {
   t('T30.5 全程无错误', errs30 === 0, `errs=${errs30}`);
   await ev(`WebOS.wm.close(document.querySelector('.win[data-app=weather]').dataset.id)`);
   await sleep(300);
+
+  /* ---- T31 压缩包支持 ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2000);
+  await ev(`(() => {
+    WebOS.fs.rm('/home/documents/archive.zip');
+    WebOS.fs.write('/home/documents/打包A.txt', '文件A内容');
+    WebOS.fs.write('/home/documents/打包B.txt', '文件B内容');
+    WebOS.fs.mkdir('/home/documents/bundle');
+    WebOS.fs.write('/home/documents/bundle/inner.txt', '嵌套文件');
+    return true;
+  })()`);
+  await ev(`WebOS.wm.open('files')`);
+  await sleep(700);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    const doc = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('documents'));
+    if (doc) doc.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(500);
+
+  // 通过 GUI 工具栏:选中 打包A.txt → 压缩
+  const z0 = await ev(`(async () => {
+    const w = document.querySelector('.win[data-app=files]');
+    if (!w) return { noWin: true, wins: [...document.querySelectorAll('.win')].map(x => x.dataset.app) };
+    const item = [...w.querySelectorAll('.fitem')].find(f => f.textContent.includes('打包A.txt'));
+    if (!item) return { noItem: true, fitems: [...w.querySelectorAll('.fitem')].map(f => f.textContent.trim()) };
+    item.click();   // onClick 设置 selected
+    w.querySelector('button[title="把选中项压缩为 ZIP"]').click();
+    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      ok: true,
+      selected: w.querySelectorAll('.fitem.selected').length,
+      zip: WebOS.fs.exists('/home/documents/打包A.zip'),
+      toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent.slice(0, 40)),
+      errs: window.__errs,
+    };
+  })()`);
+  await sleep(400);
+  const z1 = await ev(`(() => {
+    const content = WebOS.fs.read('/home/documents/打包A.zip');
+    return { exists: content != null, b64: content?.startsWith(' ZIPB64:'), bytes: content?.length };
+  })()`);
+  t('T31 压缩为 ZIP(工具栏,B64 存储)', z1.exists && z1.b64, JSON.stringify(z1));
+
+  // ZIP 引擎验证:解压 打包A.zip(含目录递归的 bundle 在 T31 准备阶段已建)
+  const z2 = await ev(`(async () => {
+    const { unzip } = await import('./js/core/zip.js');
+    const data = await (await fetch('/')).text(); // noop 保持 async
+    const b64 = WebOS.fs.read('/home/documents/打包A.zip');
+    const bin = Uint8Array.from(atob(b64.slice(8)), c => c.charCodeAt(0)); // 前缀  ZIPB64: 共 8 字符
+    return { entries: (await unzip(bin, { asText: true })).map(i => i.name + ':' + (i.text ?? '')) };
+  })()`);
+  t('T31.1 ZIP 引擎解压(内容还原)', z2.entries?.some(e => e.includes('打包A.txt:文件A内容')), JSON.stringify(z2.entries));
+  await c.shot('t31-zip');
+
+  const errs31 = await ev(`window.__errs.length`);
+  t('T31.3 全程无错误', errs31 === 0, `errs=${errs31}`);
 } catch (e) {
   t('执行中断', false, String(e.message || e));
 } finally {

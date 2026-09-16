@@ -67,6 +67,7 @@ webos/
 │  │  ├─ icons.js        内联 SVG 图标库
 │  │  ├─ crypto.js       文件加密(AES-GCM + PBKDF2)
 │  │  ├─ weather.js      模拟气象引擎(确定性,历史可回溯)
+│  │  └─ zip.js          ZIP 压缩包(零依赖,STORE+DEFLATE 双向)
 │  │  ├─ menu.js         全局右键菜单
 │  │  ├─ ui.js           应用内模态框(confirm/prompt)
 │  │  ├─ audio.js        WebAudio 引擎(音量跟随系统)
@@ -388,6 +389,10 @@ WebOS.__errs                         // 运行期错误
   `sms.deliver / deliverLater / onSend` 投递剧情短信
 - **任务**:项目分组 + 优先级 + 截止日期 + 星标 + 进度环,到期/逾期
   系统通知与短信提醒,清单一键导出到桌面文件,拖拽排序,持久化
+- **压缩包**:文件管家支持 `.zip` —— 右键解压到同名文件夹(保留包内
+  目录结构)、选中文件/文件夹一键压缩为 ZIP(目录递归)、双击浏览包内
+  条目(DEFLATE/STORE 标识);引擎为零依赖自研 ZIP 读写
+  (`core/zip.js`,经 Compression Streams 压缩,UTF-8 文件名)
 - **天气**:8 城市实况(体感/湿度/风速/气压/日出日落)+ 12 小时逐时 +
   7 日预报 + **历史天气查询**(任意日期回溯、趋势条形图);数据由
   确定性模拟气象引擎生成 —— 同城同日永远同天,符合季节与昼夜规律

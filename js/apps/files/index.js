@@ -7,6 +7,7 @@ import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
 import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
+import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 
 /** 系统对话框:输入(返回 string|null)与危险确认(返回 boolean) */
 const modalPrompt = (title, placeholder, value) =>
@@ -25,6 +26,7 @@ const QUICK = [
 function fileIcon(item, encrypted = false) {
   if (item.dir) return { name: 'folder', color: '#4f9cf9', size: 34 };
   if (encrypted) return { name: 'lock', color: '#a855f7', size: 30 };
+  if (/\.zip$/i.test(item.name)) return { name: 'download', color: '#eab308', size: 30 };
   const ext = item.name.split('.').pop().toLowerCase();
   if (['txt', 'md', 'log', 'json', 'js', 'css', 'html'].includes(ext)) return { name: 'fileText', color: '#8a94a8', size: 30 };
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return { name: 'image', color: '#a78bfa', size: 30 };
@@ -75,6 +77,7 @@ register({
 
     function openItem(item) {
       if (item.dir) nav(item.path);
+      else if (/\.zip$/i.test(item.name)) browseZip(item);   // ZIP:打开包内浏览器
       else if (isEncrypted(fs.read(item.path))) {
         // 加密文件:解锁后只读预览(不落盘明文)
         (async () => {
@@ -117,6 +120,74 @@ register({
         fs.write(item.path, await encryptText(content, pw));
         bus.notify('已加密 🔒', item.name);
       }
+      render();
+    }
+
+    /* ---- ZIP 支持 ---- */
+    /** 存储文本 → 二进制(支持 ZIPB64 包装或原始文本) */
+    async function blobFromText(text) {
+      if (text.startsWith('\u0000ZIPB64:')) {
+        const b64 = text.slice('\u0000ZIPB64:'.length);
+        return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      }
+      return new TextEncoder().encode(text);
+    }
+
+    /** 浏览压缩包内容(条目列表对话框 + 一键全部解压) */
+    async function browseZip(item) {
+      const data = await blobFromText(fs.read(item.path));
+      let entries;
+      try { entries = listEntries(data); }
+      catch (e) { dialogs.error({ title: '无法打开压缩包', message: String(e.message) }); return; }
+      const ok = await dialogs.confirm({
+        title: `压缩包 · ${item.name}`,
+        message: `包含 ${entries.length} 个条目,可全部解压到同名文件夹。`,
+        detail: entries.map((e2) => `${e2.name}  (${e2.size}B, ${e2.method === 8 ? 'DEFLATE' : 'STORE'})`).join('\n').slice(0, 900),
+        okText: `解压到 ${item.name.replace(/\.zip$/i, '')}/`,
+        cancelText: '关闭',
+      });
+      if (!ok) return;
+      await extractZip(item, item.name.replace(/\.zip$/i, ''));
+    }
+
+    /** 解压 ZIP 到目录(按包内路径重建结构) */
+    async function extractZip(item, destName) {
+      const dest = fs.joinPath(cwd, destName || item.name.replace(/\.zip$/i, ''));
+      const data = await blobFromText(fs.read(item.path));
+      try {
+        const items = await unzip(data, { asText: true });
+        for (const it of items) {
+          const p = fs.joinPath(dest, it.name);
+          if (it.dir) fs.mkdir(p);
+          else fs.write(p, it.text ?? '');
+        }
+        bus.notify('解压完成', `${items.length} 个条目 → ${dest}`);
+      } catch (e) {
+        dialogs.error({ title: '解压失败', message: String(e.message) });
+      }
+      render();
+    }
+
+    /** 打包多个文件/文件夹为 ZIP(目录递归) */
+    async function compressItems(paths, zipName) {
+      const items = [];
+      const addDir = (dirPath, prefix) => {
+        items.push({ name: prefix + '/' });
+        for (const f of fs.list(dirPath) || []) {
+          if (f.dir) addDir(f.path, prefix + '/' + f.name);
+          else items.push({ name: prefix + '/' + f.name, data: fs.read(f.path) });
+        }
+      };
+      for (const p of paths) {
+        if (fs.isDir(p)) addDir(p, fs.basename(p));
+        else items.push({ name: fs.basename(p), data: fs.read(p) });
+      }
+      const packed = await zip(items);
+      // fs 存文本:二进制以 Base64 包装(带标记头),保证可持久化
+      let bin = '';
+      for (const b of packed) bin += String.fromCharCode(b);
+      fs.write(fs.joinPath(cwd, zipName), '\u0000ZIPB64:' + btoa(bin));
+      bus.notify('压缩完成', `${zipName}(${items.length} 个条目)`);
       render();
     }
 
@@ -186,6 +257,9 @@ register({
                 { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) },
                 { label: encrypted ? '解密…' : '加密…', icon: 'lock', fn: () => toggleEncrypt(item) },
               ]),
+              ...(item.dir ? [] : (/\.zip$/i.test(item.name)
+                ? [{ label: '解压到当前文件夹', icon: 'download', fn: () => extractZip(item, item.name.replace(/\.zip$/i, '')) }]
+                : [{ label: '压缩为 ZIP', icon: 'download', fn: () => compressItems([item.path], item.name.replace(/\.[^.]+$/, '') + '.zip') }])),
               { sep: true },
               { label: '重命名', icon: 'pencil', fn: () => renameItem(item) },
               { label: '删除', icon: 'trash', danger: true, fn: () => deleteItem(item) },
@@ -223,6 +297,16 @@ register({
         crumbs,
         el('button', { class: 'btn icon', title: '新建文件夹', onClick: () => newItem('dir') }, icon('folderPlus', 15)),
         el('button', { class: 'btn icon', title: '新建文件', onClick: () => newItem('file') }, icon('filePlus', 15)),
+        el('button', {
+          class: 'btn icon', title: '把选中项压缩为 ZIP', onClick: () => {
+            const targets = selected
+              ? [selected]
+              : (fs.list(cwd) || []).filter(f => !f.dir).slice(0, 1).map(f => f.path);
+            if (!targets.length) { bus.notify('压缩', '请先选中文件或文件夹'); return; }
+            const base = fs.basename(targets[0]).replace(/\.[^.]+$/, '') || 'archive';
+            compressItems(targets, base + '.zip');
+          },
+        }, icon('download', 14)),
       ),
       el('div', { class: 'app-mid' },
         el('div', { class: 'app-side' },
