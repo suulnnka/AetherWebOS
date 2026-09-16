@@ -1,0 +1,33 @@
+/* ---- 本地资源 / 文件预览 ---- */
+.loc-drop {
+  flex: 1; display: grid; place-items: center;
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  margin: 12px; pointer-events: none;
+}
+.app.dragover::after {
+  content: "松开以打开"; position: absolute; inset: 6px; z-index: 40;
+  display: grid; place-items: center;
+  border: 2px dashed var(--accent); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent); font-weight: 700; pointer-events: none;
+}
+
+.viewer-stage {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  overflow: auto; background: var(--panel-2); position: relative;
+}
+.viewer-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.viewer-stage video { max-width: 100%; max-height: 100%; outline: none; }
+.viewer-stage.pdf { display: block; padding: 0; }
+.viewer-stage.pdf iframe { width: 100%; height: 100%; border: none; background: #fff; }
+.viewer-audio { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text-2); padding: 30px; }
+.viewer-pre {
+  align-self: stretch; margin: 0; padding: 14px 18px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-all;
+  user-select: text; -webkit-user-select: text;
+}
+.viewer-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  color: var(--text-2); padding: 40px; text-align: center;
+}

@@ -3,12 +3,12 @@
  * 左侧会话列表(未读徽标)· 右侧聊天气泡;
  * 验证码自动识别一键复制;清空会话;作者 API 自动回信演示。
  * ============================================================ */
-import { el, escapeHtml, fmtTime, fmtDate } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import sms from '../core/sms.js';
-import { settings } from '../core/store.js';
-import { subscribe } from '../core/bus.js';
+import { el, escapeHtml, fmtTime, fmtDate } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import sms from '../../core/sms.js';
+import { settings } from '../../core/store.js';
+import { subscribe } from '../../core/bus.js';
 
 /** 从文本中提取 4-8 位验证码 */
 const CODE_RX = /\b([A-Z0-9]{4,8})\b/;

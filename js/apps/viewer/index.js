@@ -7,11 +7,11 @@
  *  - 其他应用 wm.open('viewer', { params: { file } })。
  * 文本另提供「在记事本中编辑」:保存到虚拟文件系统后调起记事本。
  * ============================================================ */
-import { el, formatBytes } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import fs from '../core/fs.js';
-import { open } from '../core/wm.js';
+import { el, formatBytes } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import fs from '../../core/fs.js';
+import { open } from '../../core/wm.js';
 
 const TEXT_EXT = ['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'csv', 'log', 'ini', 'yml', 'conf'];
 

@@ -7,13 +7,13 @@
  *  - 新建带截止日期的任务时可选提醒(经 sys:notify 弹系统通知);
  *  - 桌面/文件管家的 /home/desktop/todo.txt 汇出只读清单(可选命令)。
  * ============================================================ */
-import { el, escapeHtml, fmtDate } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { dialogs } from '../core/dialogs.js';
-import { subscribe, publish } from '../core/bus.js';
-import fs from '../core/fs.js';
-import sms from '../core/sms.js';
+import { el, escapeHtml, fmtDate } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { dialogs } from '../../core/dialogs.js';
+import { subscribe, publish } from '../../core/bus.js';
+import fs from '../../core/fs.js';
+import sms from '../../core/sms.js';
 
 const KEY = 'webos.todo.v1';
 let state = load();

@@ -1,6 +1,6 @@
 /* ============ 应用:计算器(手写表达式解析,无 eval) ============ */
-import { el } from '../core/utils.js';
-import { register } from '../core/registry.js';
+import { el } from '../../core/utils.js';
+import { register } from '../../core/registry.js';
 
 /** 词法分析 */
 function tokenize(src) {

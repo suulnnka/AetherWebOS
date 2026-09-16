@@ -4,13 +4,13 @@
  * 支持写信/回复/草稿/星标/删除,附件与正文链接联动
  * 浏览器(路径转换)与预览器。
  * ============================================================ */
-import { el, escapeHtml } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { open } from '../core/wm.js';
-import mail from '../core/mail.js';
-import { settings } from '../core/store.js';
-import { subscribe } from '../core/bus.js';
+import { el, escapeHtml } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { open } from '../../core/wm.js';
+import mail from '../../core/mail.js';
+import { settings } from '../../core/store.js';
+import { subscribe } from '../../core/bus.js';
 
 const FOLDERS = [
   { id: 'inbox', name: '收件箱', icon: 'mail' },

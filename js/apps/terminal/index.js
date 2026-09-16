@@ -1,13 +1,13 @@
 /* ============ 应用:终端 —— 展示 IPC 与系统能力的入口 ============ */
-import { el, fmtDate, fmtTime } from '../core/utils.js';
-import { register } from '../core/registry.js';
-import fs from '../core/fs.js';
-import { settings, WALLPAPERS } from '../core/store.js';
-import { list as listApps } from '../core/registry.js';
-import { open } from '../core/wm.js';
-import { publish } from '../core/bus.js';
-import { httpGet, sshConnect, dnsResolve } from '../core/vnet.js';
-import { dialogs } from '../core/dialogs.js';
+import { el, fmtDate, fmtTime } from '../../core/utils.js';
+import { register } from '../../core/registry.js';
+import fs from '../../core/fs.js';
+import { settings, WALLPAPERS } from '../../core/store.js';
+import { list as listApps } from '../../core/registry.js';
+import { open } from '../../core/wm.js';
+import { publish } from '../../core/bus.js';
+import { httpGet, sshConnect, dnsResolve } from '../../core/vnet.js';
+import { dialogs } from '../../core/dialogs.js';
 
 register({
   id: 'terminal',

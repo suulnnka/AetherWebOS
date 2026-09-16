@@ -1,13 +1,13 @@
 /* ============ 应用:系统设置 ============ */
-import { el, fmtDate, formatBytes } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { settings, ACCENTS, WALLPAPERS, STYLES } from '../core/store.js';
-import { subscribe } from '../core/bus.js';
-import { beep } from '../core/audio.js';
-import { modal } from '../core/ui.js';
-import fs from '../core/fs.js';
-import { dialogs } from '../core/dialogs.js';
+import { el, fmtDate, formatBytes } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { settings, ACCENTS, WALLPAPERS, STYLES } from '../../core/store.js';
+import { subscribe } from '../../core/bus.js';
+import { beep } from '../../core/audio.js';
+import { modal } from '../../core/ui.js';
+import fs from '../../core/fs.js';
+import { dialogs } from '../../core/dialogs.js';
 
 const SECTIONS = [
   { id: 'appearance', name: '外观', icon: 'palette' },

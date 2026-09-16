@@ -1,9 +1,9 @@
 /* ============ 应用:音乐播放(WebAudio 合成,音量跟随系统) ============ */
-import { el } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { ensureCtx, masterGain } from '../core/audio.js';
-import { settings } from '../core/store.js';
+import { el } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { ensureCtx, masterGain } from '../../core/audio.js';
+import { settings } from '../../core/store.js';
 
 /* 音符频率表(Hz) */
 const N = {

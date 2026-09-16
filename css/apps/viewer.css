@@ -1,0 +1,135 @@
+/* viewer 专属样式 */
+/* ---- 设置 ---- */
+.set-body { padding: 18px 22px; max-width: 640px; }
+.set-body .sec-title { font-size: 17px; font-weight: 700; margin-bottom: 16px; }
+.set-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 13px 0; border-bottom: 1px solid var(--border);
+}
+.set-row:last-child { border-bottom: none; }
+.set-row .s-label { font-size: 13px; font-weight: 600; }
+.set-row .s-desc { font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.5; }
+
+/* 风格主题选择卡(迷你预览) */
+.style-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+.style-card {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 9px 9px 7px; border-radius: 10px;
+  border: 2px solid transparent; background: var(--hover);
+  transition: transform 0.12s, border-color 0.12s;
+}
+.style-card:hover { transform: translateY(-2px); }
+.style-card.selected { border-color: var(--accent); }
+.style-card .sty-name { font-size: 12px; font-weight: 600; }
+
+.sp { width: 116px; height: 72px; border-radius: 6px; position: relative; overflow: hidden; background: linear-gradient(135deg, #667eea, #764ba2); }
+.sp-win { position: absolute; left: 14px; top: 8px; width: 88px; height: 46px; background: #fff; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); overflow: hidden; }
+.sp-bar { height: 11px; display: flex; align-items: center; gap: 2px; padding: 0 3px; }
+.sp-dot { width: 5px; height: 5px; border-radius: 50%; margin-left: auto; }
+.sp-dot:first-child { margin-left: 0; }
+.sp-task { position: absolute; left: 0; right: 0; bottom: 0; height: 11px; display: flex; align-items: center; padding: 0 3px; }
+.sp-start { width: 10px; height: 7px; border-radius: 2px; }
+
+/* modern(默认) */
+.style-card[data-sty="modern"] .sp-bar { background: #eef0f5; }
+.style-card[data-sty="modern"] .sp-dot { background: #98a0b4; }
+.style-card[data-sty="modern"] .sp-task { background: rgba(255, 255, 255, 0.78); }
+.style-card[data-sty="modern"] .sp-start { background: linear-gradient(135deg, #5b6cff, #8b5cf6); }
+
+/* macOS:红绿灯在左 + 悬浮 Dock */
+.style-card[data-sty="mac"] .sp-win { border-radius: 5px 5px 0 0; }
+.style-card[data-sty="mac"] .sp-bar { background: #eceef3; }
+.style-card[data-sty="mac"] .sp-dot { margin-left: 0; }
+.style-card[data-sty="mac"] .sp-dot.d1 { background: #ff5f57; }
+.style-card[data-sty="mac"] .sp-dot.d2 { background: #febc2e; }
+.style-card[data-sty="mac"] .sp-dot.d3 { background: #28c840; }
+.style-card[data-sty="mac"] .sp-task { left: 26px; right: 26px; border-radius: 6px; background: rgba(30, 32, 44, 0.78); }
+.style-card[data-sty="mac"] .sp-start { border-radius: 3px; background: rgba(255, 255, 255, 0.75); }
+
+/* Win98:银灰 + 海军蓝标题 */
+.style-card[data-sty="win98"] .sp-win { border-radius: 0; border: 1px solid #000; box-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.4); }
+.style-card[data-sty="win98"] .sp-bar { background: linear-gradient(90deg, #000080, #1084d0); }
+.style-card[data-sty="win98"] .sp-dot { border-radius: 0; background: #c0c0c0; border: 1px solid #808080; }
+.style-card[data-sty="win98"] .sp-task { background: #c0c0c0; border-top: 1px solid #fff; }
+.style-card[data-sty="win98"] .sp-start { border-radius: 0; background: #c0c0c0; border: 1px solid #808080; }
+
+/* WinXP:Luna 蓝 */
+.style-card[data-sty="winxp"] .sp-win { border-radius: 5px 5px 0 0; border: 2px solid #0055ea; border-bottom-width: 3px; background: #ece9d8; }
+.style-card[data-sty="winxp"] .sp-bar { background: linear-gradient(180deg, #0058ee, #3f8cf3 12%, #0262ee 60%, #0040ab); }
+.style-card[data-sty="winxp"] .sp-dot { border-radius: 2px; background: #4d8bec; border: 1px solid #fff; }
+.style-card[data-sty="winxp"] .sp-dot.d3 { background: #e2684a; }
+.style-card[data-sty="winxp"] .sp-task { background: linear-gradient(180deg, #3f8cf3 8%, #245edb 20%, #1941a5); }
+.style-card[data-sty="winxp"] .sp-start { border-radius: 0 4px 4px 0; background: linear-gradient(180deg, #3c9338, #207720); }
+
+/* Win7:Aero 玻璃 */
+.style-card[data-sty="win7"] .sp-win { border-radius: 5px 5px 0 0; border: 1px solid #12224a; }
+.style-card[data-sty="win7"] .sp-bar { background: linear-gradient(180deg, #6c88c4, #31508f 40%, #17294e); }
+.style-card[data-sty="win7"] .sp-dot { border-radius: 0 0 3px 3px; background: rgba(255, 255, 255, 0.4); border: 1px solid rgba(2, 18, 52, 0.5); }
+.style-card[data-sty="win7"] .sp-dot.d3 { background: #d95f30; }
+.style-card[data-sty="win7"] .sp-task { background: rgba(16, 26, 54, 0.85); border-top: 1px solid rgba(130, 178, 255, 0.45); }
+.style-card[data-sty="win7"] .sp-start { width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 40% 32%, #a8d8ff, #1c62b4 60%, #052a56); }
+
+/* 霓虹未来:暗色 + 霓虹灯条 */
+.style-card[data-sty="neon"] .sp { background: #04060e; }
+.style-card[data-sty="neon"] .sp-win {
+  border-radius: 4px;
+  background: #0a1020;
+  border: 1px solid rgba(0, 240, 255, 0.6);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.45);
+}
+.style-card[data-sty="neon"] .sp-bar {
+  height: 10px;
+  background:
+    linear-gradient(90deg, #00f0ff, #7d5fff 55%, #ff2ad4) left top / 100% 2.5px no-repeat,
+    rgba(0, 240, 255, 0.1);
+}
+.style-card[data-sty="neon"] .sp-dot { border-radius: 2px; background: transparent; border: none; width: 4px; height: 4px; box-shadow: 0 0 3px #00f0ff; background: #00e5ff; }
+.style-card[data-sty="neon"] .sp-dot.d3 { background: #ff2ad4; box-shadow: 0 0 3px #ff2ad4; }
+.style-card[data-sty="neon"] .sp-task {
+  background: rgba(6, 10, 20, 0.95);
+  border-top: 1px solid #00f0ff;
+  box-shadow: 0 -3px 7px rgba(0, 240, 255, 0.35);
+}
+.style-card[data-sty="neon"] .sp-start { border-radius: 2px; background: #00e5ff; box-shadow: 0 0 5px #00f0ff; width: 8px; height: 5px; }
+
+/* Win3.1:纯海军蓝标题 + 左侧菜单盒 + 更细的银条 */
+.style-card[data-sty="win31"] .sp-win { border-radius: 0; border: 1px solid #000; box-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.4); }
+.style-card[data-sty="win31"] .sp-bar { height: 9px; background: #000080; }
+.style-card[data-sty="win31"] .sp-dot.d1 { margin-left: 0; width: 7px; height: 3px; border-radius: 0; background: #000; border: none; box-shadow: 0 0 0 1.5px #c0c0c0; }
+.style-card[data-sty="win31"] .sp-dot.d2, .style-card[data-sty="win31"] .sp-dot.d3 { border-radius: 0; background: #c0c0c0; border: 1px solid #808080; width: 4px; height: 4px; }
+.style-card[data-sty="win31"] .sp-task { height: 9px; background: #c0c0c0; border-top: 1px solid #fff; }
+.style-card[data-sty="win31"] .sp-start { width: 7px; height: 5px; border-radius: 0; background: #c0c0c0; border: 1px solid #808080; }
+
+/* Ubuntu:GNOME 顶栏 + Yaru 橙关闭钮 */
+.style-card[data-sty="ubuntu"] .sp-win { border-radius: 6px 6px 0 0; border: 1px solid #b8b4ae; top: 14px; background: #fafafa; }
+.style-card[data-sty="ubuntu"] .sp-bar { height: 12px; background: #fafafa; border-bottom: 1px solid #d8d4ce; }
+.style-card[data-sty="ubuntu"] .sp-dot { border-radius: 50%; background: #dedcd8; border: none; }
+.style-card[data-sty="ubuntu"] .sp-dot.d3 { background: #e95420; }
+.style-card[data-sty="ubuntu"] .sp-task { top: 0; bottom: auto; height: 9px; background: #262626; justify-content: center; gap: 5px; }
+.style-card[data-sty="ubuntu"] .sp-start { display: none; }
+.style-card[data-sty="ubuntu"] .sp-task::after { content: ""; width: 14px; height: 3px; border-radius: 2px; background: #ececec; }
+
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid transparent; outline: 1px solid var(--border);
+  transition: transform 0.12s, border-color 0.12s;
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch.selected { border-color: var(--panel-solid); outline: 2px solid var(--accent); }
+
+.wp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.wp-thumb {
+  aspect-ratio: 16/9; border-radius: var(--radius-s);
+  border: 2px solid transparent; outline: 1px solid var(--border);
+  background-size: cover; background-position: center;
+  position: relative; overflow: hidden; transition: transform 0.12s, border-color 0.12s;
+}
+.wp-thumb:hover { transform: scale(1.03); }
+.wp-thumb.selected { border-color: var(--accent); }
+.wp-thumb .wp-name {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 3px 8px; font-size: 11px; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  text-align: left;
+}

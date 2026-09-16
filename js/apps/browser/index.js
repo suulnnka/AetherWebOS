@@ -7,10 +7,10 @@
  *    这是唯一触达外网的方式,且完全由作者数据决定;
  *  - 页面内的 <a> 链接与 <form> 表单都被拦截,转为虚拟导航。
  * ============================================================ */
-import { el, escapeHtml } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { httpGet, dnsList } from '../core/vnet.js';
+import { el, escapeHtml } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { httpGet, dnsList } from '../../core/vnet.js';
 
 /** 内网导航起始页(由 DNS 中 listed 的记录生成) */
 function startPage() {

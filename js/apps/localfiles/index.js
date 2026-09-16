@@ -9,10 +9,10 @@
  *  3. 直接把文件或文件夹拖进窗口。
  * 双击文件 → 交给「文件预览」应用(对象引用直传,不落盘)。
  * ============================================================ */
-import { el, formatBytes } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { open } from '../core/wm.js';
+import { el, formatBytes } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { open } from '../../core/wm.js';
 
 function extIcon(name, isDir) {
   if (isDir) return { name: 'folder', color: '#4f9cf9', size: 34 };

@@ -8,10 +8,10 @@
  *  - 操作本地虚拟文件系统(文件管家/记事本实时联动);
  *  - Tab 补全命令与文件名,Ctrl+L 清屏,Ctrl+C 中断行。
  * ============================================================ */
-import { el, fmtDate } from '../core/utils.js';
-import { register } from '../core/registry.js';
-import fs from '../core/fs.js';
-import { settings } from '../core/store.js';
+import { el, fmtDate } from '../../core/utils.js';
+import { register } from '../../core/registry.js';
+import fs from '../../core/fs.js';
+import { settings } from '../../core/store.js';
 
 /* ---------- 词法:引号与注释 ---------- */
 function tokenize(line) {

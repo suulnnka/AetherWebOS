@@ -1,11 +1,11 @@
 /* ============ 应用:系统监视器 —— IPC 流量观测台 ============ */
-import { el, formatBytes, fmtTime } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import { subscribe, msgLog } from '../core/bus.js';
-import fs from '../core/fs.js';
-import * as wm from '../core/wm.js';
-import { WebOS } from '../core/exports.js';
+import { el, formatBytes, fmtTime } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import { subscribe, msgLog } from '../../core/bus.js';
+import fs from '../../core/fs.js';
+import * as wm from '../../core/wm.js';
+import { WebOS } from '../../core/exports.js';
 
 register({
   id: 'monitor',

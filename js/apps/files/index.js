@@ -1,11 +1,11 @@
 /* ============ 应用:文件管家(File Station) ============ */
-import { el, fmtDate, escapeHtml } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import fs from '../core/fs.js';
-import { open } from '../core/wm.js';
-import { showMenu } from '../core/menu.js';
-import { dialogs } from '../core/dialogs.js';
+import { el, fmtDate, escapeHtml } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import fs from '../../core/fs.js';
+import { open } from '../../core/wm.js';
+import { showMenu } from '../../core/menu.js';
+import { dialogs } from '../../core/dialogs.js';
 
 /** 系统对话框:输入(返回 string|null)与危险确认(返回 boolean) */
 const modalPrompt = (title, placeholder, value) =>

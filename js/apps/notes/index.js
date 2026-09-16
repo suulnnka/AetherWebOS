@@ -1,9 +1,9 @@
 /* ============ 应用:记事本(Note Station) ============ */
-import { el } from '../core/utils.js';
-import { icon } from '../core/icons.js';
-import { register } from '../core/registry.js';
-import fs from '../core/fs.js';
-import { modal } from '../core/ui.js';
+import { el } from '../../core/utils.js';
+import { icon } from '../../core/icons.js';
+import { register } from '../../core/registry.js';
+import fs from '../../core/fs.js';
+import { modal } from '../../core/ui.js';
 
 register({
   id: 'notes',

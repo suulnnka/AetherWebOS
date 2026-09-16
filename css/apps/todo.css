@@ -1,0 +1,47 @@
+/* ---- 短信 ---- */
+.sms-side { display: flex; flex-direction: column; overflow-y: auto; }
+.sms-chat {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px; border-radius: var(--radius-s);
+  text-align: left; width: 100%;
+}
+.sms-chat:hover { background: var(--hover); }
+.sms-chat.active { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.sms-badge {
+  min-width: 17px; height: 17px; border-radius: 9px; flex: none;
+  background: #ef4444; color: #fff; font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center; padding: 0 4px;
+}
+.sms-badge-empty { width: 6px; flex: none; }
+.sms-chat-main { flex: 1; min-width: 0; }
+.sms-chat-name { font-size: 12.5px; font-weight: 600; }
+.sms-chat-prev { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sms-chat-time { font-size: 10.5px; color: var(--text-2); flex: none; align-self: flex-start; margin-top: 2px; }
+
+.sms-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel-2); }
+.sms-stream { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.sms-day { text-align: center; font-size: 11px; color: var(--text-2); margin: 6px 0; }
+.sms-row { display: flex; }
+.sms-row.in { justify-content: flex-start; }
+.sms-row.out { justify-content: flex-end; }
+.sms-bubble {
+  max-width: 72%; padding: 8px 12px;
+  border-radius: 14px; font-size: 13px; line-height: 1.55;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sms-bubble.in { background: var(--panel-solid); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.sms-bubble.out { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.sms-bubble .sms-text { word-break: break-word; white-space: pre-wrap; }
+.sms-bubble .sms-time { font-size: 10px; opacity: 0.6; align-self: flex-end; }
+.sms-code {
+  align-self: flex-start;
+  padding: 3px 9px; border-radius: 9px; font-size: 11.5px;
+  font-family: var(--mono); font-weight: 700; letter-spacing: 1px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  transition: background 0.12s;
+}
+.sms-code:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.sms-compose { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--panel-solid); }
+.sms-input { flex: 1; }
