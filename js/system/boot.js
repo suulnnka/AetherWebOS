@@ -12,6 +12,7 @@ import smsSvc from '../core/sms.js';
 import { list as listApps } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { dialogs } from '../core/dialogs.js';
+import weatherSvc from '../core/weather.js';
 import { WebOS as SYS } from '../core/exports.js';
 import { renderStartMenu, renderStartUser } from './startmenu.js';
 import { renderPinned, renderTasks } from './taskbar.js';
@@ -36,7 +37,8 @@ function boot() {
   // 调试 / 自动化接口
   Object.assign(SYS, {
     bus: { subscribe, publish, send: (from, to, type, payload) => publish(`app:${to}`, { from, to, type, payload }) },
-    wm, settings, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc,
+    wm, settings, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc,
+    __weatherDaily: weatherSvc.daily,
     apps: { list: listApps },
   });
   window.WebOS = SYS;

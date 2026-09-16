@@ -1552,6 +1552,84 @@ try {
   await sleep(600);
   const c8 = await ev(`({ restored: WebOS.fs.read('/home/documents/机密.txt') === '绝密内容 top-secret', errs: window.__errs.length })`);
   t('T29.7 解密还原+无错误', c8.restored && c8.errs === 0, JSON.stringify(c8));
+
+  /* ---- T30 天气应用(实况/预报/历史确定性) ---- */
+  await ev(`WebOS.wm.open('weather')`);
+  await sleep(800);
+  const w1 = await ev(`(() => ({
+    city: document.querySelector('.wx-desc')?.textContent,
+    temp: document.querySelector('.wx-temp')?.textContent,
+    hours: document.querySelectorAll('.wx-hour').length,
+    days: document.querySelectorAll('.wx-day-row').length,
+    cities: document.querySelectorAll('.app-side .nav-item').length,
+  }))()`);
+  t('T30 天气:实况+12小时+7日预报+8城市', w1.hours === 12 && w1.days === 7 && w1.cities === 8,
+    JSON.stringify(w1));
+
+  // 数据确定性:同一天两次 daily() 结果一致(历史可回溯的基石)
+  const det = await ev(`(() => {
+    const a = WebOS.__weatherDaily('shanghai', '2024-07-15');
+    const b = WebOS.__weatherDaily('shanghai', '2024-07-15');
+    return JSON.stringify(a) === JSON.stringify(b) && a.tmax > a.tmin;
+  })()`);
+  t('T30.1 气象数据确定性(同日同天)', det === true);
+
+  // 历史查询:去年今日
+  await ev(`(() => {
+    [...document.querySelectorAll('.win[data-app=weather] .seg-btn')].find(b => b.textContent === '历史查询').click();
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const btn = [...document.querySelectorAll('.win[data-app=weather] .btn')].find(b => b.textContent === '去年今日');
+    btn.click();
+  })()`);
+  await sleep(500);
+  const w2 = await ev(`(() => ({
+    hero: document.querySelector('.wx-desc')?.textContent || '',
+    hasChart: !!document.querySelector('.wx-chart'),
+    stat: document.querySelector('.win[data-app=weather] .app-status span').textContent,
+    temp: document.querySelector('.wx-temp')?.textContent,
+  }))()`);
+  t('T30.2 历史查询(去年今日)', w2.stat.includes('历史') && w2.hasChart && w2.temp, JSON.stringify(w2));
+  await c.shot('t30-weather-history');
+
+  // 历史区间:一周前按钮 + 温度条形图非空
+  await ev(`(() => { [...document.querySelectorAll('.win[data-app=weather] .btn')].find(b => b.textContent === '一周前').click(); })()`);
+  await sleep(400);
+  const w3 = await ev(`(() => ({
+    bars: document.querySelectorAll('.wx-bar').length,
+    temps: [...document.querySelectorAll('.wx-bar-t')].map(t => t.textContent),
+  }))()`);
+  t('T30.3 历史趋势条形图(7 天)', w3.bars === 7, JSON.stringify(w3.temps));
+
+  // 城市切换:三亚比哈尔滨热(确定性气候)
+  await ev(`(() => {
+    [...document.querySelectorAll('.app-side .nav-item')].find(n => n.textContent.includes('三亚')).click();
+  })()`);
+  await sleep(500);
+  await ev(`(() => {
+    [...document.querySelectorAll('.win[data-app=weather] .seg-btn')].find(b => b.textContent === '实况').click();
+  })()`);
+  await sleep(400);
+  await ev(`(() => {
+    [...document.querySelectorAll('.app-side .nav-item')].find(n => n.textContent.includes('哈尔滨')).click();
+  })()`);
+  await sleep(400);
+  const sanya = await ev(`(async () => {
+    [...document.querySelectorAll('.app-side .nav-item')].find(n => n.textContent.includes('三亚')).click();
+    await new Promise(r => setTimeout(r, 350));
+    const t1 = Math.round(parseFloat(document.querySelector('.wx-temp').textContent));
+    [...document.querySelectorAll('.app-side .nav-item')].find(n => n.textContent.includes('哈尔滨')).click();
+    await new Promise(r => setTimeout(r, 350));
+    const t2 = Math.round(parseFloat(document.querySelector('.wx-temp').textContent));
+    return { sanya: t1, harbin: t2 };
+  })()`);
+  t('T30.4 城市气候差异(三亚>哈尔滨)', sanya.sanya > sanya.harbin, JSON.stringify(sanya));
+
+  const errs30 = await ev(`window.__errs.length`);
+  t('T30.5 全程无错误', errs30 === 0, `errs=${errs30}`);
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=weather]').dataset.id)`);
+  await sleep(300);
 } catch (e) {
   t('执行中断', false, String(e.message || e));
 } finally {

@@ -1,0 +1,41 @@
+/* 天气应用专属样式 */
+.wx-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.wx-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 20px 24px; border-radius: var(--radius);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+.wx-hero-main { display: flex; align-items: center; gap: 18px; }
+.wx-icon { color: var(--accent); }
+.wx-temp { font-size: 52px; font-weight: 700; line-height: 1; }
+.wx-desc { color: var(--text-2); margin-top: 4px; }
+.wx-hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 24px; }
+.wx-stat { display: flex; flex-direction: column; font-size: 12px; }
+.wx-stat b { font-size: 13.5px; }
+
+.wx-hours { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.wx-hour {
+  flex: none; width: 64px; padding: 8px 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  border-radius: var(--radius-s); background: var(--hover);
+}
+.wx-hour b { font-size: 13px; }
+
+.wx-chart {
+  display: flex; align-items: flex-end; gap: 5px;
+  height: 92px; padding: 8px 4px 0; overflow-x: auto;
+}
+.wx-bar { flex: 1; min-width: 26px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; height: 100%; }
+.wx-bar i { width: 100%; max-width: 22px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 45%, transparent)); }
+.wx-bar-t { font-size: 10.5px; color: var(--text-2); }
+
+.wx-day-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 4px; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.wx-day-row:last-child { border-bottom: none; }
+.wx-day-label { width: 44px; font-weight: 600; }
+.wx-day-t { margin-left: auto; font-variant-numeric: tabular-nums; }
