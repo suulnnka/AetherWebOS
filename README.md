@@ -50,15 +50,20 @@ webos/
 │  ├─ base.css           reset + 主题变量(明暗两套)
 │  ├─ shell.css          桌面、任务栏、开始菜单、托盘、通知、开关机画面
 │  ├─ window.css         窗体、窗头、窗口按钮、缩放手柄
-│  ├─ appkit.css         应用通用组件(按钮/表单/列表/模态框…)
-│  └─ apps.css           各内置应用专属样式
+│  ├─ appkit.css         应用通用组件(按钮/表单/列表/模态框/系统对话框…)
+│  ├─ themes.css         风格主题包(neon/mac/win31/win98/winxp/win7/ubuntu)
+│  └─ apps/              各应用专属样式(css/apps/<id>.css,由加载器注入)
 ├─ js/
-│  ├─ main.js            启动入口:桌面外壳的组装
-│  ├─ core/
+│  ├─ main.js            启动入口:装配应用与外壳(纯 import 清单)
+│  ├─ core/              内核
 │  │  ├─ bus.js          ★ IPC 消息总线
-│  │  ├─ wm.js           ★ 窗口管理器
+│  │  ├─ wm.js           ★ 窗口管理器(含模态对话框支持)
 │  │  ├─ store.js        系统设置(响应式 + 持久化)
 │  │  ├─ fs.js           虚拟文件系统
+│  │  ├─ vnet.js         虚拟网络(DNS/HTTP/SSH)
+│  │  ├─ mail.js         虚拟邮件服务
+│  │  ├─ sms.js          虚拟短信服务
+│  │  ├─ dialogs.js      ★ 系统对话框服务
 │  │  ├─ registry.js     应用注册表
 │  │  ├─ icons.js        内联 SVG 图标库
 │  │  ├─ menu.js         全局右键菜单
@@ -66,9 +71,23 @@ webos/
 │  │  ├─ audio.js        WebAudio 引擎(音量跟随系统)
 │  │  ├─ utils.js        DOM/格式化工具
 │  │  └─ exports.js      全局信息(window.WebOS)
-│  └─ apps/              七个内置应用,每个一个文件
+│  ├─ system/            桌面外壳
+│  │  ├─ boot.js         启动序列
+│  │  ├─ desktop.js      桌面(壁纸 + 图标)
+│  │  ├─ taskbar.js      任务栏(固定应用 + 运行窗口)
+│  │  ├─ startmenu.js    开始菜单
+│  │  ├─ tray.js         系统托盘(音量/日历/通知/开关机)
+│  │  ├─ shortcuts.js    布局按钮 + 全局快捷键
+│  │  └─ appstyles.js    应用样式注入器
+│  └─ apps/              应用(每个应用一个目录)
+│     └─ <id>/index.js   应用代码(mount + 逻辑)
+├─ js/game/index.js      内置游戏内容(示例谜题链)
 └─ README.md
 ```
+
+**新增应用**:在 `js/apps/<id>/index.js` 实现 mount 并 register,在
+`js/main.js` 加一行 import;若有专属样式,放 `css/apps/<id>.css` 并在
+`js/system/appstyles.js` 的清单里加名字即可。
 
 ## 一、窗口系统
 
