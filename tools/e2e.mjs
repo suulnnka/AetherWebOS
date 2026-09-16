@@ -1948,6 +1948,66 @@ try {
   })()`);
   await c.shot('t35-pairs');
 
+  /* ---- T36 推箱子 ---- */
+  await c.goto('http://localhost:8080/');
+  await sleep(2200);
+  for (let i = 0; i < 10 && !(await ev(`WebOS.apps.list().some(a => a.id === 'sokoban')`)); i++) await sleep(400);
+  await ev(`WebOS.wm.open('sokoban')`);
+  await sleep(700);
+  const sk1 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sokoban]');
+    return {
+      cells: w.querySelectorAll('.soko-cell').length,
+      boxes: w.querySelectorAll('.soko-cell.box').length,
+      status: w.querySelector('.app-status span').textContent,
+      err: w.querySelector('.win-error')?.textContent || '',
+    };
+  })()`);
+  t('T36 推箱子:第一关加载(30格+1箱)', sk1.cells === 30 && sk1.boxes === 1 && !sk1.err, JSON.stringify(sk1));
+
+  // 键盘解第一关(A W D)→ 箱子入目标 → 胜利对话框
+  const sk2 = await ev(`(async () => {
+    for (const k of ['a', 'w', 'd']) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      await new Promise(r => setTimeout(r, 220));
+    }
+    await new Promise(r => setTimeout(r, 500));
+    const w = document.querySelector('.win[data-app=sokoban]');
+    return {
+      onGoal: w.querySelectorAll('.soko-cell.on-goal').length,
+      statusR: w.querySelector('.app-status .mono').textContent,
+      winDlg: [...document.querySelectorAll('.win[data-app=sysdialog] .dlg-title')].some(t => t.textContent.includes('过关')),
+    };
+  })()`);
+  t('T36.1 键盘推箱通关(箱子入目标)', sk2.onGoal === 1 && sk2.winDlg, JSON.stringify(sk2));
+
+  // 撤销:胜利后 1.4s 自动进入下一关(撤销栈清空),在新关卡验证移动+撤销
+  await ev(`(() => {
+    const dlgBtn = [...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].pop();
+    if (dlgBtn) dlgBtn.click();
+    return true;
+  })()`);
+  await sleep(1700);   // 等自动切换到第二关
+  const sk3 = await ev(`(async () => {
+    const w = document.querySelector('.win[data-app=sokoban]');
+    // 模拟用户点击窗口恢复焦点(对话框关闭后焦点需要重新激活)
+    w.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const before = w.querySelector('.app-status .mono').textContent;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const after = w.querySelector('.app-status .mono').textContent;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'u', bubbles: true }));
+    await new Promise(r => setTimeout(r, 250));
+    const undone = w.querySelector('.app-status .mono').textContent;
+    return { before, after, undone, undoWorks: undone === before && after !== before };
+  })()`);
+  t('T36.2 移动与撤销(U)', sk3.undoWorks === true, JSON.stringify(sk3));
+  await c.shot('t36-sokoban');
+
+  const errs36 = await ev(`window.__errs.length`);
+  t('T36.3 全程无错误', errs36 === 0, `errs=${errs36}`);
+
   const errs35 = await ev(`window.__errs.length`);
   t('T35.5 全程无错误', errs35 === 0, `errs=${errs35}`);
 
