@@ -2821,8 +2821,75 @@ group('T42', '弹框分级', async () => {
   })()`);
   t('T42.5 关闭三级弹框后系统恢复', l3close.shadeGone && l3close.calcFocusable, JSON.stringify(l3close));
 
+  // ---- 42.6 通用弹窗:复杂配置页(二级 · 可缩放 · Promise 带回结果) ----
+  const cfg = await ev(`(async () => {
+    let result = 'pending';
+    const h = WebOS.wm.popup({
+      title: '配置弹窗测试', width: 640, height: 480, resizable: true,
+      level: 2, owner: 'settings',
+      mount({ root, close }) {
+        const save = document.createElement('button');
+        save.textContent = '保存'; save.className = 'btn cfg-save';
+        save.onclick = () => close({ quality: 'ultra' });
+        const box = document.createElement('div');
+        box.className = 'cfg-test';
+        box.append(save);
+        root.append(box);
+      },
+    });
+    h.promise.then(v => { result = v; });
+    await new Promise(r => setTimeout(r, 600));
+    const win = WebOS.wm.get(h.id)?.el;
+    const st = {
+      opened: !!win,
+      width: win ? win.offsetWidth : 0,
+      resizable: !!win?.querySelector('.rz'),
+      shadeOnSettings: !!document.querySelector('.win[data-app=settings] .app-shade'),
+    };
+    win.querySelector('.cfg-save').click();
+    await new Promise(r => setTimeout(r, 400));
+    st.closed = !document.getElementById(h.id);
+    st.result = result;
+    return st;
+  })()`);
+  t('T42.6 配置弹窗:任意内容+缩放+结果回传',
+    cfg.opened && cfg.width === 640 && cfg.resizable && cfg.shadeOnSettings && cfg.closed &&
+    cfg.result && cfg.result.quality === 'ultra', JSON.stringify(cfg));
+
+  // ---- 42.7 通用弹窗:游戏渲染(三级锁系统 + canvas + 关闭恢复) ----
+  const game = await ev(`(async () => {
+    const h = WebOS.wm.popup({
+      title: '游戏弹窗测试', width: 460, height: 420, level: 3,
+      mount({ root }) {
+        const cv = document.createElement('canvas');
+        cv.className = 'game-cv';
+        root.append(cv);
+      },
+    });
+    await new Promise(r => setTimeout(r, 600));
+    const win = WebOS.wm.get(h.id)?.el;
+    const calcWin = document.querySelector('.win[data-app=calc]');
+    WebOS.wm.focus(calcWin.dataset.id);
+    const st = {
+      canvas: !!win?.querySelector('canvas.game-cv'),
+      sysShade: !!document.querySelector('.modal-shade'),
+      calcRefused: !calcWin.classList.contains('focused'),
+    };
+    h.close('done');
+    await new Promise(r => setTimeout(r, 400));
+    let v = 'unset';
+    h.promise.then(x => { v = x; });
+    await new Promise(r => setTimeout(r, 50));
+    st.shadeGone = !document.querySelector('.modal-shade');
+    st.promiseValue = v;
+    return st;
+  })()`);
+  t('T42.7 游戏弹窗:三级锁定+canvas+关闭恢复',
+    game.canvas && game.sysShade && game.calcRefused && game.shadeGone && game.promiseValue === 'done',
+    JSON.stringify(game));
+
   const errs42 = await ev(`window.__errs.length`);
-  t('T42.6 全程无错误', errs42 === 0, `errs=${errs42}`);
+  t('T42.8 全程无错误', errs42 === 0, `errs=${errs42}`);
 });
 
 

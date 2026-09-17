@@ -195,6 +195,33 @@ export function mount({ dialogs }) {
 }
 ```
 
+### 通用弹窗(`wm.popup` / `ctx.popup`)
+
+弹窗不等于消息框:内容可以是复杂配置页,甚至是真正渲染游戏的画布。
+`popup()` 建一个任意内容、任意尺寸的模态窗口,内容由 `mount` 回调自己画:
+
+```js
+const h = wm.popup({
+  title: '高级设置', icon: 'sliders',
+  width: 720, height: 520, resizable: true,   // 复杂页面常需要缩放
+  level: 2,                                    // 三级模态同样适用(如游戏弹窗锁全系统)
+  mount({ root, close, setSize }) {
+    root.append(/* 表单 / canvas / 任意 DOM */);
+    // close(value):关闭弹窗,promise 以 value 兑现
+    saveBtn.onclick = () => close({ quality: 'high' });
+    // 需要键盘/RAF(如游戏):挂 document 监听,并在 onClose 里清理
+    return { onClose() { /* cancelAnimationFrame / removeEventListener */ } };
+  },
+});
+const result = await h.promise;   // close(value) 的 value;点关闭钮 → undefined
+h.close('ok');                    // 也可从外部关闭
+```
+
+- `onClose` 返回 `false` 可拦截关闭(游戏中误触标题栏 × 时先弹确认)。
+- 游戏类弹窗推荐 `level: 3`(系统锁定,专注游戏)或 `level: 2`;键盘输入挂
+  `document`,弹窗是真实窗口,canvas/RAF/鼠标事件与普通页面无异。
+- ctx 里同样有绑定好的 `ctx.popup`(owner 自动为本应用,默认二级)。
+
 ### 跨应用打开窗口
 
 ```js

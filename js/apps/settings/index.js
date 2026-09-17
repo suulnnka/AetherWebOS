@@ -324,6 +324,22 @@ function renderSection(root, sec, bus) {
           el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 1, owner: 'settings', title: '一级弹框 · 非模态', message: '我不影响任何操作。', detail: '可以照常操作其他窗口、任务栏,甚至本窗口,我只是浮在这里。' }) }, '一级'),
           el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 2, owner: 'settings', title: '二级弹框 · 应用模态', message: '系统设置的所有窗口已被我锁定。', detail: '其他应用、任务栏、桌面照常可用——去开个计算器试试。' }) }, '二级'),
           el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 3, title: '三级弹框 · 系统模态', message: '整个系统都已锁定。', detail: '处理完这个弹框之前,哪儿也去不了。' }) }, '三级'))),
+      row('复杂弹窗', '弹窗 ≠ 消息框:内容可以是复杂配置页,甚至是真正渲染的游戏',
+        el('div', { class: 'row', style: { flexWrap: 'wrap', justifyContent: 'flex-end' } },
+          el('button', {
+            class: 'btn',
+            onClick: async () => {
+              const result = await openConfigPopup();
+              if (result) dialogs.success({ level: 1, title: '配置已保存', message: `画质 ${result.quality} · FOV ${result.fov}° · 预算 ${result.budget}%` });
+            },
+          }, '配置弹窗(二级)'),
+          el('button', {
+            class: 'btn',
+            onClick: async () => {
+              const result = await openGamePopup();
+              if (result !== undefined) dialogs.info({ level: 1, title: '游戏结束', message: result ? '通关!五颗弹珠全部接住 🎉' : '再接再厉,下次一定。' });
+            },
+          }, '游戏弹窗(三级)'))),
       row('重置系统', '清空浏览器中保存的全部系统数据(不可恢复)',
         el('button', {
           class: 'btn danger',
