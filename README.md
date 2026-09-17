@@ -283,9 +283,12 @@ npm run e2e                        # 全部 38 组
 npm run e2e -- --list              # 列出全部用例组
 npm run e2e -- T22                 # 只跑某一组
 npm run e2e -- T1-T5 邮件 天气     # 区间 / 组号 / 标题关键词,可混写
-npm run e2e -- --parallel 3        # 3 个浏览器实例并行跑全量
+npm run e2e -- --parallel 3        # 指定并发数(默认 6,调试可 --parallel 1)
 npm run e2e -- --clean             # 清空测试 profile,全新 localStorage 状态
 ```
+
+默认 6 个浏览器并行,全量约 1 分钟(串行约 3.5 分钟);每个 worker 使用
+独立的 Chrome profile 与系统分配的调试端口,localStorage 互不可见。
 
 输出 PASS/FAIL 清单 + `.shots/` 截图;末尾的分组摘要含每组耗时,方便定位慢用例。
 
