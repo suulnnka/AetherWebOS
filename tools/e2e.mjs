@@ -584,7 +584,7 @@ group('T17', '霓虹未来', async () => {
     `accent=${ne.accent} panel=${ne.panel}`);
   t('T17.1 窗口霓虹灯条与辉光', ne.stripAnim === 'neonFlow' && ne.winGlow,
     `strip=${ne.stripAnim} glow=${ne.winGlow}`);
-  t('T17.2 桌面暗化网格与扫描线', ne.wpOverlay && ne.scanlines && ne.tbBorderTop !== 'rgba(0, 0, 0, 0)',
+  t('T17.2 桌面暗化(无扫描线)', ne.wpOverlay && !ne.scanlines && ne.tbBorderTop !== 'rgba(0, 0, 0, 0)',
     `overlay=${ne.wpOverlay} scan=${ne.scanlines} tbBorder=${ne.tbBorderTop}`);
   await c.shot('t17-neon');
   // 关闭按钮品红霓虹
@@ -737,9 +737,9 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
   t('T19.1 灯条流光动画', ne2.stripAnim === 'neonFlow' && ne2.stripSize.includes('200%'), JSON.stringify({ anim: ne2.stripAnim, size: ne2.stripSize }));
   t('T19.2 未聚焦灯条停摆', ne2.unfocusedPaused === 'paused', `playState=${ne2.unfocusedPaused}`);
   t('T19.3 活动窗口呼吸辉光', ne2.breath === 'neonBreath', `anim=${ne2.breath}`);
-  t('T19.4 任务栏悬浮+切角+顶部流光', ne2.tbClip && ne2.tbFloat && ne2.tbStrip === 'neonFlow',
+  t('T19.4 任务栏现代深色(全宽+无切角+静态顶线)', !ne2.tbClip && !ne2.tbFloat && ne2.tbStrip === 'none',
     `clip=${ne2.tbClip} float=${ne2.tbFloat} strip=${ne2.tbStrip}`);
-  t('T19.5 动态桌面(网格/光球/扫描带)', ne2.gridAnim && ne2.orbsAnim && ne2.sweepAnim,
+  t('T19.5 动态桌面(网格/光球,无扫描带)', ne2.gridAnim && ne2.orbsAnim && ne2.sweepAnim === 'none',
     `grid=${ne2.gridAnim} orbs=${ne2.orbsAnim} sweep=${ne2.sweepAnim}`);
   t('T19.6 任务栏芯片携带应用霓虹色', ne2.taskNeon === '#ff3860' || ne2.taskNeon === '#ffb400', ne2.taskNeon);
   await c.shot('t19-neon2');
