@@ -443,7 +443,7 @@ register({
         } else if (t === 'n') {
           add(latheGeo('knightBase', P_KNIGHT_BASE), 0, 0, 0);
           // 白马朝 -z(对手方向),黑马朝 +z
-          add(extrudeGeo('knightHead', O_KNIGHT_HEAD, 0.20), 0, 0, 0,
+          add(extrudeGeo('knightHead', O_KNIGHT_HEAD, 0.24), 0, 0, 0,
             color === 'w' ? Math.PI / 2 : -Math.PI / 2);
         } else if (t === 'b') {
           add(latheGeo('bishop', P_BISHOP), 0, 0, 0);
@@ -508,10 +508,12 @@ register({
      *   触控板捏合          → 缩放(浏览器会转成 ctrl+wheel;Safari 另见下方 GestureEvent)
      *   两指转动 / 触屏双指  → 旋转方位角 + 同时捏合缩放
      */
-    /* 标准视角(macOS 棋盘那种俯瞰姿态):俯角 65°。
+    /* 标准视角:正对棋盘(X 轴横向铺满画面,白方在近处正下方)的 65° 俯角。
+     * theta 是相机方位角 —— 必须是 0(相机落在 +z 正前方),
+     * 取 π/4 的话相机站在棋盘对角线上,画面会变成菱形,认格子很别扭。
      * phi 是与 +Y 轴的夹角,所以 俯角 = 90° - phi,即 phi = 25°。
      * 想更平/更俯只需要改这里的 65。 */
-    const HOME = { theta: Math.PI / 4, phi: (90 - 65) * Math.PI / 180, radius: 13 };
+    const HOME = { theta: 0, phi: (90 - 65) * Math.PI / 180, radius: 13 };
     let theta = HOME.theta, phi = HOME.phi, radius = HOME.radius;
     function updateCam() {
       if (!camera) return;
