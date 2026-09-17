@@ -4,6 +4,13 @@ export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 /**
+ * 测试模式(页面带 ?e2e=1 时为 true,e2e 冒烟测试 tools/e2e.mjs 自动携带)。
+ * 约定:只允许缩短"纯装饰性等待"(开机画面动画、游戏翻回锁定等),
+ * 不得改变任何业务逻辑或测试断言的最终状态。
+ */
+export const E2E = new URLSearchParams(location.search).has('e2e');
+
+/**
  * DOM 构建助手
  * el('div', { class:'a', style:{ left:'1px' }, dataset:{ id:1 }, onClick:fn, html:'', ...attrs }, ...children)
  * children 可以是字符串 / DOM 节点 / 数组 / null(忽略)

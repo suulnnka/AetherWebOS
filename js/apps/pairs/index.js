@@ -3,7 +3,7 @@
  * 翻两张配对(花色+点数相同),全部配对即胜利;
  * 计步与计时,4x4 / 6x6 两种规模。
  * ============================================================ */
-import { el } from '../../core/utils.js';
+import { el, E2E } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import { dialogs } from '../../core/dialogs.js';
@@ -89,9 +89,9 @@ register({
             }), 350);
           }
         } else {
-          // 翻错:展示后盖回
+          // 翻错:展示后盖回(测试模式缩短锁定,T35 翻牌遍历因此提速)
           lock = true;
-          setTimeout(() => { open = []; lock = false; render(); }, 750);
+          setTimeout(() => { open = []; lock = false; render(); }, E2E ? 150 : 750);
         }
       }
     }

@@ -1,6 +1,7 @@
 /* ============================================================
  * WebOS 端到端冒烟测试
- * 先启动静态服务器(默认 8080),再运行本脚本:
+ * 先 npm run dev(Vite 开发服务器,固定 8080;应用裸模块依赖需要 Vite 解析),
+ * 再运行本脚本(自动携带 ?e2e=1 进入应用测试模式,见 js/core/utils.js):
  *   node tools/e2e.mjs                  # 全部用例
  *   node tools/e2e.mjs T22 27           # 只跑指定组
  *   node tools/e2e.mjs T1-T5 邮件 天气  # 区间 / 组号 / 标题关键词,可混写
@@ -16,7 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const URL_BASE = 'http://localhost:8080/';
+// ?e2e=1 进入应用测试模式:跳过开机动画等装饰性等待(约定见 js/core/utils.js 的 E2E)
+const URL_BASE = 'http://localhost:8080/?e2e=1';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ---------- CLI ---------- */
@@ -64,12 +66,12 @@ const ev = (expr) => c.evaluate(expr);
 
 /* 就绪等待:轮询直到开机画面移除、桌面图标渲染(替代固定 sleep) */
 async function waitReady() {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 100; i++) {
     const r = await ev(`(() => ({ boot: !!document.getElementById('boot'), icons: document.querySelectorAll('.dicon').length, os: !!window.WebOS }))()`);
-    if (r.os && !r.boot && r.icons > 0) { await sleep(250); return; }
-    await sleep(200);
+    if (r.os && !r.boot && r.icons > 0) { await sleep(100); return; }
+    await sleep(100);
   }
-  throw new Error('页面 12s 内未就绪');
+  throw new Error('页面 10s 内未就绪');
 }
 /* 组间重置:回到初始桌面(localStorage 保留,由用例自行清理) */
 async function fresh() { await c.goto(URL_BASE); await waitReady(); }
@@ -2171,16 +2173,16 @@ group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
       const node = document.querySelectorAll('.pairs-card')[i];
       return node ? (node.querySelector('.pairs-face')?.textContent ?? null) : null;
     };
-    for (let round = 0; round < 20; round++) {   // 翻牌遍历即可,不做全量穷举(80 轮要 2 分钟)
+    for (let round = 0; round < 20; round++) {   // 翻牌遍历即可,不做全量穷举
       if (document.querySelectorAll('.pairs-card.matched').length >= 2) return { found: true };
       // 找当前未翻开、未配对的第一张
       const cards = [...document.querySelectorAll('.pairs-card')];
       const idx = cards.findIndex((c) => !c.classList.contains('matched') && !c.classList.contains('up'));
       if (idx < 0) break;
-      const keyA = await clickAt(idx, 260);
+      const keyA = await clickAt(idx, 120);
       if (keyA == null) continue;
       if (known.has(keyA) && known.get(keyA) !== idx) {
-        const keyB = await clickAt(known.get(keyA), 900);
+        const keyB = await clickAt(known.get(keyA), 400);   // 配对即时生效,等 render 即可
         if (document.querySelectorAll('.pairs-card.matched').length >= 2) return { found: true };
         known.delete(keyA);
         continue;
@@ -2189,7 +2191,7 @@ group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
       const cards2 = [...document.querySelectorAll('.pairs-card')];
       const idx2 = cards2.findIndex((c) => !c.classList.contains('matched') && !c.classList.contains('up'));
       if (idx2 < 0) break;
-      const keyB = await clickAt(idx2, 1150);
+      const keyB = await clickAt(idx2, 450);   // 翻错锁 150ms(e2e 模式)+ render 余量
       if (keyB != null && !known.has(keyB)) known.set(keyB, idx2);
       if (!known.has(keyA)) known.set(keyA, idx);
     }
@@ -2491,6 +2493,16 @@ if (wantList) {
 
 const ids = resolveSelection();
 if (!ids.length) { console.error('选择器没有匹配到任何用例组(用 --list 查看全部组)'); process.exit(2); }
+
+/* 服务器预检:必须由 Vite 开发服务(解析应用裸模块依赖)提供页面 */
+try {
+  const pong = await fetch(URL_BASE, { signal: AbortSignal.timeout(3000) });
+  if (!pong.ok) throw new Error('HTTP ' + pong.status);
+} catch {
+  console.error('开发服务器未就绪:先运行 npm run dev(端口 8080),再跑 e2e');
+  process.exit(2);
+}
+
 const scope = ids.length === GROUPS.length ? '全部' : ids.join(', ');
 console.log(`====== WebOS E2E:${scope}(${ids.length}/${GROUPS.length} 组,parallel=${parallel}${clean ? ',clean' : ''})======`);
 const T0 = Date.now();

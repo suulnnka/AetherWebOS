@@ -1,7 +1,7 @@
 /* ============================================================
  * 启动序列:应用设置 → 壁纸/托盘/任务栏/开始菜单/桌面 → 全局调试接口
  * ============================================================ */
-import { $ } from '../core/utils.js';
+import { $, E2E } from '../core/utils.js';
 import { svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings, applyAll as applyAllSettings } from '../core/store.js';
@@ -43,9 +43,9 @@ function boot() {
   });
   window.WebOS = SYS;
 
-  // 开机画面淡出
-  setTimeout(() => $('#boot').classList.add('hide'), 1000);
-  setTimeout(() => $('#boot').remove(), 1500);
+  // 开机画面淡出(测试模式跳过装饰性动画,否则每个用例组都要白等 1.5s)
+  setTimeout(() => $('#boot').classList.add('hide'), E2E ? 60 : 1000);
+  setTimeout(() => $('#boot').remove(), E2E ? 180 : 1500);
 
   console.log('%cWebOS 1.0 已启动 %c— 全局对象:WebOS',
     'color:#5b6cff;font-weight:bold', 'color:#888');
