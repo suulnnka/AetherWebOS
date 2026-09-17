@@ -5,6 +5,7 @@ import { $, E2E } from '../core/utils.js';
 import { svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings, applyAll as applyAllSettings } from '../core/store.js';
+import { accounts } from '../core/accounts.js';
 import fs from '../core/fs.js';
 import vnet from '../core/vnet.js';
 import mailSvc from '../core/mail.js';
@@ -37,7 +38,7 @@ function boot() {
   // 调试 / 自动化接口
   Object.assign(SYS, {
     bus: { subscribe, publish, send: (from, to, type, payload) => publish(`app:${to}`, { from, to, type, payload }) },
-    wm, settings, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc,
+    wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc,
     __weatherDaily: weatherSvc.daily,
     apps: { list: listApps },
   });

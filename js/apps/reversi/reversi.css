@@ -35,3 +35,14 @@
 }
 .rv-count.black { background: #22262e; color: #fff; }
 .rv-count.white { background: #e8e8e8; color: #22262e; }
+/* AI 搜索信息行(深度/最佳步/评分/节点/耗时) */
+.rv-search {
+  flex: none; height: 24px;
+  display: flex; align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-2); font-size: 11.5px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}

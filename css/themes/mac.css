@@ -38,7 +38,6 @@ html[data-style="mac"] .tray-btn { color: #eef1ff; }
 html[data-style="mac"] .tray-btn.on { color: #fff; }
 html[data-style="mac"] .tray-clock .t { color: #fff; }
 html[data-style="mac"] .tray-clock .d { color: rgba(255, 255, 255, 0.72); }
-html[data-style="mac"] .tb-showdesk { display: none; }
 html[data-style="mac"] .tb-sep { opacity: 0.4; }
 
 /* 窗体:圆角大阴影 + 左侧红绿灯 */

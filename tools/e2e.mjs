@@ -726,7 +726,6 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
       tbClip: cs(document.getElementById('taskbar')).clipPath !== 'none',
       tbStrip: cs(document.getElementById('taskbar'), '::before').animationName,
       tbFloat: tb.left > 0 && tb.width < innerWidth - 20,
-      gridAnim: cs(document.getElementById('desktop'), '::before').animationName,
       orbsAnim: cs(document.getElementById('desktop'), '::after').animationName,
       sweepAnim: cs(document.getElementById('icons'), '::before').animationName,
       taskNeon: document.querySelector('#tb-tasks .tbtn.active')?.style.getPropertyValue('--neon-a').trim(),
@@ -739,8 +738,8 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
   t('T19.3 活动窗口呼吸辉光', ne2.breath === 'neonBreath', `anim=${ne2.breath}`);
   t('T19.4 任务栏现代深色(全宽+无切角+静态顶线)', !ne2.tbClip && !ne2.tbFloat && ne2.tbStrip === 'none',
     `clip=${ne2.tbClip} float=${ne2.tbFloat} strip=${ne2.tbStrip}`);
-  t('T19.5 动态桌面(网格/光球,无扫描带)', ne2.gridAnim && ne2.orbsAnim && ne2.sweepAnim === 'none',
-    `grid=${ne2.gridAnim} orbs=${ne2.orbsAnim} sweep=${ne2.sweepAnim}`);
+  t('T19.5 动态桌面(漂浮光球,无网格/扫描带)', ne2.orbsAnim && ne2.sweepAnim === 'none',
+    `orbs=${ne2.orbsAnim} sweep=${ne2.sweepAnim}`);
   t('T19.6 任务栏芯片携带应用霓虹色', ne2.taskNeon === '#ff3860' || ne2.taskNeon === '#ffb400', ne2.taskNeon);
   await c.shot('t19-neon2');
   await ev(`WebOS.settings.set({ style: 'modern' })`);
@@ -2418,6 +2417,293 @@ group('T38', '账号系统', async () => {
 
   const errs38 = await ev(`window.__errs.length`);
   t('T38.5 全程无错误', errs38 === 0, `errs=${errs38}`);
+});
+
+group('T39', '动态壁纸', async () => {
+  /* ---- T39 动态壁纸:推移动画 / 流动光斑 / 动效开关 ---- */
+  await fresh();
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+
+  // 基础层:任意壁纸都有推移动画(纯 transform)
+  const base = await ev(`(() => {
+    const cs = getComputedStyle(document.getElementById('wallpaper'));
+    return { name: cs.animationName, dur: cs.animationDuration };
+  })()`);
+  t('T39.1 壁纸默认推移动画', /wpPan/.test(base.name) && parseFloat(base.dur) > 0, JSON.stringify(base));
+
+  // 切到流动型动态壁纸(星云):data-motion=flow + 双动画 + 220% 画布
+  await ev(`WebOS.settings.set({ wallpaper: 'nebula' })`);
+  await sleep(600);
+  const flow = await ev(`(() => {
+    const wp = document.getElementById('wallpaper');
+    const cs = getComputedStyle(wp);
+    return {
+      motion: wp.dataset.motion,
+      names: cs.animationName,
+      size: cs.backgroundSize,
+      radial: wp.style.background.includes('radial-gradient'),
+    };
+  })()`);
+  t('T39.2 流动型壁纸(星云)生效', flow.motion === 'flow' && /wpPan/.test(flow.names) && /wpFlow/.test(flow.names) && flow.radial === true, JSON.stringify(flow));
+  t('T39.3 光斑画布放大 220%', flow.size.includes('220%'), flow.size);
+  await c.shot('t39-wallpaper-flow');
+
+  // 切回普通壁纸:motion 恢复 pan,画布尺寸清除
+  await ev(`WebOS.settings.set({ wallpaper: 'aurora' })`);
+  await sleep(500);
+  const back = await ev(`(() => {
+    const wp = document.getElementById('wallpaper');
+    return { motion: wp.dataset.motion, size: wp.style.backgroundSize };
+  })()`);
+  t('T39.4 切回普通壁纸恢复推移', back.motion === 'pan' && !back.size, JSON.stringify(back));
+
+  // 关闭界面动效 → 壁纸动画一并停用;再恢复
+  await ev(`WebOS.settings.set({ effects: false })`);
+  await sleep(400);
+  const off = await ev(`getComputedStyle(document.getElementById('wallpaper')).animationName`);
+  await ev(`WebOS.settings.set({ effects: true })`);
+  await sleep(300);
+  const on = await ev(`getComputedStyle(document.getElementById('wallpaper')).animationName`);
+  t('T39.5 动效开关停用/恢复壁纸动画', off === 'none' && /wpPan/.test(on), `off=${off}, on=${on}`);
+  await ev(`WebOS.settings.set({ wallpaper: 'aurora' })`);
+  await sleep(300);
+
+  const errs39 = await ev(`window.__errs.length`);
+  t('T39.6 全程无错误', errs39 === 0, `errs=${errs39}`);
+});
+
+group('T40', '系统用户与注销', async () => {
+  /* ---- T40 系统用户:创建/列表/注销锁屏/锁屏登录/删除 ---- */
+  await fresh();
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+  // 干净的账号状态(含锁屏标志)
+  await ev(`(() => { localStorage.removeItem('webos.accounts.v1'); localStorage.removeItem('webos.account-session.v1'); localStorage.removeItem('webos.session-locked.v1'); return true; })()`);
+  await fresh();   // 重载后以全新账号状态启动
+
+  // 创建用户(admin 为管理员,创建 carol 不切换会话)
+  const created = await ev(`(async () => {
+    const r1 = await WebOS.accounts.createUser('admin', 'admin1234', { displayName: '管理员' });
+    const r2 = await WebOS.accounts.createUser('carol', 'carol1234');
+    const dup = await WebOS.accounts.createUser('carol', 'x2345');
+    return { r1: r1.ok, r2: r2.ok, dupRejected: dup.ok === false, names: WebOS.accounts.list().map(u => u.name) };
+  })()`);
+  t('T40 创建用户(重名被拒)', created.r1 && created.r2 && created.dupRejected &&
+    created.names.includes('admin') && created.names.includes('carol'), JSON.stringify(created));
+
+  // 登录 admin → 开始菜单显示显示名
+  await ev(`(async () => { await WebOS.accounts.login('admin', 'admin1234'); return true; })()`);
+  await sleep(400);
+  const chip = await ev(`({ text: document.getElementById('sm-username').textContent, title: document.getElementById('sm-user').title })`);
+  t('T40.1 开始菜单显示登录用户', chip.text === '管理员' && chip.title.includes('admin'), JSON.stringify(chip));
+
+  // 电源菜单 → 注销:全部窗口关闭 + 锁屏出现
+  await ev(`WebOS.wm.open('todo')`);
+  await sleep(800);
+  await ev(`document.getElementById('start-btn').click()`);
+  await sleep(400);
+  await ev(`document.getElementById('sm-power').click()`);
+  await sleep(400);
+  await ev(`(() => { const it = [...document.querySelectorAll('#ctx .ctx-item')].find(i => i.textContent.includes('注销')); it && it.click(); return !!it; })()`);
+  await sleep(800);
+  const locked = await ev(`(() => ({
+    overlay: !!document.getElementById('session'),
+    wins: document.querySelectorAll('.win').length,
+    users: [...document.querySelectorAll('.ss-user .ss-uname')].map(n => n.textContent),
+    chipTitle: document.getElementById('sm-user').title,
+  }))()`);
+  t('T40.2 注销后锁屏(窗口清空,列出用户)', locked.overlay && locked.wins === 0 &&
+    locked.users.includes('管理员') && locked.users.includes('carol') && locked.chipTitle.includes('未登录'), JSON.stringify(locked));
+  await c.shot('t40-locked');
+
+  // 锁屏登录:选 carol → 密码 → 进入桌面
+  await ev(`(() => {
+    const tile = [...document.querySelectorAll('.ss-user')].find(n => n.textContent.includes('carol'));
+    tile && tile.click();
+    const inp = document.querySelector('#session .ss-form input[type=password]');
+    inp.value = 'carol1234';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return true;
+  })()`);
+  await sleep(900);
+  const loginC = await ev(`(() => ({
+    overlay: !!document.getElementById('session'),
+    user: WebOS.accounts.current(),
+    chip: document.getElementById('sm-username').textContent,
+  }))()`);
+  t('T40.3 锁屏登录进入桌面', !loginC.overlay && loginC.user === 'carol' && loginC.chip === 'carol', JSON.stringify(loginC));
+
+  // 错误密码在锁屏被拒
+  await ev(`document.getElementById('start-btn').click()`);
+  await sleep(300);
+  await ev(`document.getElementById('sm-power').click()`);
+  await sleep(300);
+  await ev(`(() => { const it = [...document.querySelectorAll('#ctx .ctx-item')].find(i => i.textContent.includes('注销')); it && it.click(); })()`);
+  await sleep(600);
+  await ev(`(() => {
+    const inp = document.querySelector('#session .ss-form input[type=password]');
+    inp.value = 'wrong-pass';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return true;
+  })()`);
+  await sleep(900);
+  const wrongPw = await ev(`(() => ({
+    stillLocked: !!document.getElementById('session'),
+    err: (document.querySelector('#session .ss-error') || {}).textContent || '',
+    user: WebOS.accounts.current(),
+  }))()`);
+  t('T40.4 错误密码被拒(保持锁屏)', wrongPw.stillLocked && wrongPw.err.includes('密码错误') && wrongPw.user === null, JSON.stringify(wrongPw));
+
+  // 锁屏注册新用户(直接创建并登录)
+  await ev(`(() => {
+    const sw = [...document.querySelectorAll('#session .ss-switch')].find(b => b.textContent.includes('注册新用户'));
+    sw && sw.click();
+    return true;
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const box = document.querySelector('#session .ss-box');
+    const [u, p] = box.querySelectorAll('.ss-form .input');
+    u.value = 'dave'; p.value = 'dave1234';
+    const btn = box.querySelector('.ss-main');
+    btn.click();
+    return true;
+  })()`);
+  await sleep(900);
+  const regC = await ev(`(() => ({
+    overlay: !!document.getElementById('session'),
+    user: WebOS.accounts.current(),
+    count: WebOS.accounts.list().length,
+  }))()`);
+  t('T40.5 锁屏注册新用户并登录', !regC.overlay && regC.user === 'dave' && regC.count === 3, JSON.stringify(regC));
+
+  // 删除用户:密码错误被拒;正确密码删除;删除当前用户触发注销锁屏
+  const del = await ev(`(async () => {
+    const bad = await WebOS.accounts.remove('admin', 'nope');
+    const ok = await WebOS.accounts.remove('admin', 'admin1234');
+    return { badRejected: bad.ok === false && bad.error === '密码错误', ok: ok.ok, names: WebOS.accounts.list().map(u => u.name) };
+  })()`);
+  t('T40.6 删除用户(密码校验)', del.badRejected && del.ok && !del.names.includes('admin'), JSON.stringify(del));
+  await ev(`(async () => { await WebOS.accounts.remove('dave', 'dave1234'); return true; })()`);
+  await sleep(600);
+  const lockAfterDel = await ev(`(() => ({ overlay: !!document.getElementById('session'), user: WebOS.accounts.current() }))()`);
+  t('T40.7 删除当前用户自动注销锁屏', lockAfterDel.overlay && lockAfterDel.user === null, JSON.stringify(lockAfterDel));
+
+  const errs40 = await ev(`window.__errs.length`);
+  t('T40.8 全程无错误', errs40 === 0, `errs=${errs40}`);
+});
+
+group('T41', '应用内右键', async () => {
+  /* ---- T41 应用内右键:拦截浏览器菜单 / 选中复制 / 全选 / 应用自定义菜单 ---- */
+  // CDP 授权剪贴板,让「复制」可用真实系统剪贴板验证;headless 页面须置于前台才有文档焦点
+  await c.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+  await c.send('Page.bringToFront');
+  await ev(`(async () => { try { await navigator.clipboard.writeText(''); } catch {} return true; })()`);
+  await sleep(150);
+
+  // 41.1 记事本:选中文字 → 右键被拦截(不弹浏览器菜单)且出现「复制」
+  await ev(`WebOS.wm.open('notes')`);
+  await sleep(600);
+  const ctx1 = await ev(`(() => {
+    const ta = document.querySelector('.win[data-app=notes] .notes-area');
+    ta.value = '右键复制这段文字';
+    ta.focus();
+    ta.setSelectionRange(2, 4);   // 选中「复制」二字
+    const notPrevented = ta.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+    return {
+      notPrevented,
+      items: [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim()),
+    };
+  })()`);
+  t('T41 应用内右键拦截+复制项', ctx1.notPrevented === false && ctx1.items.includes('复制'),
+    JSON.stringify(ctx1));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('复制')).click()`);
+  await sleep(300);
+  const clip1 = await ev(`navigator.clipboard.readText()`);
+  t('T41.1 复制写入系统剪贴板', clip1 === '复制', JSON.stringify(clip1));
+
+  // 41.2 无选中 → 表单控件出现「全选」并生效
+  const ctx2 = await ev(`(() => {
+    const ta = document.querySelector('.win[data-app=notes] .notes-area');
+    ta.setSelectionRange(0, 0);
+    ta.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+    return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
+  })()`);
+  t('T41.2 无选中表单控件 → 全选项', ctx2.includes('全选'), JSON.stringify(ctx2));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('全选')).click()`);
+  await sleep(200);
+  const selAll = await ev(`(() => {
+    const ta = document.querySelector('.win[data-app=notes] .notes-area');
+    return ta.selectionStart === 0 && ta.selectionEnd === ta.value.length;
+  })()`);
+  t('T41.3 全选生效', selAll === true);
+
+  // 41.4 任务应用:任务行自定义右键(标记完成 / 删除任务)
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
+    return true;
+  })()`);
+  await sleep(300);
+  await ev(`WebOS.wm.open('todo')`);
+  await sleep(700);
+  const ctx3 = await ev(`(() => {
+    const row = [...document.querySelectorAll('.todo-item')][0];
+    if (!row) return { noRow: true };
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 400 }));
+    return {
+      items: [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim()),
+      count: document.querySelectorAll('.todo-item').length,
+    };
+  })()`);
+  t('T41.4 任务行自定义右键', (ctx3.items || []).includes('标记完成') && (ctx3.items || []).includes('删除任务'),
+    JSON.stringify(ctx3));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('删除任务')).click()`);
+  await sleep(400);
+  const afterDel = await ev(`document.querySelectorAll('.todo-item').length`);
+  t('T41.5 右键删除任务', afterDel === ctx3.count - 1, `${ctx3.count} → ${afterDel}`);
+
+  // 41.6 备忘录卡片自定义右键
+  await ev(`WebOS.wm.open('memo')`);
+  await sleep(700);
+  const ctx4 = await ev(`(() => {
+    const card = document.querySelector('.memo-card');
+    if (!card) return { noCard: true };
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
+    return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
+  })()`);
+  t('T41.6 备忘录卡片右键', (ctx4 || []).some(i => i === '置顶' || i === '取消置顶') && (ctx4 || []).includes('删除备忘录'),
+    JSON.stringify(ctx4));
+
+  // 41.7 浏览器:地址栏右键 → 刷新 + 复制页面地址(先写入地址,初始值为空)
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(800);
+  const ctx5 = await ev(`(() => {
+    const a = document.querySelector('.win[data-app=browser] .vw-addr');
+    a.value = 'portal.nexus';
+    a.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 500, clientY: 200 }));
+    return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
+  })()`);
+  t('T41.7 浏览器地址栏右键', (ctx5 || []).includes('刷新') && (ctx5 || []).includes('复制页面地址'),
+    JSON.stringify(ctx5));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('复制页面地址')).click()`);
+  await sleep(300);
+  const clip2 = await ev(`navigator.clipboard.readText()`);
+  const addrVal = await ev(`document.querySelector('.win[data-app=browser] .vw-addr').value`);
+  t('T41.8 复制页面地址', clip2 === addrVal && !!clip2, JSON.stringify({ clip: clip2, addr: addrVal }));
+
+  // 41.9 文件管家自有的文件右键不受系统默认菜单影响(回归)
+  await ev(`WebOS.wm.open('files')`);
+  await sleep(600);
+  const ctx6 = await ev(`(() => {
+    const item = [...document.querySelectorAll('.fitem')][0];
+    if (!item) return { noItem: true };
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+    return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
+  })()`);
+  t('T41.9 文件管家自有右键不受影响', (ctx6 || []).includes('打开'), JSON.stringify(ctx6));
+
+  const errs41 = await ev(`window.__errs.length`);
+  t('T41.10 全程无错误', errs41 === 0, `errs=${errs41}`);
 });
 
 

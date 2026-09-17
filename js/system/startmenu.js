@@ -1,9 +1,13 @@
 import { $, el } from '../core/utils.js';
 import { icon, svg } from '../core/icons.js';
+import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
+import { accounts } from '../core/accounts.js';
 import { list as listApps } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
+import { logoutSession } from './session.js';
+import { powerAction } from './tray.js';
 import { togglePin, pinnedApps } from './taskbar.js';
 
 /* 开始菜单 */
@@ -80,10 +84,13 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 export function renderStartUser() {
-  const name = settings.get('username');
+  const user = accounts.current();
+  const name = user ? (accounts.displayName() || user) : settings.get('username');
   $('#sm-username').textContent = name;
   $('#sm-avatar').textContent = (name[0] || 'A').toUpperCase();
+  $('#sm-user').title = user ? `已登录:${user}` : '未登录 — 点击管理用户';
 }
+subscribe('accounts:changed', renderStartUser);
 $('#sm-user').addEventListener('click', () => {
   toggleStartMenu(false);
   wm.open('settings', { params: { section: 'user' } });
@@ -92,7 +99,13 @@ $('#sm-power').innerHTML = svg('power', 17);
 $('#sm-power').addEventListener('click', (e) => {
   e.stopPropagation();
   const r = e.currentTarget.getBoundingClientRect();
-  showMenu(r.left - 130, r.top - 100, [
+  const loggedIn = !!accounts.current();
+  showMenu(r.left - 130, r.top - 120, [
+    {
+      label: loggedIn ? '注销' : '登录 / 切换用户', icon: loggedIn ? 'logout' : 'user',
+      fn: () => { toggleStartMenu(false); logoutSession(); },
+    },
+    { sep: true },
     { label: '重启', icon: 'refresh', fn: () => powerAction('reboot') },
     { label: '关机', icon: 'power', danger: true, fn: () => powerAction('shutdown') },
   ]);

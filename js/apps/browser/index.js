@@ -11,6 +11,7 @@ import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import { httpGet, dnsList } from '../../core/vnet.js';
+import { copyText } from '../../core/menu.js';
 
 /** 内网导航起始页(由 DNS 中 listed 的记录生成) */
 function startPage() {
@@ -51,7 +52,7 @@ register({
   min: { w: 520, h: 360 },
   singleton: true,
   order: 0,
-  mount({ root, setTitle, bus, params }) {
+  mount({ root, setTitle, bus, params, onContextMenu }) {
     let history = ['about:start'];
     let hIdx = 0;
     let loadSeq = 0;
@@ -63,6 +64,15 @@ register({
     const fwd = el('button', { class: 'btn icon', title: '前进', onClick: () => go(1) }, icon('chevronR', 15));
     const reload = el('button', { class: 'btn icon', title: '刷新', onClick: () => navigate(history[hIdx], { push: false }) }, icon('refresh', 14));
     const home = el('button', { class: 'btn icon', title: '内网导航', onClick: () => navigate('about:start') }, icon('home', 14));
+
+    // 应用内右键:页面/地址栏 → 刷新;地址栏附带复制地址
+    onContextMenu(({ target }) => {
+      if (!target.closest('.vw-page, .vw-addr, .app-toolbar')) return null;
+      return [
+        { label: '刷新', icon: 'refresh', fn: () => reload.click() },
+        ...(target.closest('.vw-addr') ? [{ label: '复制页面地址', icon: 'copy', fn: () => copyText(addr.value) }] : []),
+      ];
+    });
 
     const page = el('div', { class: 'vw-page' });
     const frame = el('iframe', { class: 'vw-iframe', hidden: '' });

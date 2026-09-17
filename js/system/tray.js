@@ -2,11 +2,10 @@ import { $, el, clamp, fmtDate, fmtTime } from '../core/utils.js';
 import { icon, svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings } from '../core/store.js';
-import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { toggleStartMenu } from './startmenu.js';
 
-/* 系统托盘:音量 / 日历时钟 / 通知中心 / 显示桌面 / 开关机 */
+/* 系统托盘:音量 / 日历时钟 / 通知中心 / 开关机 */
 /* ============ 托盘:弹出面板管理 ============ */
 let openPop = null;
 
@@ -24,7 +23,8 @@ function togglePopover(name, anchor, build, width) {
   document.body.append(pop);
   const r = anchor.getBoundingClientRect();
   const pw = pop.offsetWidth;
-  pop.style.right = clamp(innerWidth - r.right - r.width / 2 - pw / 2, 8, innerWidth - pw - 8) + 'px';
+  // 面板中心对齐锚点中心:X 为面板右缘到视口右缘的距离
+  pop.style.right = clamp(innerWidth - r.right + r.width / 2 - pw / 2, 8, innerWidth - pw - 8) + 'px';
   // 感知任务栏位置(Ubuntu 皮肤在顶部):顶栏从上弹出,底栏从下弹出
   const tbRect = document.getElementById('taskbar').getBoundingClientRect();
   if (tbRect.top < innerHeight / 2) {
@@ -202,11 +202,8 @@ $('#tray-bell').addEventListener('click', (e) => {
   togglePopover('noti', e.currentTarget, buildNotiPanel, 324);
 });
 
-/* ============ 显示桌面 ============ */
-$('#show-desk').addEventListener('click', () => wm.toggleShowDesktop());
-
 /* ============ 开关机 ============ */
-function powerAction(mode) {
+export function powerAction(mode) {
   toggleStartMenu(false);
   closePopover();
   const sd = $('#shutdown');

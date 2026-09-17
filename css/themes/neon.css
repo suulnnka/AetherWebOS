@@ -16,7 +16,7 @@ html[data-style="neon"] {
   --shadow-2: 0 0 14px rgba(0, 240, 255, 0.12), 0 8px 26px rgba(0, 0, 0, 0.55);
 }
 
-/* ============ 动态桌面:PS4 式色彩流动 + 漂移网格 + 漂浮光球 ============ */
+/* ============ 动态桌面:PS4 式色彩流动 + 漂浮光球 ============ */
 /* 大面积多色渐变随时间缓慢变换色相(PS4 动态背景风格) */
 html[data-style="neon"] #wallpaper::before {
   content: "";
@@ -27,7 +27,7 @@ html[data-style="neon"] #wallpaper::before {
     radial-gradient(58% 50% at 78% 78%, rgba(255, 42, 150, 0.42), transparent 70%),
     radial-gradient(52% 46% at 22% 82%, rgba(0, 210, 255, 0.4), transparent 70%),
     #05070f;
-  animation: neonHueDrift 44s ease-in-out infinite alternate;
+  animation: neonHueDrift 20s ease-in-out infinite alternate;
 }
 @keyframes neonHueDrift {
   0%   { filter: hue-rotate(0deg) saturate(1); transform: scale(1) translate(0, 0); }
@@ -39,27 +39,17 @@ html[data-style="neon"] #wallpaper::after {
   position: absolute; inset: 0; z-index: 1;
   background: rgba(3, 6, 16, 0.55);   /* 整体压暗,保证前景对比度 */
 }
-/* 漂移网格 */
-html[data-style="neon"] #desktop::before {
-  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background:
-    linear-gradient(rgba(0, 240, 255, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 240, 255, 0.055) 1px, transparent 1px);
-  background-size: 44px 44px;
-  animation: neonGridDrift 70s linear infinite;
-}
-@keyframes neonGridDrift { to { background-position: 44px 132px, 44px 132px; } }
 /* 双色漂浮光球 */
 html[data-style="neon"] #desktop::after {
   content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
     radial-gradient(300px 220px at 22% 32%, rgba(0, 240, 255, 0.10), transparent 70%),
     radial-gradient(360px 260px at 76% 70%, rgba(255, 42, 212, 0.09), transparent 70%);
-  animation: neonOrbs 26s ease-in-out infinite alternate;
+  animation: neonOrbs 15s ease-in-out infinite alternate;
 }
 @keyframes neonOrbs {
-  from { transform: translate(-3%, -2%) scale(1); }
-  to   { transform: translate(4%, 3%) scale(1.1); }
+  from { transform: translate(-5%, -3.5%) scale(1.05); }
+  to   { transform: translate(6%, 4.5%) scale(1.18); }
 }
 html[data-style="neon"] #icons { z-index: 2; }
 
@@ -185,11 +175,6 @@ html[data-style="neon"] .tray-clock .t {
   text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 html[data-style="neon"] .tray-clock .d { color: #6f88ad; font-family: var(--mono); }
-html[data-style="neon"] .tb-showdesk {
-  width: 8px; border-radius: 2px;
-  border-left: 1px solid rgba(0, 240, 255, 0.4);
-  background: linear-gradient(180deg, rgba(0, 240, 255, 0.15), rgba(255, 42, 212, 0.25));
-}
 html[data-style="neon"] .tb-sep {
   width: 1px;
   background: linear-gradient(180deg, transparent, rgba(0, 240, 255, 0.6), transparent);

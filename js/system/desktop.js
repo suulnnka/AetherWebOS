@@ -1,7 +1,7 @@
 import { $, el, clamp } from '../core/utils.js';
 import { icon } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
-import { settings, wallpaperCss } from '../core/store.js';
+import { settings, wallpaperCss, wallpaperMotion } from '../core/store.js';
 import fs from '../core/fs.js';
 import { list as listApps } from '../core/registry.js';
 import * as wm from '../core/wm.js';
@@ -12,7 +12,13 @@ import { renderPinned } from './taskbar.js';
 /* 桌面:壁纸 + 图标(应用快捷方式与 /home/desktop 文件)*/
 /* ============ 桌面壁纸 ============ */
 export function applyWallpaper() {
-  $('#wallpaper').style.background = wallpaperCss();
+  const wp = $('#wallpaper');
+  wp.style.background = wallpaperCss();   // 先用 shorthand 整体重置,再按需补 size/position
+  const motion = wallpaperMotion();
+  wp.dataset.motion = motion;
+  // 流动型壁纸:光斑画布放大到 220%,给 wpFlow 的 background-position 流动留出余量
+  wp.style.backgroundSize = motion === 'flow' ? '220% 220%' : '';
+  wp.style.backgroundPosition = motion === 'flow' ? '50% 50%' : '';
 }
 subscribe('sys:settings-changed', (p) => {
   if (p?.changed?.some(k => ['wallpaper', 'wallpaperUrl'].includes(k))) applyWallpaper();

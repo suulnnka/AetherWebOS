@@ -4,6 +4,8 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import { settings, ACCENTS, WALLPAPERS, STYLES } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
+import { accounts } from '../../core/accounts.js';
+import { logoutSession } from '../../system/session.js';
 import { beep } from '../../core/audio.js';
 import { modal } from '../../core/ui.js';
 import fs from '../../core/fs.js';
@@ -185,14 +187,82 @@ function renderSection(root, sec, bus) {
   }
 
   else if (sec === 'user') {
-    const input = el('input', { class: 'input', value: s.username, style: { width: '160px' } });
-    input.addEventListener('change', () => {
-      const v = input.value.trim() || 'admin';
-      settings.set({ username: v });
-      bus.notify('用户名已更新', v);
+    const cur = accounts.current();
+
+    // ---- 当前会话 ----
+    const sessBtn = el('button', { class: 'btn' }, cur ? '注销' : '登录 / 切换用户');
+    sessBtn.addEventListener('click', () => logoutSession());   // 注销会关闭所有窗口(含本设置)
+    const sessionRow = el('div', { class: 'user-row', style: { marginBottom: '10px' } },
+      el('span', { class: 'ss-avatar' }, ((cur ? accounts.displayName() : s.username)[0] || 'A').toUpperCase()),
+      el('div', { style: { flex: 1 } },
+        el('div', { class: 'u-name' }, cur ? (accounts.displayName() || cur) : '未登录'),
+        el('div', { class: 'u-meta' }, cur ? `账号 ${cur} · 会话已持久化,刷新后仍生效` : '登录后应用数据按账号隔离')),
+      sessBtn);
+
+    // ---- 显示名(仅登录时) ----
+    let nameRow;
+    if (cur) {
+      const input = el('input', { class: 'input', value: accounts.displayName() || cur, style: { width: '160px' } });
+      input.addEventListener('change', () => {
+        const r = accounts.setDisplayName(cur, input.value);
+        bus.notify(r.ok ? '显示名已更新' : '修改失败', r.ok ? r.displayName : (r.error || ''));
+      });
+      nameRow = row('显示名', '显示在开始菜单左下角与注销锁屏中', input);
+    } else {
+      nameRow = row('显示名', '登录后可修改', el('span', { class: 'dim' }, '未登录'));
+    }
+
+    // ---- 系统用户列表 ----
+    const listWrap = el('div', { class: 'user-list' });
+    const redrawList = () => {
+      listWrap.innerHTML = '';
+      const users = accounts.list();
+      for (const u of users) {
+        const del = el('button', { class: 'btn danger', title: `删除用户 ${u.name}`, style: { flex: 'none' } }, icon('trash', 13));
+        del.addEventListener('click', async () => {
+          const pw = await dialogs.prompt({
+            title: `删除用户 ${u.name}`,
+            message: '删除后该用户的应用数据将无法再访问。输入该用户的密码以确认。',
+            placeholder: '密码', okText: '删除',
+          });
+          if (pw == null || !pw) return;
+          const r = await accounts.remove(u.name, pw);
+          if (!r.ok) { bus.notify('删除失败', r.error); return; }
+          bus.notify('用户已删除', u.name + (r.wasCurrent ? '(已注销)' : ''));
+          redrawList();
+        });
+        listWrap.append(el('div', { class: 'user-row' },
+          el('span', { class: 'ss-avatar' }, (u.displayName[0] || '?').toUpperCase()),
+          el('div', { style: { flex: 1, minWidth: 0 } },
+            el('div', { class: 'u-name' }, u.displayName),
+            el('div', { class: 'u-meta' }, `@${u.name} · 创建于 ${fmtDate(new Date(u.created))}`)),
+          u.name === cur ? el('span', { class: 'dim', style: { fontSize: '11px', flex: 'none' } }, '当前') : null,
+          del));
+      }
+      if (!users.length) listWrap.append(el('div', { class: 'dim', style: { fontSize: '12px', padding: '4px 2px' } }, '暂无用户,可在下方创建'));
+    };
+    redrawList();
+
+    // ---- 添加用户 ----
+    const newName = el('input', { class: 'input', placeholder: '用户名', style: { width: '120px' } });
+    const newPass = el('input', { class: 'input', type: 'password', placeholder: '密码', style: { width: '120px' } });
+    const addBtn = el('button', { class: 'btn primary', style: { flex: 'none' } }, '添加');
+    addBtn.addEventListener('click', async () => {
+      addBtn.disabled = true;
+      try {
+        const r = await accounts.createUser(newName.value, newPass.value);
+        if (!r.ok) { bus.notify('创建失败', r.error); return; }
+        bus.notify('用户已创建', r.user);
+        newName.value = newPass.value = '';
+        redrawList();
+      } finally { addBtn.disabled = false; }
     });
+
     root.append(el('div', { class: 'set-body' }, title,
-      row('用户名', '显示在开始菜单左下角与终端提示符中', input),
+      row('当前会话', '', sessionRow),
+      nameRow,
+      row('系统用户', '注销后可在此处列出的用户之间切换登录', listWrap),
+      row('添加用户', '仅创建账号,不切换当前登录', el('div', { class: 'row' }, newName, newPass, addBtn)),
       row('用户目录', '', el('span', { class: 'dim mono' }, '/home')),
     ));
   }

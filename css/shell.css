@@ -5,6 +5,25 @@
   position: absolute; inset: 0;
   background: #232a45;
   transition: background 0.4s ease;
+  /* 动态壁纸基础层:缓慢推移/呼吸缩放(纯 transform 合成器动画,不触发重绘)。
+     放大留出的边距(≥6%)始终大于位移幅度(≤1.2%),任意时刻都铺满视口 */
+  animation: wpPan 44s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes wpPan {
+  0%   { transform: scale(1.12) translate(0.6%, 0.4%); }
+  33%  { transform: scale(1.2) translate(-1.2%, -0.8%); }
+  66%  { transform: scale(1.14) translate(1%, -1.2%); }
+  100% { transform: scale(1.2) translate(-0.6%, 1%); }
+}
+/* 流动型动态壁纸:在推移之上叠加光斑画布流动(background-position) */
+#wallpaper[data-motion="flow"] {
+  animation: wpPan 44s ease-in-out infinite alternate, wpFlow 22s ease-in-out infinite alternate;
+}
+@keyframes wpFlow {
+  0%   { background-position: 50% 50%; }
+  50%  { background-position: 64% 36%; }
+  100% { background-position: 38% 64%; }
 }
 #wallpaper::after {
   content: ""; position: absolute; inset: 0;
@@ -112,12 +131,6 @@
   display: grid; place-items: center;
 }
 
-.tb-showdesk {
-  width: 7px; height: 38px; margin-left: 4px; border-radius: 3px;
-  border-left: 1px solid var(--border);
-}
-.tb-showdesk:hover { background: var(--hover); }
-
 /* ============ 开始菜单 ============ */
 #start-menu {
   position: absolute; left: 6px; bottom: calc(var(--tb) + 8px);
@@ -195,12 +208,12 @@
   -webkit-backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--border); border-radius: 12px;
   box-shadow: var(--shadow);
-  z-index: 1100; padding: 14px;
+  z-index: 1250; /* 高于通知吐司(#toasts 1200)、低于右键菜单,避免面板被吐司遮挡 */ padding: 14px;
   animation: popIn 0.16s cubic-bezier(0.2, 0.9, 0.35, 1.2);
 }
 @keyframes popIn { from { transform: translateY(8px) scale(0.97); opacity: 0; } }
 
-.pop-volume { width: 260px; }
+/* 面板宽度由 togglePopover 的内联 width 控制,内层不再定宽以免溢出裁剪 */
 .pop-volume .row { display: flex; align-items: center; gap: 12px; }
 .pop-volume .pct { font-size: 12px; color: var(--text-2); width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
@@ -230,7 +243,6 @@ input[type="range"]::-moz-range-thumb {
 .icon-btn.on { color: var(--accent); }
 
 /* 日历 */
-.pop-cal { width: 268px; }
 .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .cal-title { font-size: 13.5px; font-weight: 600; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
@@ -247,7 +259,7 @@ input[type="range"]::-moz-range-thumb {
 .cal-now .n-date { font-size: 12px; color: var(--text-2); margin-top: 2px; }
 
 /* 通知面板 */
-.pop-noti { width: 320px; max-height: 420px; display: flex; flex-direction: column; }
+.pop-noti { max-height: 420px; display: flex; flex-direction: column; }
 .pop-noti .pn-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .pop-noti .pn-head b { font-size: 13.5px; }
 .pop-noti .pn-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
@@ -356,3 +368,68 @@ input[type="range"]::-moz-range-thumb {
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============ 注销锁屏(会话切换) ============ */
+#session {
+  position: absolute; inset: 0; z-index: 1900;   /* 盖住桌面/窗口,低于开机与右键菜单 */
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--bg, #0c111e) 55%, rgba(5, 8, 16, 0.82));
+  backdrop-filter: blur(30px) saturate(1.3);
+  -webkit-backdrop-filter: blur(30px) saturate(1.3);
+  animation: ssIn 0.25s ease;
+  transition: opacity 0.2s;
+}
+#session.out { opacity: 0; pointer-events: none; }
+@keyframes ssIn { from { opacity: 0; } }
+
+.ss-box {
+  width: 320px; max-height: 86vh; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 30px 28px 24px; border-radius: 16px;
+  background: var(--panel); border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  animation: popIn 0.22s cubic-bezier(0.2, 0.9, 0.35, 1.2);
+}
+.ss-logo {
+  width: 54px; height: 54px; border-radius: 15px; color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #8b5cf6));
+  display: grid; place-items: center;
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.ss-title { font-size: 18px; font-weight: 600; color: var(--text); }
+.ss-sub { font-size: 12px; color: var(--text-2); }
+.ss-users { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.ss-user {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 10px; border: 1px solid transparent; text-align: left;
+  color: var(--text); transition: background 0.12s, border-color 0.12s;
+}
+.ss-user:hover { background: var(--hover); }
+.ss-user.on { background: var(--hover); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.ss-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: none;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.ss-uname { flex: 1; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-badge {
+  font-size: 10px; color: var(--accent); flex: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding: 1px 6px; border-radius: 8px;
+}
+.ss-form { width: 100%; display: flex; flex-direction: column; gap: 9px; }
+.ss-form .input { width: 100%; }
+.ss-error { color: #ef4444; font-size: 12px; min-height: 15px; text-align: center; }
+.ss-main { width: 100%; justify-content: center; }
+.ss-switch { border: none; background: none; color: var(--accent); font-size: 12px; text-decoration: underline; }
+
+/* ============ 系统用户(设置 → 用户) ============ */
+.user-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--panel-solid) 55%, transparent);
+}
+.user-row .ss-avatar { width: 30px; height: 30px; font-size: 13px; }
+.user-row .u-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.user-row .u-meta { font-size: 11px; color: var(--text-2); }
+.user-list { display: flex; flex-direction: column; gap: 6px; }

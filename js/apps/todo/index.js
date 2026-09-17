@@ -70,7 +70,7 @@ register({
   min: { w: 520, h: 380 },
   singleton: true,
   order: 2.5,
-  mount({ root, setTitle, bus }) {
+  mount({ root, setTitle, bus, onContextMenu }) {
     // ---- 账号门:未登录先渲染登录面板 ----
     if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
       return;
@@ -80,6 +80,20 @@ register({
       state = { seq: 1, projects: ['个人', '工作'], tasks: [] };
       persist();
     }
+
+    // 应用内右键:任务行 → 完成 / 星标 / 删除(文本选中时系统自动附加「复制」)
+    onContextMenu(({ target }) => {
+      const row = target.closest?.('.todo-item');
+      if (!row) return null;
+      const t = state.tasks.find(x => x.id === row.dataset.id);
+      if (!t) return null;
+      return [
+        { label: t.done ? '标记为待办' : '标记完成', icon: 'check', fn: () => { t.done = !t.done; if (t.done) publish('sys:notify', { from: 'todo', type: 'notify', payload: { title: '任务完成', body: t.text } }); persist(); render(); } },
+        { label: t.starred ? '取消星标' : '星标', icon: 'star', fn: () => { t.starred = !t.starred; persist(); render(); } },
+        { sep: true },
+        { label: '删除任务', icon: 'trash', danger: true, fn: () => { state.tasks = state.tasks.filter(x => x.id !== t.id); persist(); render(); } },
+      ];
+    });
     let project = 'all';        // all | 项目名 | done
     let filter = 'all';         // all | active | done | starred
     let draft = { text: '', due: '', prio: 1, project: '个人' };

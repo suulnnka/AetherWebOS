@@ -56,7 +56,7 @@ register({
   min: { w: 520, h: 380 },
   singleton: true,
   order: 2.6,
-  mount({ root, setTitle, bus }) {
+  mount({ root, setTitle, bus, onContextMenu }) {
     if (requireLogin(root, '备忘录', () => { root.innerHTML = ''; appRemount(); })) return;
     state = load();
     if (!state) {
@@ -65,6 +65,20 @@ register({
       ] };
       persist();
     }
+
+    // 应用内右键:卡片 → 置顶 / 编辑 / 删除(与卡片按钮同一套操作)
+    onContextMenu(({ target }) => {
+      const card = target.closest?.('.memo-card');
+      if (!card) return null;
+      const m = state.memos.find(x => x.id === card.dataset.id);
+      if (!m) return null;
+      return [
+        { label: m.pinned ? '取消置顶' : '置顶', icon: 'arrowUp', fn: () => { m.pinned = !m.pinned; persist(); render(); } },
+        { label: '编辑', icon: 'pencil', fn: () => editMemo(m) },
+        { sep: true },
+        { label: '删除备忘录', icon: 'trash', danger: true, fn: () => { state.memos = state.memos.filter(x => x.id !== m.id); persist(); render(); } },
+      ];
+    });
     let query = '';
     let plainCache = {};   // 本次解锁会话内的明文缓存 { id: body }
 
@@ -186,7 +200,7 @@ register({
       }
       for (const m of memos) {
         const locked = isEncrypted(m.body);
-        const card = el('div', { class: 'memo-card', style: { background: m.color } },
+        const card = el('div', { class: 'memo-card', style: { background: m.color }, dataset: { id: m.id } },
           el('div', { class: 'memo-card-head' },
             el('span', { class: 'memo-title' }, (locked ? '🔒 ' : '') + escapeHtml(m.title)),
             el('button', {

@@ -9,14 +9,18 @@
  *    通过 userKey(storageKey, username) 获取。
  *
  * API:
- *   accounts.register(username, password)   → { ok } | { ok:false, error }
+ *   accounts.register(username, password)   → { ok } | { ok:false, error }(成功即登录)
+ *   accounts.createUser(username, password) → { ok } | { ok:false, error }(仅创建,不切换会话)
  *   accounts.login(username, password)      → { ok, user } | { ok:false, error }
  *   accounts.logout()                       会话清除
  *   accounts.current()                      当前用户名 | null(会话持久化)
+ *   accounts.list()                         [{ name, displayName, created }]
+ *   accounts.displayName(username)          显示名 | null
+ *   accounts.remove(username, password)     → { ok } | { ok:false, error }(校验密码后删除)
  *   accounts.userKey(storageKey)            该用户的数据键(未登录返回 null)
  *   accounts.onChange(fn)                   登录状态变化订阅 → 返回退订
  * ============================================================ */
-import { publish } from './bus.js';
+import { publish, subscribe } from './bus.js';
 
 const DB_KEY = 'webos.accounts.v1';
 const SESSION_KEY = 'webos.account-session.v1';
@@ -56,6 +60,18 @@ function validatePassword(password) {
   return null;
 }
 
+/** 把校验后的用户写入数据库,返回用户记录(不落盘) */
+async function buildUser(name, password, profile = {}) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await hashPassword(password, salt);
+  return {
+    salt: b64(salt),
+    hash,
+    created: Date.now(),
+    profile: { displayName: profile.displayName || name, ...profile },
+  };
+}
+
 const accounts = {
   /** 注册:成功即自动登录 */
   async register(username, password, profile = {}) {
@@ -66,17 +82,25 @@ const accounts = {
     if (errP) return { ok: false, error: errP };
     const db = loadDB();
     if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const hash = await hashPassword(password, salt);
-    db.users[name] = {
-      salt: b64(salt),
-      hash,
-      created: Date.now(),
-      profile: { displayName: profile.displayName || name, ...profile },
-    };
+    db.users[name] = await buildUser(name, password, profile);
     saveDB(db);
     this._startSession(name);
     publish('accounts:changed', { from: 'accounts', type: 'login', payload: { user: name } });
+    return { ok: true, user: name };
+  },
+
+  /** 系统添加用户:只创建账号,不切换当前会话 */
+  async createUser(username, password, profile = {}) {
+    const name = String(username || '').trim();
+    const errU = validateUsername(name);
+    if (errU) return { ok: false, error: errU };
+    const errP = validatePassword(password);
+    if (errP) return { ok: false, error: errP };
+    const db = loadDB();
+    if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
+    db.users[name] = await buildUser(name, password, profile);
+    saveDB(db);
+    publish('accounts:changed', { from: 'accounts', type: 'created', payload: { user: name } });
     return { ok: true, user: name };
   },
 
@@ -111,6 +135,45 @@ const accounts = {
     } catch { return null; }
   },
 
+  /** 系统用户列表(不含口令散列),按创建时间排序 */
+  list() {
+    const db = loadDB();
+    return Object.entries(db.users)
+      .map(([name, u]) => ({ name, displayName: u.profile?.displayName || name, created: u.created || 0 }))
+      .sort((a, b) => a.created - b.created);
+  },
+
+  /** 用户显示名(未登录/不存在返回 null) */
+  displayName(username = this.current()) {
+    if (!username) return null;
+    return loadDB().users[username]?.profile?.displayName || username;
+  },
+
+  /** 修改显示名 */
+  setDisplayName(username, displayName) {
+    const db = loadDB();
+    const rec = db.users[username];
+    if (!rec) return { ok: false, error: '用户不存在' };
+    const name = String(displayName || '').trim() || username;
+    rec.profile = { ...(rec.profile || {}), displayName: name };
+    saveDB(db);
+    publish('accounts:changed', { from: 'accounts', type: 'profile', payload: { user: username } });
+    return { ok: true, displayName: name };
+  },
+
+  /** 删除用户:需校验该用户密码;删除的是当前登录用户时同时注销 */
+  async remove(username, password) {
+    const db = loadDB();
+    if (!db.users[username]) return { ok: false, error: '用户不存在' };
+    if (!(await this.verify(username, password))) return { ok: false, error: '密码错误' };
+    delete db.users[username];
+    saveDB(db);
+    const wasCurrent = this.current() === username;
+    if (wasCurrent) this.logout();
+    publish('accounts:changed', { from: 'accounts', type: 'removed', payload: { user: username, wasCurrent } });
+    return { ok: true, wasCurrent };
+  },
+
   /** 校验用户密码(用于敏感操作二次确认) */
   async verify(username, password) {
     const db = loadDB();
@@ -130,7 +193,8 @@ const accounts = {
   },
 
   onChange(fn) {
-    return subscribe('accounts:changed', (p) => fn(p?.payload));
+    // bus 回调首参是 payload,第二参是完整信封 { type, ... }
+    return subscribe('accounts:changed', (payload, msg) => fn(payload, msg));
   },
 };
 

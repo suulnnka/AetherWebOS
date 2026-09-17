@@ -59,10 +59,23 @@ export async function launch(url = 'http://localhost:8080/', { profile = '' } = 
       msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
     }
   };
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
+  // 连接断开时拒绝所有在途调用,避免工作进程永久卡死
+  ws.onclose = () => {
+    for (const [, p] of pending) p.reject(new Error('CDP 连接已关闭'));
+    pending.clear();
+  };
+  const send = (method, params = {}, timeoutMs = 30000) => new Promise((resolve, reject) => {
     const id = ++seq;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`CDP ${method} 超时(${timeoutMs / 1000}s)`));
+    }, timeoutMs);
+    pending.set(id, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); },
+      reject: (e) => { clearTimeout(timer); reject(e); },
+    });
+    try { ws.send(JSON.stringify({ id, method, params })); }
+    catch (e) { clearTimeout(timer); pending.delete(id); reject(e); }
   });
   // 等待一次 CDP 事件(如 Page.loadEventFired),超时返回 null
   const waitEvent = (method, timeoutMs = 15000) => new Promise((resolve) => {

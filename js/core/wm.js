@@ -14,6 +14,7 @@ import { get as getApp } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
 import fs from './fs.js';
+import { showMenu, copyText, selectionAt } from './menu.js';
 
 const wins = new Map();   // winId -> win 对象
 let zTop = 20;
@@ -37,6 +38,30 @@ function raiseShade() {
 
 const layerEl = () => document.getElementById('windows');
 const area = () => layerEl().getBoundingClientRect();
+
+/* ---------------- 应用内右键 ----------------
+ * 统一拦截窗口内的 contextmenu:应用已自行处理的(文件管家/扫雷等,事件
+ * 已 preventDefault)不干预;否则依次尝试应用自定义菜单(ctx.onContextMenu)、
+ * 选中文字的「复制」、表单控件的「全选」,都没有就仅吞掉浏览器默认菜单。 */
+layerEl().addEventListener('contextmenu', (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  const winEl = e.target.closest?.('.win');
+  const w = winEl ? wins.get(winEl.dataset.id) : null;
+  let items;
+  try { items = w?.ctxMenu?.({ x: e.clientX, y: e.clientY, target: e.target }); }
+  catch (err) { console.error('[wm] 应用右键菜单出错:', err); }
+  const menu = Array.isArray(items) ? [...items] : [];
+  const sel = selectionAt(e.target);
+  if (sel) {
+    if (menu.length) menu.push({ sep: true });
+    menu.push({ label: '复制', icon: 'copy', fn: () => copyText(sel) });
+  } else {
+    const field = e.target.closest?.('input, textarea');
+    if (field) menu.push({ label: '全选', icon: 'textCursor', fn: () => field.select() });
+  }
+  if (menu.length) showMenu(e.clientX, e.clientY, menu);
+});
 
 const emit = (type, payload) =>
   publish(`sys:win-${type}`, { from: 'wm', type: `win-${type}`, payload });
@@ -137,6 +162,9 @@ export function open(appId, { params } = {}) {
     params: params || {},
     fs,
     settings,
+    /** 应用自定义右键:fn({ x, y, target }) 返回菜单项数组(可含 {sep:true});
+        返回 null/undefined 时走系统默认(选中文字 → 复制,表单控件 → 全选) */
+    onContextMenu: (fn) => { w.ctxMenu = fn; },
     setTitle: (t) => {
       titleEl.textContent = t ?? app.name;
       emit('title', { id, appId, title: titleEl.textContent });
@@ -462,6 +490,11 @@ export function reopen(appId) {
   for (const id of ids) close(id);
   // 等动画结束后重开
   setTimeout(() => open(appId), 200);
+}
+
+/** 关闭所有窗口(注销时清空工作区) */
+export function closeAll() {
+  for (const id of [...wins.keys()]) close(id);
 }
 
 /** 当前活动窗口数(应恒为 0 或 1) */

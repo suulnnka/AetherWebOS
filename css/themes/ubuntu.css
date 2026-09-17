@@ -37,7 +37,6 @@ html[data-style="ubuntu"] .tray-clock {
 }
 html[data-style="ubuntu"] .tray-clock .t { color: #fff; font-weight: 700; font-size: 12.5px; }
 html[data-style="ubuntu"] .tray-clock .d { display: none; }
-html[data-style="ubuntu"] .tb-showdesk { border-left: 1px solid rgba(255, 255, 255, 0.12); }
 html[data-style="ubuntu"] .tb-sep { opacity: 0.3; }
 
 /* headerbar 窗口:标题居中、圆形按钮、橙色关闭 */

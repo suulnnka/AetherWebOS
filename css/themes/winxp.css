@@ -77,7 +77,6 @@ html[data-style="winxp"] .tray-clock {
 }
 html[data-style="winxp"] .tray-clock .t { color: #fff; }
 html[data-style="winxp"] .tray-clock .d { color: #cfe0fb; }
-html[data-style="winxp"] .tb-showdesk { border-left: 1px solid #0b3168; box-shadow: inset 1px 0 0 #5a9af7; }
 
 /* 开始菜单:白底蓝框 */
 html[data-style="winxp"] #start-menu {

@@ -25,7 +25,9 @@ export const STYLES = [
 /** 自带强调色的皮肤(切换时覆盖用户自选色,样式表提供 --accent) */
 export const STYLE_ACCENT = { ubuntu: '#e95420', neon: '#00e5ff' };
 
-/** 内置壁纸(纯 CSS 渐变,零资源) */
+/** 内置壁纸(纯 CSS 渐变,零资源)
+ *  motion: 'pan'  = 缓慢推移(Ken Burns,所有壁纸默认)
+ *          'flow' = 流动光斑:多层径向光斑铺满,叠加位移流动(动态壁纸) */
 export const WALLPAPERS = [
   { id: 'aurora', name: '极光', css: 'linear-gradient(135deg, #667eea 0%, #764ba2 45%, #f093fb 100%)' },
   { id: 'ocean', name: '深海', css: 'linear-gradient(160deg, #0f2027 0%, #203a43 50%, #2c5364 100%)' },
@@ -35,6 +37,11 @@ export const WALLPAPERS = [
   { id: 'candy', name: '糖果', css: 'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 60%, #ffdde1 100%)' },
   { id: 'graphite', name: '石墨', css: 'linear-gradient(135deg, #232526 0%, #414345 100%)' },
   { id: 'meadow', name: '原野', css: 'linear-gradient(135deg, #00b09b 0%, #96c93d 100%)' },
+  // 动态壁纸:光斑坐标分布在整张画布上,配合 wpFlow 位移动画产生"流动"感
+  { id: 'nebula', name: '星云', motion: 'flow', css: 'radial-gradient(42% 36% at 20% 26%, rgba(99,102,241,0.9), transparent 70%), radial-gradient(36% 32% at 76% 20%, rgba(236,72,153,0.65), transparent 70%), radial-gradient(46% 40% at 70% 74%, rgba(34,211,238,0.6), transparent 70%), radial-gradient(40% 34% at 26% 78%, rgba(168,85,247,0.7), transparent 70%), radial-gradient(30% 26% at 52% 50%, rgba(56,189,248,0.45), transparent 70%), linear-gradient(160deg, #0b1026 0%, #1e1b4b 100%)' },
+  { id: 'ember', name: '流金', motion: 'flow', css: 'radial-gradient(44% 38% at 22% 30%, rgba(251,146,60,0.85), transparent 70%), radial-gradient(38% 32% at 78% 24%, rgba(239,68,68,0.6), transparent 70%), radial-gradient(44% 40% at 72% 78%, rgba(250,204,21,0.55), transparent 70%), radial-gradient(36% 30% at 28% 76%, rgba(249,115,22,0.6), transparent 70%), linear-gradient(160deg, #1c1008 0%, #451a03 100%)' },
+  { id: 'lagoon', name: '碧涛', motion: 'flow', css: 'radial-gradient(46% 40% at 24% 24%, rgba(45,212,191,0.8), transparent 70%), radial-gradient(40% 34% at 80% 30%, rgba(59,130,246,0.6), transparent 70%), radial-gradient(44% 38% at 72% 76%, rgba(16,185,129,0.6), transparent 70%), radial-gradient(38% 32% at 24% 80%, rgba(6,182,212,0.65), transparent 70%), linear-gradient(160deg, #04212b 0%, #0b3b47 100%)' },
+  { id: 'blossom', name: '樱语', motion: 'flow', css: 'radial-gradient(44% 38% at 22% 28%, rgba(249,168,212,0.9), transparent 70%), radial-gradient(38% 32% at 78% 22%, rgba(196,181,253,0.7), transparent 70%), radial-gradient(44% 40% at 74% 76%, rgba(251,207,232,0.75), transparent 70%), radial-gradient(36% 32% at 26% 78%, rgba(244,114,182,0.6), transparent 70%), linear-gradient(160deg, #fdf2f8 0%, #ede9fe 100%)' },
 ];
 
 const DEFAULTS = {
@@ -131,4 +138,9 @@ export function wallpaperCss() {
     return `#1a1a2e url("${u}") center / cover no-repeat`;
   }
   return (WALLPAPERS.find(w => w.id === state.wallpaper) || WALLPAPERS[0]).css;
+}
+
+/** 壁纸动效类型:'pan'(推移)/ 'flow'(流动光斑),自定义图片按推移处理 */
+export function wallpaperMotion() {
+  return WALLPAPERS.find(w => w.id === state.wallpaper)?.motion || 'pan';
 }
