@@ -7,7 +7,7 @@
  * 渲染原用 three.js(压缩后 116 KB),已换成 ogl(约 15 KB):
  * ogl 不带光照材质系统,这里的 Lambert 光照与阴影采样由下方自写 GLSL 承担。
  * ============================================================ */
-import { Renderer, Camera, Transform, Box, Cylinder, Sphere, Program, Mesh, Vec3, Raycast, Shadow, RenderTarget } from 'ogl';
+import { Renderer, Camera, Transform, Box, Cylinder, Sphere, Geometry, Program, Mesh, Vec3, Raycast, Shadow, RenderTarget } from 'ogl';
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
@@ -258,12 +258,14 @@ register({
       shadow.target = new RenderTarget(gl, { width: 1024, height: 1024, minFilter: gl.NEAREST, magFilter: gl.NEAREST });
       shadow.targetUniform.value = shadow.target.texture;
 
+      // cullFace 关掉:自写的 lathe / extrude 几何不保证绕序统一,
+      // 关掉背面剔除可以避免某个件内壁朝外导致的破面(这点几何量没有性能压力)。
       program = new Program(gl, {
-        vertex: VERT, fragment: FRAG,
+        vertex: VERT, fragment: FRAG, cullFace: false,
         uniforms: {
           uColor: { value: new Vec3(1, 1, 1) },
           uLightDir: { value: new Vec3(6, 10, 4) },
-          uAmbient: { value: 0.42 },
+          uAmbient: { value: 0.48 },
         },
       });
       flatProgram = new Program(gl, {
@@ -308,24 +310,157 @@ register({
       frame.setParent(boardGroup);
       shadow.add({ mesh: frame, cast: false, receive: true });
 
-      // 棋子几何工厂(组合体)
-      const whiteV = rgb(0xf5f0e6), blackV = rgb(0x2b2f3a);
+      /* ---- 棋子造型 ----
+       * 除马之外,标准棋子都是回转体 → 用 lathe(旋转成型)生成,
+       * 剖面为 [半径, 高度] 序列(自下而上),首尾半径取 0 即为封闭曲面,无需端盖。
+       * 城垛 / 后冠 / 王冠十字这类非回转特征,用少量小几何体按圆周摆放补齐。 */
+      const latheGeo = (key, profile, segments = 28) => cached(`l|${key}|${segments}`, () => {
+        const pos = [], nor = [], idx = [];
+        const n = profile.length;
+        // 剖面法线:与相邻两点连线垂直
+        const nrm2 = [];
+        for (let i = 0; i < n; i++) {
+          const a = profile[Math.max(0, i - 1)], b = profile[Math.min(n - 1, i + 1)];
+          const dr = b[0] - a[0], dy = b[1] - a[1];
+          const len = Math.hypot(dr, dy) || 1;
+          nrm2.push([dy / len, -dr / len]);
+        }
+        for (let s = 0; s <= segments; s++) {
+          const ang = (s / segments) * Math.PI * 2, ca = Math.cos(ang), sa = Math.sin(ang);
+          for (let i = 0; i < n; i++) {
+            const r = profile[i][0], y = profile[i][1];
+            pos.push(r * ca, y, r * sa);
+            const nx = nrm2[i][0] * ca, ny = nrm2[i][1], nz = nrm2[i][0] * sa;
+            const l = Math.hypot(nx, ny, nz) || 1;
+            nor.push(nx / l, ny / l, nz / l);
+          }
+        }
+        for (let s = 0; s < segments; s++) for (let i = 0; i < n - 1; i++) {
+          const a = s * n + i, b = (s + 1) * n + i;
+          idx.push(a, a + 1, b + 1, a, b + 1, b);
+        }
+        return new Geometry(gl, {
+          position: { size: 3, data: new Float32Array(pos) },
+          normal: { size: 3, data: new Float32Array(nor) },
+          index: { data: new Uint16Array(idx) },
+        });
+      });
+
+      /** 把 2D 轮廓沿 Z 轴挤出:给非回转体(马头)用 */
+      const extrudeGeo = (key, outline, thick) => cached(`x|${key}|${thick}`, () => {
+        const pos = [], nor = [], idx = [];
+        const n = outline.length, hz = thick / 2;
+        for (let i = 0; i < n; i++) {
+          const [x0, y0] = outline[i], [x1, y1] = outline[(i + 1) % n];
+          let nx = y1 - y0, ny = -(x1 - x0);
+          const len = Math.hypot(nx, ny) || 1; nx /= len; ny /= len;
+          const b = pos.length / 3;
+          pos.push(x0, y0, -hz, x1, y1, -hz, x1, y1, hz, x0, y0, hz);
+          for (let k = 0; k < 4; k++) nor.push(nx, ny, 0);
+          idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+        }
+        let cx = 0, cy = 0;
+        for (const [x, y] of outline) { cx += x / n; cy += y / n; }
+        const cap = (z, nz, flip) => {
+          const c = pos.length / 3;
+          pos.push(cx, cy, z); nor.push(0, 0, nz);
+          for (const [x, y] of outline) { pos.push(x, y, z); nor.push(0, 0, nz); }
+          for (let i = 0; i < n; i++) {
+            const a = c + 1 + i, b2 = c + 1 + ((i + 1) % n);
+            if (flip) idx.push(c, b2, a); else idx.push(c, a, b2);
+          }
+        };
+        cap(-hz, -1, true);
+        cap(hz, 1, false);
+        return new Geometry(gl, {
+          position: { size: 3, data: new Float32Array(pos) },
+          normal: { size: 3, data: new Float32Array(nor) },
+          index: { data: new Uint16Array(idx) },
+        });
+      });
+
+      /* 剖面统一按「上小下大」处理:底座半径 0.40–0.43(格宽 1.0,相邻棋子不打架),
+       * 向上逐级收细到 0.15–0.30,重心压低、轮廓稳。
+       * 高度梯队按 Staunton 标准:兵 0.71 < 马/车 0.88 < 象 1.00 < 后 1.14 < 王 1.42。
+       * 王与后的区分是关键:后是「开口冠 + 一圈大宝珠 + 中心大珠」,
+       * 王是「收缩成圆顶的冠盖 + 高十字」,且王整体比后高出 25%,一眼可辨。 */
+
+      // 兵:宽底座 → 细腰 → 颈环 → 圆球头
+      const P_PAWN = [[0, 0], [0.40, 0], [0.435, 0.05], [0.40, 0.10], [0.31, 0.15],
+        [0.235, 0.21], [0.185, 0.28], [0.17, 0.32],
+        [0.235, 0.36], [0.24, 0.385], [0.175, 0.415],
+        [0.205, 0.47], [0.195, 0.56], [0.15, 0.64], [0.08, 0.69], [0, 0.71]];
+      // 车:宽底座 → 收腰塔身 → 顶部外张边沿(顶面留给 6 个城垛)
+      const P_ROOK = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.345, 0.16],
+        [0.30, 0.24], [0.275, 0.42], [0.265, 0.55],
+        [0.30, 0.60], [0.335, 0.65], [0.345, 0.71], [0.345, 0.75], [0, 0.75]];
+      // 象:底座 → 长细腰 → 颈环 → 主教冠顶尖(顶上加小球)
+      const P_BISHOP = [[0, 0], [0.40, 0], [0.435, 0.05], [0.40, 0.10], [0.31, 0.155],
+        [0.235, 0.23], [0.20, 0.33], [0.255, 0.385], [0.26, 0.415], [0.205, 0.45],
+        [0.215, 0.53], [0.195, 0.64], [0.16, 0.74], [0.145, 0.81],
+        [0.175, 0.855], [0.155, 0.92], [0.09, 0.965], [0.05, 0.99], [0, 1.00]];
+      // 后:修长身形 → 外张的开口冠(冠沿一圈大宝珠 + 正中一颗)
+      const P_QUEEN = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.335, 0.16],
+        [0.255, 0.26], [0.215, 0.40], [0.275, 0.47], [0.28, 0.50], [0.22, 0.535],
+        [0.235, 0.63], [0.26, 0.75], [0.30, 0.845], [0.355, 0.925], [0.395, 0.975],
+        [0.375, 1.01], [0.29, 1.01], [0, 1.01]];
+      // 王:更高更壮 → 冠口外张后向上收成圆顶(与后的开口碗完全不同)→ 顶上立十字
+      const P_KING = [[0, 0], [0.43, 0], [0.465, 0.05], [0.43, 0.105], [0.345, 0.165],
+        [0.27, 0.28], [0.225, 0.44], [0.29, 0.515], [0.295, 0.545], [0.235, 0.585],
+        [0.25, 0.70], [0.275, 0.82], [0.315, 0.92], [0.365, 1.015], [0.405, 1.075],
+        [0.375, 1.115], [0.26, 1.16], [0.12, 1.19], [0, 1.20]];
+      // 马:回转底座 + 挤出的马头侧影(面朝 +x)
+      const P_KNIGHT_BASE = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.345, 0.16],
+        [0.30, 0.24], [0.255, 0.34], [0.235, 0.42], [0, 0.44]];
+      /* 马头侧影。必须逆时针排列 —— extrudeGeo 的外法线按 (dy, -dx) 算,
+       * 顺时针轮廓算出来是内法线,光照会整个反掉(OpenGL 默认 CCW 为正面)。 */
+      const O_KNIGHT_HEAD = [[0.10, 0.34], [0.20, 0.40], [0.26, 0.47], [0.30, 0.53],
+        [0.285, 0.60], [0.235, 0.645], [0.20, 0.72], [0.165, 0.79],
+        [0.155, 0.87], [0.115, 0.83], [0.09, 0.88], [0.045, 0.79],
+        [-0.02, 0.68], [-0.09, 0.56], [-0.14, 0.44], [-0.155, 0.36]];
+
+      const whiteV = rgb(0xf5f0e6), blackV = rgb(0x4a5266);   // 黑棋带蓝灰,暗背景下也能看清造型
       pieceMesh = (t, color) => {
         const cv = color === 'w' ? whiteV : blackV;
         const g = new Transform();
-        const add = (geometry, y) => {
+        const add = (geometry, x, y, z, ry = 0) => {
           const m = makeMesh(geometry, cv);
-          m.position.y = y;
+          m.position.set(x, y, z);
+          m.rotation.y = ry;
           m.setParent(g);
           shadow.add({ mesh: m, cast: true, receive: true });
+          return m;
         };
-        add(cylGeo(0.3, 0.36, 0.14), 0.07);                        // 底座
-        if (t === 'p') { add(cylGeo(0.16, 0.26, 0.42), 0.35); add(sphGeo(0.18), 0.66); }
-        else if (t === 'r') { add(cylGeo(0.24, 0.28, 0.6), 0.44); add(cylGeo(0.3, 0.24, 0.16), 0.8); }
-        else if (t === 'n') { add(cylGeo(0.2, 0.28, 0.4), 0.34); add(boxGeo(0.3, 0.34, 0.34), 0.68); }
-        else if (t === 'b') { add(cylGeo(0.18, 0.28, 0.5), 0.4); add(cylGeo(0, 0.2, 0.4), 0.82); }   // 顶部圆锥
-        else if (t === 'q') { add(cylGeo(0.2, 0.3, 0.62), 0.45); add(sphGeo(0.22), 0.9); add(sphGeo(0.09), 1.12); }
-        else { add(cylGeo(0.22, 0.3, 0.44), 0.36); add(sphGeo(0.24), 0.76); add(cylGeo(0.16, 0.16, 0.1), 1.0); }
+        if (t === 'p') {
+          add(latheGeo('pawn', P_PAWN), 0, 0, 0);
+        } else if (t === 'r') {
+          add(latheGeo('rook', P_ROOK), 0, 0, 0);
+          // 城垛:顶部沿圆周摆 6 个小方块,略内缩形成垛口
+          for (let k = 0; k < 6; k++) {
+            const a = (k / 6) * Math.PI * 2;
+            add(boxGeo(0.10, 0.145, 0.088), Math.cos(a) * 0.275, 0.822, Math.sin(a) * 0.275, -a);
+          }
+        } else if (t === 'n') {
+          add(latheGeo('knightBase', P_KNIGHT_BASE), 0, 0, 0);
+          // 白马朝 -z(对手方向),黑马朝 +z
+          add(extrudeGeo('knightHead', O_KNIGHT_HEAD, 0.20), 0, 0, 0,
+            color === 'w' ? Math.PI / 2 : -Math.PI / 2);
+        } else if (t === 'b') {
+          add(latheGeo('bishop', P_BISHOP), 0, 0, 0);
+          add(sphGeo(0.055), 0, 1.005, 0);                     // 冠顶小球
+        } else if (t === 'q') {
+          add(latheGeo('queen', P_QUEEN), 0, 0, 0);
+          // 后冠:冠沿一圈大宝珠 + 正中一颗更大的
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            add(sphGeo(0.062), Math.cos(a) * 0.365, 1.035, Math.sin(a) * 0.365);
+          }
+          add(sphGeo(0.085), 0, 1.06, 0);
+        } else {
+          add(latheGeo('king', P_KING), 0, 0, 0);
+          add(boxGeo(0.055, 0.30, 0.055), 0, 1.35, 0);         // 十字:竖
+          add(boxGeo(0.21, 0.058, 0.058), 0, 1.295, 0);        // 十字:横
+        }
         return g;
       };
     }
@@ -367,8 +502,17 @@ register({
       for (const [r, c] of legal) mk(r, c, board[r][c] ? rgb(0xef4444) : rgb(0x22c55e));
     }
 
-    /* 相机轨道(自实现:拖拽旋转 + 滚轮缩放) */
-    let theta = Math.PI / 4, phi = Math.PI / 3.4, radius = 13;
+    /* 相机轨道(自实现)—— 支持的输入:
+     *   鼠标左键拖          → 旋转
+     *   滚轮                → 缩放
+     *   触控板捏合          → 缩放(浏览器会转成 ctrl+wheel;Safari 另见下方 GestureEvent)
+     *   两指转动 / 触屏双指  → 旋转方位角 + 同时捏合缩放
+     */
+    /* 标准视角(macOS 棋盘那种俯瞰姿态):俯角 65°。
+     * phi 是与 +Y 轴的夹角,所以 俯角 = 90° - phi,即 phi = 25°。
+     * 想更平/更俯只需要改这里的 65。 */
+    const HOME = { theta: Math.PI / 4, phi: (90 - 65) * Math.PI / 180, radius: 13 };
+    let theta = HOME.theta, phi = HOME.phi, radius = HOME.radius;
     function updateCam() {
       if (!camera) return;
       camera.position.set(
@@ -378,25 +522,114 @@ register({
       camera.lookAt(new Vec3(0, 0, 0));
     }
     updateCam();
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+    /* 视角过渡:归位时用 300ms ease-out 飞过去,比瞬间跳过去好认路 */
+    let tween = null;
+    function flyTo(to, dur = 300) {
+      if (!camera) return;
+      let d = (to.theta - theta) % (Math.PI * 2);        // 走最短弧
+      if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2;
+      tween = { from: { theta, phi, radius }, to: { theta: theta + d, phi: to.phi, radius: to.radius }, t0: performance.now(), dur };
+    }
+    function stepTween(now) {
+      if (!tween) return;
+      const k = Math.min(1, (now - tween.t0) / tween.dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      theta = tween.from.theta + (tween.to.theta - tween.from.theta) * e;
+      phi = tween.from.phi + (tween.to.phi - tween.from.phi) * e;
+      radius = tween.from.radius + (tween.to.radius - tween.from.radius) * e;
+      if (k >= 1) tween = null;
+      updateCam();
+    }
+    /** 归正:回到标准俯角与距离,但保留当前朝的是白方还是黑方 */
+    function goHome() {
+      const off = Math.atan2(Math.sin(theta - HOME.theta), Math.cos(theta - HOME.theta));
+      flyTo({ theta: HOME.theta + (Math.abs(off) > Math.PI / 2 ? Math.PI : 0), phi: HOME.phi, radius: HOME.radius });
+    }
+
     let dragging = false, lx = 0, ly = 0;
+    const pointers = new Map();   // 多指:pointerId -> {x, y}
+    let pinch = null;             // 双指基线 {dist, ang},为空表示当前不是双指手势
+    let suppressClick = false;    // 双指手势结束后浏览器会补发一次 click,要吃掉避免误走子
+
+    const twoFinger = () => {
+      const [a, b] = [...pointers.values()];
+      return { dist: Math.hypot(b.x - a.x, b.y - a.y) || 1, ang: Math.atan2(b.y - a.y, b.x - a.x) };
+    };
     const onMove = (e) => {
+      const p = pointers.get(e.pointerId);
+      if (p) { p.x = e.clientX; p.y = e.clientY; }
+      if (pointers.size >= 2) {                       // 双指:捏合缩放 + 转动
+        const n = twoFinger();
+        if (pinch) {
+          tween = null;                                // 用户接管,取消归位动画
+          // 两指分开 → dist 变大 → 拉近;比值乘法天然带阻尼,快速开合也不会跳
+          radius = clamp(radius * (pinch.dist / n.dist), 7, 24);
+          theta += n.ang - pinch.ang;                  // 顺时针转 → 视角顺时针转
+          suppressClick = true;
+          updateCam();
+        }
+        pinch = n;
+        return;
+      }
       if (!dragging) return;
+      tween = null;
       theta += (e.clientX - lx) * 0.008;
-      phi = Math.min(1.45, Math.max(0.35, phi + (e.clientY - ly) * 0.006));
+      phi = clamp(phi + (e.clientY - ly) * 0.006, 0.35, 1.45);
       lx = e.clientX; ly = e.clientY;
       updateCam();
     };
-    const onUp = () => { dragging = false; };
+    const endPointer = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 1) {                      // 松开一指,剩下那指接管拖拽(不跳变)
+        const [p] = [...pointers.values()];
+        dragging = true; lx = p.x; ly = p.y;
+      } else if (pointers.size === 0) dragging = false;
+    };
     const onWheel = (e) => {
       e.preventDefault();
-      radius = Math.min(24, Math.max(7, radius + e.deltaY * 0.01));
+      tween = null;
+      if (e.ctrlKey) {
+        // ctrl+wheel = 触控板双指捏合(Chrome/Edge/Firefox 的统一做法),指数缩放手感更贴合
+        radius = clamp(radius * Math.exp(clamp(e.deltaY, -120, 120) * 0.006), 7, 24);
+      } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        // 触控板两指横滑 → 旋转方位角(鼠标滚轮几乎不产生 deltaX,不会误伤)
+        theta += clamp(e.deltaX, -80, 80) * 0.006;
+      } else {
+        // 鼠标滚轮 / 触控板两指纵滑 → 缩放
+        radius = clamp(radius + clamp(e.deltaY, -120, 120) * 0.01, 7, 24);
+      }
       updateCam();
     };
     if (canvas) {
-      canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
+      canvas.addEventListener('pointerdown', (e) => {
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size >= 2) { pinch = twoFinger(); dragging = false; suppressClick = true; }
+        else if (pointers.size === 1) { dragging = true; lx = e.clientX; ly = e.clientY; }
+      });
+      canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('wheel', onWheel, { passive: false });
       window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', endPointer);
+
+      /* Safari 桌面私有 GestureEvent:唯一能拿到「真实两指旋转角度」的桌面接口
+       * (触控板在 macOS Chrome 下不会产生 PointerEvent,只能拿到 ctrl+wheel 的缩放)。 */
+      let gs = null;
+      const gesture = (fn) => (e) => { e.preventDefault(); fn(e); };
+      canvas.addEventListener('gesturestart', gesture((e) => {
+        gs = { scale: e.scale, rotation: e.rotation, theta, radius };
+        suppressClick = true;
+      }));
+      canvas.addEventListener('gesturechange', gesture((e) => {
+        if (!gs) return;
+        tween = null;
+        theta = gs.theta + ((e.rotation - gs.rotation) * Math.PI) / 180;
+        radius = clamp(gs.radius / (e.scale / gs.scale || 1), 7, 24);
+        updateCam();
+      }));
+      canvas.addEventListener('gestureend', gesture(() => { gs = null; }));
     }
 
     /* 点击走子:射线与棋盘平面求交,再换算成格子坐标。
@@ -404,6 +637,7 @@ register({
      * 对扁平的方格会互相重叠,直接算平面交点更准也更省。 */
     const ray = new Raycast();
     function onClick(e) {
+      if (suppressClick) { suppressClick = false; return; }   // 刚结束双指手势,别当走子
       if (!camera || gameOver || (vsAI && turn === 'b')) return;
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -513,13 +747,14 @@ register({
         e.currentTarget.textContent = vsAI ? '人机:开' : '人人对战';
       },
     }, '人机:开');
-    const viewBtn = el('button', { class: 'btn', title: '切换到白/黑方视角', onClick: () => { theta += Math.PI; updateCam(); } }, icon('refresh', 13), '换边视角');
+    const viewBtn = el('button', { class: 'btn', title: '切换到白/黑方视角', onClick: () => { flyTo({ theta: theta + Math.PI, phi, radius }, 420); } }, icon('refresh', 13), '换边视角');
+    const homeBtn = el('button', { class: 'btn', title: '归正到 65° 标准俯视角', onClick: goHome }, icon('home', 13), '归正');
 
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
-        newBtn, aiBtn, viewBtn,
+        newBtn, aiBtn, viewBtn, homeBtn,
         el('span', { class: 'grow' }),
-        el('span', { class: 'dim', style: { fontSize: '12px' } }, '拖拽旋转 · 滚轮缩放 · 点击走子')),
+        el('span', { class: 'dim', style: { fontSize: '12px' } }, '拖拽旋转 · 滚轮/捏合缩放 · 两指滑动转向 · 点击走子')),
       container,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
@@ -540,11 +775,12 @@ register({
     }
 
     let disposed = false, raf = 0;
-    function tick() {
+    function tick(ts = 0) {
       if (disposed) return;
       raf = requestAnimationFrame(tick);
       if (!renderer) return;
       fit();
+      stepTween(ts);
       frames++;
       if (shadow) {
         // 关键:阴影贴图必须清成白色(深度 1.0 = 无遮挡)。
@@ -569,6 +805,8 @@ register({
       click: (r, c) => handleSquare(r, c),
       turn: () => turn,
       board: () => board,
+      goHome, flyHome: goHome,
+      home: () => ({ theta, phi, radius,俯角: Math.round((90 - phi * 180 / Math.PI) * 10) / 10 }),
       /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧 */
       stats: () => renderer ? { alive: true, frames, size: [vw, vh], lib: 'ogl' } : { alive: false },
     };
@@ -581,7 +819,7 @@ register({
         cancelAnimationFrame(raf);
         window.removeEventListener('resize', fit);
         window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointerup', endPointer);
         ro?.disconnect();
         delete window.__chess;
         // 释放 GPU 资源(WebGL 上下文数量有限,不释放会拖垮后续 reopen)

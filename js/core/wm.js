@@ -233,7 +233,9 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
   if (app.resizable !== false) makeResizable(w);
 
   layerEl().append(root);
-  setTimeout(() => root.classList.remove('opening'), 240);
+  // .opening 保留 950ms:霓虹皮肤的三段出场(灯条→下展→内容淡入)约需 0.95s;
+  // 其余风格的 winIn 动画 0.2s 已结束,类多挂一会无副作用
+  setTimeout(() => root.classList.remove('opening'), 950);
 
   wins.set(id, w);
   // 模态登记:三级进系统模态(全屏遮罩+焦点锁);二级锁定 owner 应用的所有窗口;
@@ -358,7 +360,7 @@ export function restoreWin(id) {
   w.state = w.prevState === 'max' ? 'max' : 'normal';
   w.el.style.display = '';
   w.el.classList.add('opening');
-  setTimeout(() => w.el.classList.remove('opening'), 240);
+  setTimeout(() => w.el.classList.remove('opening'), 950);   // 与出场动画时长对齐,同上
   emit('restore', { id, appId: w.appId });
 }
 

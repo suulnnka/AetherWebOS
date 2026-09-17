@@ -1,7 +1,7 @@
 /* 双引擎对弈验证台:让两份引擎实现互相对弈,统计胜负。
  *
  * 用法:
- *   node tools/_reversi-duel.mjs <引擎A文件> <引擎B文件> [局数] [深度] [随机开局手数]
+ *   node tools/reversi-duel.mjs <引擎A文件> <引擎B文件> [局数] [深度] [随机开局手数]
  *
  * 每个引擎以 `serve` 模式常驻子进程,通过 stdin/stdout 交换着法。
  * 每局双方各执黑一次(轮流),随机开局保证局面多样性。
@@ -14,7 +14,7 @@ const [fileA, fileB, gamesS = '30', depthS = '6', randS = '4'] = process.argv.sl
 const GAMES = +gamesS, DEPTH = +depthS, RAND_PLIES = +randS;
 
 if (!fileA || !fileB) {
-  console.error('用法: node tools/_reversi-duel.mjs <A.mjs> <B.mjs> [局数] [深度] [随机开局手数]');
+  console.error('用法: node tools/reversi-duel.mjs <A.mjs> <B.mjs> [局数] [深度] [随机开局手数]');
   process.exit(1);
 }
 
@@ -45,7 +45,9 @@ class Engine {
 
   ask(pos, depth, color) {
     return new Promise((res) => {
-      this.waiters.push(res);
+      // 超时保护:引擎若不支持 serve 模式或卡死,判定本局异常而不是永久挂起
+      const timer = setTimeout(() => res(''), 30000);
+      this.waiters.push((v) => { clearTimeout(timer); res(v); });
       this.p.stdin.write(`${pos} ${depth} ${color}\n`);
     });
   }

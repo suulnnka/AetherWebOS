@@ -1,3 +1,9 @@
+/* ⚠️ 本文件是 js/apps/reversi/index.js 引擎段的【快照】,不会自动跟随上游改动。
+ *    当前快照 = 已落地「提前收尾 + 跳过空方向」的生产版(index.js 747 行)。
+ *    若 index.js 的引擎段有变更,需要重建本文件。
+ *    背景、实测数据与验收方法见 docs/reversi-ai-optimization.md。
+ *    用法:node tools/<本文件> <micro|bench|stats|idstats|nps|endgame|selfplay|moves|endmoves>
+ */
 /* ==================== 搜索引擎(位棋盘) ==================== */
 const EMPTY = 0, BLACK = 1, WHITE = 2;
 
@@ -29,8 +35,6 @@ let PLO = 0, PHI = 0, OLO = 0, OHI = 0;
 let MLO = 0, MHI = 0;      // genMoves 输出:合法着掩码
 let _lo = 0, _hi = 0;      // 各位棋盘原语的输出暂存
 let nodes = 0;
-/* 基准统计计数器(仅测试用) */
-let statNodes = 0, statLeaves = 0, statTTHit = 0, statTTMove = 0;
 
 /* 文件 A = 每字节位 0(0xfe…),文件 H = 每字节位 7(0x7f…):
  * ±1 / ±7 / ±9 的移位先掩掉源端边列,防止跨行回绕 */
@@ -86,98 +90,68 @@ function makeTT(mask) {
 }
 const TT_MID = makeTT(TT_MASK_MID), TT_END = makeTT(TT_MASK_END);
 
-/* ---- 8 方向"穿越填充":从源格集出发穿过连续 O(最多 6 格),结果 → _lo/_hi。
- *      每步先按方向掩掉边列再移位;±1 按字内移位,±7/±8/±9 做字间进位 ---- */
+/* ---- 8 方向"穿越填充":从源格集出发穿过连续 O,结果 → _lo/_hi。
+ *      每步先按方向掩掉边列再移位;±1 按字内移位,±7/±8/±9 做字间进位。
+ *      "走到不是 O 就停":方向线最多 6 个中间格,原实现无条件展开 6 层,
+ *      但绝大多数出发点邻格不是 O,一层都不必展开。语义与 6 层展开完全等价。 */
 
 /** 东(+1):源不得在 H 列 */
 function fillE(lo, hi, olo, ohi) {
-  let t = ((lo & NH) << 1) & olo, th = ((hi & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
+  let t = 0, th = 0, x = ((lo & NH) << 1) & olo, xh = ((hi & NH) << 1) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x & NH) << 1) & olo; xh = ((xh & NH) << 1) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 西(-1):源不得在 A 列 */
 function fillW(lo, hi, olo, ohi) {
-  let t = ((lo & NA) >>> 1) & olo, th = ((hi & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
+  let t = 0, th = 0, x = ((lo & NA) >>> 1) & olo, xh = ((hi & NA) >>> 1) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x & NA) >>> 1) & olo; xh = ((xh & NA) >>> 1) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 南(+8,下一行):字间进位取自低字高 8 位 */
 function fillS(lo, hi, olo, ohi) {
-  let t = (lo << 8) & olo, th = (((hi << 8) | (lo >>> 24)) & ohi);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
+  let t = 0, th = 0, x = (lo << 8) & olo, xh = ((hi << 8) | (lo >>> 24)) & ohi;
+  while (x | xh) { t |= x; th |= xh; xh = ((xh << 8) | (x >>> 24)) & ohi; x = (x << 8) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 北(-8,上一行):字间进位取自高字低 8 位 */
 function fillN(lo, hi, olo, ohi) {
-  let t = (((lo >>> 8) | (hi << 24)) & olo), th = ((hi >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
+  let t = 0, th = 0, x = ((lo >>> 8) | (hi << 24)) & olo, xh = (hi >>> 8) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x >>> 8) | (xh << 24)) & olo; xh = (xh >>> 8) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 西南(+7:下一行左一列):源不得在 A 列 */
 function fillSW(lo, hi, olo, ohi) {
-  const l = lo & NA, h = hi & NA;
-  let t = (l << 7) & olo, th = (((h << 7) | (l >>> 25)) & ohi);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
+  let t = 0, th = 0, l = lo & NA, h = hi & NA;
+  let x = (l << 7) & olo, xh = ((h << 7) | (l >>> 25)) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NA; h = xh & NA; xh = ((h << 7) | (l >>> 25)) & ohi; x = (l << 7) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 东北(-7:上一行右一列):源不得在 H 列 */
 function fillNE(lo, hi, olo, ohi) {
-  const l = lo & NH, h = hi & NH;
-  let t = (((l >>> 7) | (h << 25)) & olo), th = ((h >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
+  let t = 0, th = 0, l = lo & NH, h = hi & NH;
+  let x = ((l >>> 7) | (h << 25)) & olo, xh = (h >>> 7) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NH; h = xh & NH; x = ((l >>> 7) | (h << 25)) & olo; xh = (h >>> 7) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 东南(+9:下一行右一列):源不得在 H 列 */
 function fillSE(lo, hi, olo, ohi) {
-  const l = lo & NH, h = hi & NH;
-  let t = (l << 9) & olo, th = (((h << 9) | (l >>> 23)) & ohi);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
+  let t = 0, th = 0, l = lo & NH, h = hi & NH;
+  let x = (l << 9) & olo, xh = ((h << 9) | (l >>> 23)) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NH; h = xh & NH; xh = ((h << 9) | (l >>> 23)) & ohi; x = (l << 9) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 西北(-9:上一行左一列):源不得在 A 列 */
 function fillNW(lo, hi, olo, ohi) {
-  const l = lo & NA, h = hi & NA;
-  let t = (((l >>> 9) | (h << 23)) & olo), th = ((h >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
+  let t = 0, th = 0, l = lo & NA, h = hi & NA;
+  let x = ((l >>> 9) | (h << 23)) & olo, xh = (h >>> 9) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NA; h = xh & NA; x = ((l >>> 9) | (h << 23)) & olo; xh = (h >>> 9) & ohi; }
   _lo = t; _hi = th;
 }
 
@@ -214,14 +188,16 @@ function genMoves(plo, phi, olo, ohi) {
  *  该格与落子点之间全是 O,且沿同一方向延伸出去是 P。 */
 function moveFlips(mlo, mhi, olo, ohi) {
   let fl = 0, fh = 0;
-  fillE(mlo, mhi, olo, ohi); fl |= _lo & fwLo; fh |= _hi & fwHi;
-  fillW(mlo, mhi, olo, ohi); fl |= _lo & feLo; fh |= _hi & feHi;
-  fillS(mlo, mhi, olo, ohi); fl |= _lo & fnLo; fh |= _hi & fnHi;
-  fillN(mlo, mhi, olo, ohi); fl |= _lo & fsLo; fh |= _hi & fsHi;
-  fillSW(mlo, mhi, olo, ohi); fl |= _lo & fneLo; fh |= _hi & fneHi;
-  fillNE(mlo, mhi, olo, ohi); fl |= _lo & fswLo; fh |= _hi & fswHi;
-  fillSE(mlo, mhi, olo, ohi); fl |= _lo & fnwLo; fh |= _hi & fnwHi;
-  fillNW(mlo, mhi, olo, ohi); fl |= _lo & fseLo; fh |= _hi & fseHi;
+  /* 每方向先就地判一次"邻格是否为 O"(即 fill 的第一步),
+     落空则连函数调用都不发生 —— 绝大多数方向在此直接跳过。 */
+  if ((((mlo & NH) << 1) | ((mhi & NH) << 1)) & olo | (((mhi & NH) << 1) & ohi)) { fillE(mlo, mhi, olo, ohi); fl |= _lo & fwLo; fh |= _hi & fwHi; }
+  if ((((mlo & NA) >>> 1) | ((mhi & NA) >>> 1)) & olo | (((mhi & NA) >>> 1) & ohi)) { fillW(mlo, mhi, olo, ohi); fl |= _lo & feLo; fh |= _hi & feHi; }
+  if (((mlo << 8) & olo) | (((mhi << 8) | (mlo >>> 24)) & ohi)) { fillS(mlo, mhi, olo, ohi); fl |= _lo & fnLo; fh |= _hi & fnHi; }
+  if ((((mlo >>> 8) | (mhi << 24)) & olo) | ((mhi >>> 8) & ohi)) { fillN(mlo, mhi, olo, ohi); fl |= _lo & fsLo; fh |= _hi & fsHi; }
+  if ((((mlo & NA) << 7) & olo) | ((((mhi & NA) << 7) | ((mlo & NA) >>> 25)) & ohi)) { fillSW(mlo, mhi, olo, ohi); fl |= _lo & fneLo; fh |= _hi & fneHi; }
+  if (((((mlo & NH) >>> 7) | ((mhi & NH) << 25)) & olo) | (((mhi & NH) >>> 7) & ohi)) { fillNE(mlo, mhi, olo, ohi); fl |= _lo & fswLo; fh |= _hi & fswHi; }
+  if ((((mlo & NH) << 9) & olo) | ((((mhi & NH) << 9) | ((mlo & NH) >>> 23)) & ohi)) { fillSE(mlo, mhi, olo, ohi); fl |= _lo & fnwLo; fh |= _hi & fnwHi; }
+  if (((((mlo & NA) >>> 9) | ((mhi & NA) << 23)) & olo) | (((mhi & NA) >>> 9) & ohi)) { fillNW(mlo, mhi, olo, ohi); fl |= _lo & fseLo; fh |= _hi & fseHi; }
   _lo = fl; _hi = fh;
 }
 
@@ -286,7 +262,6 @@ function swapSides() {
  */
 function search(depth, alpha, beta, player, ply, exact) {
   nodes++;
-  statNodes++;
   const T = exact ? TT_END : TT_MID;
   const ttMask = exact ? TT_MASK_END : TT_MASK_MID;
   hashPos(player);
@@ -295,14 +270,12 @@ function search(depth, alpha, beta, player, ply, exact) {
   let ttMove = -1;
   if (T.key[slot] === key && T.key2[slot] === key2) {
     ttMove = T.move[slot];
-    if (ttMove >= 0) statTTMove++;
     if (T.depth[slot] >= depth) {
       const v = T.score[slot], f = T.flag[slot];
-      if (f === F_EXACT || (f === F_LOWER && v >= beta) || (f === F_UPPER && v <= alpha)) { statTTHit++; return v; }
+      if (f === F_EXACT || (f === F_LOWER && v >= beta) || (f === F_UPPER && v <= alpha)) return v;
     }
   }
   if (ply >= MAX_PLY - 2 || depth <= 0) {
-    statLeaves++;
     return exact ? terminalDiff() : evaluate();
   }
 
@@ -523,7 +496,6 @@ function __unmake(ply) { unmakeMove(ply); }
 function __setMoveSlot(i, sq, flo, fhi) { // 测试用:把着法写入 ply 暂存区供 __make
   plyMoves[0][i] = sq; plyFlipLo[0][i] = flo; plyFlipHi[0][i] = fhi;
 }
-
 /* ==================== 基准测试驱动(不属于应用代码) ==================== */
 
 /* UI 侧的同名工具函数(引擎部分未抽取,这里补上) */
@@ -742,6 +714,73 @@ const LEVELS_FOR_BENCH = [
 ];
 function fmt(n) { return n.toLocaleString('en-US'); }
 
+/** 64 字符串(row-major,'b'/'w'/'.')→ UI 棋盘 */
+function parseBoard64(s) {
+  const b = [];
+  for (let r = 0; r < 8; r++) {
+    const row = [];
+    for (let c = 0; c < 8; c++) {
+      const ch = s[r * 8 + c];
+      row.push(ch === 'b' ? 'b' : ch === 'w' ? 'w' : null);
+    }
+    b.push(row);
+  }
+  return b;
+}
+
+
+/* ---- 引擎服务模式:从 stdin 逐行读「局面 深度 行棋方」,向 stdout 吐着法 ---- */
+if (process.argv[2] === 'serve') {
+  let buf = '';
+  process.stdin.on('data', (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      const [pos, depthS, color] = line.split(' ');
+      const b = parseBoard64(pos);
+      // 不清表:与真实对局一致(think() 全程复用同一张表)
+      const r = rootSearch(b, color, +depthS, false);
+      process.stdout.write(moveName(r.move) + '\n');
+    }
+  });
+}
+
+
+if (MODE === 'micro') {
+  const b = randomPosition(24);
+  toBitboard(b, 'w');
+  const N = 3000000;
+  const bench = (label, fn) => {
+    fn(); // 预热/JIT
+    const t = performance.now();
+    fn();
+    const ms = performance.now() - t;
+    console.log(`${label.padEnd(24)} ${(ms * 1e6 / N).toFixed(1).padStart(8)} ns/次   (${ms.toFixed(0)}ms / ${fmt(N)} 次)`);
+  };
+  let acc = 0;
+  const plo = PLO, phi = PHI, olo = OLO, ohi = OHI;
+  bench('hashPos(全盘扫描)', () => { for (let i = 0; i < N; i++) { hashPos(1); acc ^= _k1; } });
+  bench('genMoves(8 次 fill)', () => { for (let i = 0; i < N; i++) { genMoves(plo, phi, olo, ohi); acc ^= MLO; } });
+  bench('fillE ×1', () => { for (let i = 0; i < N; i++) { fillE(plo, phi, olo, ohi); acc ^= _lo; } });
+  bench('popcnt ×4', () => { for (let i = 0; i < N; i++) { acc ^= popcnt(plo) + popcnt(phi) + popcnt(olo) + popcnt(ohi); } });
+  bench('evaluate()', () => { for (let i = 0; i < N; i++) { acc ^= evaluate(); } });
+  genMoves(plo, phi, olo, ohi);
+  const sq0 = 31 - Math.clz32((MLO || MHI) & -(MLO || MHI));
+  bench('moveFlips ×1', () => {
+    for (let i = 0; i < N; i++) {
+      moveFlips(sq0 < 32 ? 1 << sq0 : 0, sq0 < 32 ? 0 : 1 << (sq0 - 32), olo, ohi);
+      acc ^= _lo;
+    }
+  });
+  console.log('(校验位 ' + acc + ')');
+  const r = (clearTT(), rootSearch(b, 'w', 8, false));
+  console.log(`参考:该局面 8 层搜索 ${fmt(r.nodes)} 节点 / ${r.ms.toFixed(0)}ms → ${(r.ms * 1e6 / r.nodes).toFixed(0)} ns/节点`);
+}
+
+
 if (MODE === 'micro') {
   const b = randomPosition(24);
   toBitboard(b, 'w');
@@ -856,6 +895,30 @@ if (MODE === 'endgame' || MODE === 'all') {
     const ms = performance.now() - t0;
     const nps = ms > 0 ? Math.round(r.nodes / ms * 1000) : 0;
     console.log(`残局完全求解 | 空 ${e} | 节点 ${fmt(r.nodes)} | ${ms.toFixed(1)}ms | ${fmt(nps)} NPS | 最佳 ${moveName(r.move)} 分 ${r.score / 100} 子`);
+  }
+}
+
+if (MODE === 'endnodes') {
+  /* 残局完全求解的节点数。局面由固定种子生成 ⇒ 节点数完全可复现,
+     是"纯加速/纯排序"类改动最干净的度量(不受机器噪声影响)。 */
+  const bs = [];
+  for (let plies = 40; plies <= 56; plies++) {
+    const b = randomPosition(plies);
+    const e = emptiesOf(b);
+    if (e >= 8 && e <= 22) bs.push({ b, e, plies });
+  }
+  const byE = {};
+  for (const x of bs) (byE[x.e] = byE[x.e] || []).push(x);
+  for (const e of Object.keys(byE).map(Number).sort((a, c) => a - c)) {
+    const group = byE[e];
+    let tot = 0, ms = 0, ok = true, sig = [];
+    for (const x of group) {
+      clearTT();
+      const r = rootSearch(x.b, 'w', x.e + 4, true);
+      tot += r.nodes; ms += r.ms;
+      sig.push(`${moveName(r.move)}:${r.score}`);
+    }
+    console.log(`空 ${String(e).padStart(2)} | 局面 ${group.length} | 合计节点 ${fmt(tot).padStart(14)} | ${ms.toFixed(0).padStart(6)}ms | ${sig.join(' ')}`);
   }
 }
 

@@ -106,98 +106,68 @@ function makeTT(mask) {
 }
 const TT_MID = makeTT(TT_MASK_MID), TT_END = makeTT(TT_MASK_END);
 
-/* ---- 8 方向"穿越填充":从源格集出发穿过连续 O(最多 6 格),结果 → _lo/_hi。
- *      每步先按方向掩掉边列再移位;±1 按字内移位,±7/±8/±9 做字间进位 ---- */
+/* ---- 8 方向"穿越填充":从源格集出发穿过连续 O,结果 → _lo/_hi。
+ *      每步先按方向掩掉边列再移位;±1 按字内移位,±7/±8/±9 做字间进位。
+ *      "走到不是 O 就停":方向线最多 6 个中间格,原实现无条件展开 6 层,
+ *      但绝大多数出发点邻格不是 O,一层都不必展开。语义与 6 层展开完全等价。 */
 
 /** 东(+1):源不得在 H 列 */
 function fillE(lo, hi, olo, ohi) {
-  let t = ((lo & NH) << 1) & olo, th = ((hi & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
-  t |= ((t & NH) << 1) & olo; th |= ((th & NH) << 1) & ohi;
+  let t = 0, th = 0, x = ((lo & NH) << 1) & olo, xh = ((hi & NH) << 1) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x & NH) << 1) & olo; xh = ((xh & NH) << 1) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 西(-1):源不得在 A 列 */
 function fillW(lo, hi, olo, ohi) {
-  let t = ((lo & NA) >>> 1) & olo, th = ((hi & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
-  t |= ((t & NA) >>> 1) & olo; th |= ((th & NA) >>> 1) & ohi;
+  let t = 0, th = 0, x = ((lo & NA) >>> 1) & olo, xh = ((hi & NA) >>> 1) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x & NA) >>> 1) & olo; xh = ((xh & NA) >>> 1) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 南(+8,下一行):字间进位取自低字高 8 位 */
 function fillS(lo, hi, olo, ohi) {
-  let t = (lo << 8) & olo, th = (((hi << 8) | (lo >>> 24)) & ohi);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
-  th |= (((th << 8) | (t >>> 24)) & ohi); t |= ((t << 8) & olo);
+  let t = 0, th = 0, x = (lo << 8) & olo, xh = ((hi << 8) | (lo >>> 24)) & ohi;
+  while (x | xh) { t |= x; th |= xh; xh = ((xh << 8) | (x >>> 24)) & ohi; x = (x << 8) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 北(-8,上一行):字间进位取自高字低 8 位 */
 function fillN(lo, hi, olo, ohi) {
-  let t = (((lo >>> 8) | (hi << 24)) & olo), th = ((hi >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
-  t |= (((t >>> 8) | (th << 24)) & olo); th |= ((th >>> 8) & ohi);
+  let t = 0, th = 0, x = ((lo >>> 8) | (hi << 24)) & olo, xh = (hi >>> 8) & ohi;
+  while (x | xh) { t |= x; th |= xh; x = ((x >>> 8) | (xh << 24)) & olo; xh = (xh >>> 8) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 西南(+7:下一行左一列):源不得在 A 列 */
 function fillSW(lo, hi, olo, ohi) {
-  const l = lo & NA, h = hi & NA;
-  let t = (l << 7) & olo, th = (((h << 7) | (l >>> 25)) & ohi);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
-  th |= ((((th & NA) << 7) | ((t & NA) >>> 25)) & ohi); t |= (((t & NA) << 7) & olo);
+  let t = 0, th = 0, l = lo & NA, h = hi & NA;
+  let x = (l << 7) & olo, xh = ((h << 7) | (l >>> 25)) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NA; h = xh & NA; xh = ((h << 7) | (l >>> 25)) & ohi; x = (l << 7) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 东北(-7:上一行右一列):源不得在 H 列 */
 function fillNE(lo, hi, olo, ohi) {
-  const l = lo & NH, h = hi & NH;
-  let t = (((l >>> 7) | (h << 25)) & olo), th = ((h >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
-  t |= ((((t & NH) >>> 7) | ((th & NH) << 25)) & olo); th |= (((th & NH) >>> 7) & ohi);
+  let t = 0, th = 0, l = lo & NH, h = hi & NH;
+  let x = ((l >>> 7) | (h << 25)) & olo, xh = (h >>> 7) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NH; h = xh & NH; x = ((l >>> 7) | (h << 25)) & olo; xh = (h >>> 7) & ohi; }
   _lo = t; _hi = th;
 }
 
 /** 东南(+9:下一行右一列):源不得在 H 列 */
 function fillSE(lo, hi, olo, ohi) {
-  const l = lo & NH, h = hi & NH;
-  let t = (l << 9) & olo, th = (((h << 9) | (l >>> 23)) & ohi);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
-  th |= ((((th & NH) << 9) | ((t & NH) >>> 23)) & ohi); t |= (((t & NH) << 9) & olo);
+  let t = 0, th = 0, l = lo & NH, h = hi & NH;
+  let x = (l << 9) & olo, xh = ((h << 9) | (l >>> 23)) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NH; h = xh & NH; xh = ((h << 9) | (l >>> 23)) & ohi; x = (l << 9) & olo; }
   _lo = t; _hi = th;
 }
 
 /** 西北(-9:上一行左一列):源不得在 A 列 */
 function fillNW(lo, hi, olo, ohi) {
-  const l = lo & NA, h = hi & NA;
-  let t = (((l >>> 9) | (h << 23)) & olo), th = ((h >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
-  t |= ((((t & NA) >>> 9) | ((th & NA) << 23)) & olo); th |= (((th & NA) >>> 9) & ohi);
+  let t = 0, th = 0, l = lo & NA, h = hi & NA;
+  let x = ((l >>> 9) | (h << 23)) & olo, xh = (h >>> 9) & ohi;
+  while (x | xh) { t |= x; th |= xh; l = x & NA; h = xh & NA; x = ((l >>> 9) | (h << 23)) & olo; xh = (h >>> 9) & ohi; }
   _lo = t; _hi = th;
 }
 
@@ -234,14 +204,16 @@ function genMoves(plo, phi, olo, ohi) {
  *  该格与落子点之间全是 O,且沿同一方向延伸出去是 P。 */
 function moveFlips(mlo, mhi, olo, ohi) {
   let fl = 0, fh = 0;
-  fillE(mlo, mhi, olo, ohi); fl |= _lo & fwLo; fh |= _hi & fwHi;
-  fillW(mlo, mhi, olo, ohi); fl |= _lo & feLo; fh |= _hi & feHi;
-  fillS(mlo, mhi, olo, ohi); fl |= _lo & fnLo; fh |= _hi & fnHi;
-  fillN(mlo, mhi, olo, ohi); fl |= _lo & fsLo; fh |= _hi & fsHi;
-  fillSW(mlo, mhi, olo, ohi); fl |= _lo & fneLo; fh |= _hi & fneHi;
-  fillNE(mlo, mhi, olo, ohi); fl |= _lo & fswLo; fh |= _hi & fswHi;
-  fillSE(mlo, mhi, olo, ohi); fl |= _lo & fnwLo; fh |= _hi & fnwHi;
-  fillNW(mlo, mhi, olo, ohi); fl |= _lo & fseLo; fh |= _hi & fseHi;
+  /* 每方向先就地判一次"邻格是否为 O"(即 fill 的第一步),
+     落空则连函数调用都不发生 —— 绝大多数方向在此直接跳过。 */
+  if ((((mlo & NH) << 1) | ((mhi & NH) << 1)) & olo | (((mhi & NH) << 1) & ohi)) { fillE(mlo, mhi, olo, ohi); fl |= _lo & fwLo; fh |= _hi & fwHi; }
+  if ((((mlo & NA) >>> 1) | ((mhi & NA) >>> 1)) & olo | (((mhi & NA) >>> 1) & ohi)) { fillW(mlo, mhi, olo, ohi); fl |= _lo & feLo; fh |= _hi & feHi; }
+  if (((mlo << 8) & olo) | (((mhi << 8) | (mlo >>> 24)) & ohi)) { fillS(mlo, mhi, olo, ohi); fl |= _lo & fnLo; fh |= _hi & fnHi; }
+  if ((((mlo >>> 8) | (mhi << 24)) & olo) | ((mhi >>> 8) & ohi)) { fillN(mlo, mhi, olo, ohi); fl |= _lo & fsLo; fh |= _hi & fsHi; }
+  if ((((mlo & NA) << 7) & olo) | ((((mhi & NA) << 7) | ((mlo & NA) >>> 25)) & ohi)) { fillSW(mlo, mhi, olo, ohi); fl |= _lo & fneLo; fh |= _hi & fneHi; }
+  if (((((mlo & NH) >>> 7) | ((mhi & NH) << 25)) & olo) | (((mhi & NH) >>> 7) & ohi)) { fillNE(mlo, mhi, olo, ohi); fl |= _lo & fswLo; fh |= _hi & fswHi; }
+  if ((((mlo & NH) << 9) & olo) | ((((mhi & NH) << 9) | ((mlo & NH) >>> 23)) & ohi)) { fillSE(mlo, mhi, olo, ohi); fl |= _lo & fnwLo; fh |= _hi & fnwHi; }
+  if (((((mlo & NA) >>> 9) | ((mhi & NA) << 23)) & olo) | (((mhi & NA) >>> 9) & ohi)) { fillNW(mlo, mhi, olo, ohi); fl |= _lo & fseLo; fh |= _hi & fseHi; }
   _lo = fl; _hi = fh;
 }
 
