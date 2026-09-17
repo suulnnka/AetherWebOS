@@ -61,18 +61,31 @@ function popcnt(x) {
   return (x * 0x01010101) >>> 24;
 }
 
-/** 64 位 Zobrist 风格散列(双 32 位):局面(4 字)+ 行棋方 → _k1/_k2。
- *  残局完全搜索动辄数十万节点,单 32 位校验必生碰撞污染精确分,
- *  双散列联合校验后伪命中概率约 2^-64,可忽略 */
+/** 经典 Zobrist:每格 × 每色一对独立随机数(mulberry32 生成),异或组合。
+ *  索引 = 颜色×64 + 格号(白 0-63 / 黑 64-127),保证"白@s 与 黑@s'"
+ *  这类跨色跨字的组合不可能整对抵消——线性混合或错位索引都会造成
+ *  精确碰撞,污染置换表精确分。双 32 位联合校验,伪命中概率约 2^-64。 */
+const ZOB1 = new Int32Array(128), ZOB2 = new Int32Array(128);
+{
+  let s = 0x1a2b3c4d;
+  const rnd = () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return (t ^ (t >>> 14)) | 0;
+  };
+  for (let i = 0; i < 128; i++) { ZOB1[i] = rnd(); ZOB2[i] = rnd(); }
+}
 let _k1 = 0, _k2 = 0;
 function hashPos(player) {
-  let h1 = (0x811c9dc5 ^ Math.imul(player, 0x9e3779b9)) | 0;
-  let h2 = (0x9e3779b9 ^ Math.imul(player, 0x811c9dc5)) | 0;
-  h1 = (Math.imul(h1, 0x01000193) ^ PLO) | 0; h2 = (Math.imul(h2, 0x85ebca6b) ^ Math.imul(PLO, 0x27d4eb2f)) | 0;
-  h1 = (Math.imul(h1, 0x01000193) ^ PHI) | 0; h2 = (Math.imul(h2, 0x85ebca6b) ^ Math.imul(PHI, 0x27d4eb2f)) | 0;
-  h1 = (Math.imul(h1, 0x01000193) ^ OLO) | 0; h2 = (Math.imul(h2, 0x85ebca6b) ^ Math.imul(OLO, 0x27d4eb2f)) | 0;
-  h1 = (Math.imul(h1, 0x01000193) ^ OHI) | 0; h2 = (Math.imul(h2, 0x85ebca6b) ^ Math.imul(OHI, 0x27d4eb2f)) | 0;
-  _k1 = h1; _k2 = h2;
+  let k1 = 0, k2 = 0, x, b;
+  x = PLO; while (x) { b = x & -x; x ^= b; const i = 31 - Math.clz32(b); k1 ^= ZOB1[i]; k2 ^= ZOB2[i]; }
+  x = PHI; while (x) { b = x & -x; x ^= b; const i = 32 + 31 - Math.clz32(b); k1 ^= ZOB1[i]; k2 ^= ZOB2[i]; }
+  x = OLO; while (x) { b = x & -x; x ^= b; const i = 64 + 31 - Math.clz32(b); k1 ^= ZOB1[i]; k2 ^= ZOB2[i]; }
+  x = OHI; while (x) { b = x & -x; x ^= b; const i = 96 + 31 - Math.clz32(b); k1 ^= ZOB1[i]; k2 ^= ZOB2[i]; }
+  k1 = (k1 ^ player) | 0;
+  k2 = (k2 ^ Math.imul(player, 0x9e3779b9)) | 0;
+  _k1 = k1; _k2 = k2;
 }
 
 /** 置换表:始终替换;中局 2^16 槽 / 残局 2^20 槽(完全搜索节点量大,
@@ -328,7 +341,7 @@ function search(depth, alpha, beta, player, ply, exact) {
     let b, sq;
     if (mlo) { b = mlo & -mlo; mlo ^= b; sq = 31 - Math.clz32(b); }
     else { b = mhi & -mhi; mhi ^= b; sq = 63 - Math.clz32(b); }
-    moveFlips(b, sq < 32 ? 0 : b, OLO, OHI);
+    moveFlips(sq < 32 ? b : 0, sq < 32 ? 0 : b, OLO, OHI);
     const fc = popcnt(_lo) + popcnt(_hi);
     moves[n] = sq; scores[n] = W64[sq] + fc * 2; fll[n] = _lo; flh[n] = _hi;
     n++;
@@ -347,11 +360,14 @@ function search(depth, alpha, beta, player, ply, exact) {
   if (ttMove >= 0 && moves[0] !== ttMove) {
     for (let i = 1; i < n; i++) {
       if (moves[i] !== ttMove) continue;
+      // 先存走 ttMove 自己的翻子:右移会覆盖 fll[i]/flh[i],漏存会让
+      // moves[0] 配到别人的翻子掩码,make 出非法局面(值全错)
+      const fl = fll[i], fh = flh[i];
       for (let j = i; j > 0; j--) {
         moves[j] = moves[j - 1]; scores[j] = scores[j - 1];
         fll[j] = fll[j - 1]; flh[j] = flh[j - 1];
       }
-      moves[0] = ttMove;
+      moves[0] = ttMove; fll[0] = fl; flh[0] = fh;
       break;
     }
   }
@@ -422,7 +438,7 @@ async function think(board, aiColor, level, onProgress, shouldAbort) {
     let b, sq;
     if (mlo) { b = mlo & -mlo; mlo ^= b; sq = 31 - Math.clz32(b); }
     else { b = mhi & -mhi; mhi ^= b; sq = 63 - Math.clz32(b); }
-    moveFlips(b, sq < 32 ? 0 : b, OLO, OHI);
+    moveFlips(sq < 32 ? b : 0, sq < 32 ? 0 : b, OLO, OHI);
     moves[n0] = sq;
     scores[n0] = W64[sq] + (popcnt(_lo) + popcnt(_hi)) * 2;
     fll[n0] = _lo; flh[n0] = _hi;
