@@ -1,0 +1,66 @@
+/* 地图应用专属样式 */
+.mp-toolbar { flex-wrap: wrap; }
+.mp-search { width: 220px; max-width: 100%; }
+.mp-toggle.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
+.mp-seg { flex: none; }
+
+/* 地图区:占满侧栏以外空间;覆盖层用于加载/错误态 */
+.mp-wrap { flex: 1; min-width: 0; position: relative; }
+.mp-canvas { position: absolute; inset: 0; background: var(--hover); }
+.mp-overlay {
+  position: absolute; inset: 0; z-index: 20;
+  display: grid; place-items: center;
+  background: var(--panel);
+}
+.mp-overlay-box {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; padding: 24px 32px; max-width: 320px; font-size: 13px;
+}
+.mp-overlay-box svg { opacity: 0.5; }
+.mp-spin {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  animation: mp-rotate 0.9s linear infinite;
+}
+@keyframes mp-rotate { to { transform: rotate(360deg); } }
+
+/* 侧栏:提示 / 快捷城市 / 搜索结果 */
+.mp-side { width: 252px; display: flex; flex-direction: column; }
+.mp-side-head {
+  font-size: 12px; font-weight: 700; color: var(--text-2);
+  padding: 12px 12px 6px; text-transform: none; letter-spacing: 0;
+}
+.mp-side-tip {
+  margin: 10px 10px 0; padding: 9px 11px; border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  display: flex; gap: 8px; font-size: 12px; line-height: 1.6; color: var(--text-2);
+}
+.mp-side-tip svg { flex: none; margin-top: 2px; color: var(--accent); }
+.mp-side-err { background: color-mix(in srgb, #ef4444 8%, transparent); border-color: color-mix(in srgb, #ef4444 30%, var(--border)); }
+.mp-side-err svg { color: #ef4444; }
+
+.mp-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 4px; }
+.mp-chip {
+  padding: 4px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: var(--hover); border: 1px solid var(--border); color: var(--text);
+}
+.mp-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.mp-poi {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  margin: 0 6px; padding: 8px 8px; border: none; border-radius: var(--radius-s);
+  background: none; color: var(--text); text-align: left; cursor: pointer; font: inherit;
+}
+.mp-poi:hover { background: var(--hover); }
+.mp-poi b { font-size: 13px; line-height: 1.4; }
+.mp-poi span { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+.mp-pager { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 0 12px; font-size: 12px; }
+
+/* 百度信息窗内的副标题行 */
+.mp-iw-sub { margin-top: 4px; font-size: 12px; color: #666; line-height: 1.5; }
+.mp-iw-sub.mono { font-family: var(--mono); color: #0e7490; }

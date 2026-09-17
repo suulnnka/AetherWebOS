@@ -226,16 +226,16 @@ html[data-style="neon"] .win { border-radius: 0 0 var(--radius) var(--radius); }
 html[data-style="neon"] .win.max { border-radius: 0; }
 
 /* 出场三段(合计 ~0.5s):② 压在 ① 爆闪正盛时开始,衔接无停顿
-   ① 0~0.28s  窗体隐身,霓虹灯条自中心向两侧展开,展开完成时白热爆闪后回稳
-   ② 0.23~0.49s 窗头与窗体快速向下展开,一道淡青光随之下扫
-   ③ 0.35s~   界面内容最后淡入 */
+   ① 0~0.23s  窗体隐身,霓虹灯条自中心向两侧展开,展开完成时白热爆闪后回稳
+   ② 0.18~0.44s 窗头与窗体快速向下展开,一道淡青光随之下扫
+   ③ 0.30s~   界面内容最后淡入 */
 html[data-style="neon"] .win.opening {
-  animation: neonWinDown 0.26s cubic-bezier(0.3, 0.8, 0.2, 1) 0.23s both;
+  animation: neonWinDown 0.26s cubic-bezier(0.3, 0.8, 0.2, 1) 0.18s both;
 }
 /* 下展全程:from 态窗体不可见(背景/描边/阴影全透明,只露出顶部的灯条) */
 @keyframes neonWinDown {
   from {
-    clip-path: inset(-56px 0 calc(100% - 88px) 0);
+    clip-path: inset(-30px 0 calc(100% - 38px) 0);
     background: transparent;
     border-color: transparent;
     box-shadow: none;
@@ -256,24 +256,19 @@ html[data-style="neon"] .win.opening {
 /* ① 灯条:自中心向两侧展开,展开完成瞬间白热爆闪再回稳;结束后交给流光循环 */
 html[data-style="neon"] .win.opening .win-head::before {
   transform-origin: 50% 50%;
-  animation: neonBarIn 0.28s cubic-bezier(0.2, 0.9, 0.35, 1) both,
+  animation: neonBarIn 0.23s cubic-bezier(0.2, 0.9, 0.35, 1) both,
              neonFlow 3.2s linear infinite;
 }
 @keyframes neonBarIn {
-  0%   { transform: scaleX(0); opacity: 0; filter: brightness(2.2);
-         box-shadow: 0 0 0 0 transparent; }
+  0%   { transform: scaleX(0); opacity: 0; filter: brightness(2.2); }
   8%   { opacity: 1; }
-  55%  { transform: scaleX(1); filter: brightness(1.9);
-         box-shadow: 0 0 26px 4px color-mix(in srgb, var(--neon-a, #00f0ff) 45%, transparent); }
-  70%  { filter: brightness(3.6) saturate(1.9);
-         box-shadow: 0 0 70px 24px color-mix(in srgb, var(--neon-a, #00f0ff) 85%, transparent),
-                     0 0 150px 60px color-mix(in srgb, var(--neon-b, #ff2ad4) 45%, transparent); }
-  100% { transform: scaleX(1); opacity: 1; filter: brightness(1);
-         box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent); }
+  58%  { transform: scaleX(1); filter: brightness(1.9); }
+  74%  { filter: brightness(3.4) saturate(1.5); }
+  100% { transform: scaleX(1); opacity: 1; filter: brightness(1); }
 }
 /* ② 窗头底色与描边也等到第二阶段(第一阶段桌面上只有灯条) */
 html[data-style="neon"] .win.opening .win-head {
-  animation: neonHeadBgIn 0.24s ease 0.23s both;
+  animation: neonHeadBgIn 0.24s ease 0.18s both;
 }
 @keyframes neonHeadBgIn {
   from { background: transparent; border-bottom-color: transparent; }
@@ -282,7 +277,7 @@ html[data-style="neon"] .win.opening .win-head {
 html[data-style="neon"] .win.opening .win-title,
 html[data-style="neon"] .win.opening .wbtn,
 html[data-style="neon"] .win.opening .win-ico {
-  animation: neonHeadIn 0.2s ease-out 0.25s both;
+  animation: neonHeadIn 0.2s ease-out 0.2s both;
 }
 @keyframes neonHeadIn { from { opacity: 0; } }
 /* ② 下展时一道淡青光随之扫过(不明显的光特效) */
@@ -290,13 +285,13 @@ html[data-style="neon"] .win.opening::after {
   content: ""; position: absolute; left: 0; right: 0; top: 0; height: 34%;
   background: linear-gradient(180deg, transparent, rgba(140, 235, 255, 0.22), transparent);
   transform: translateY(-130%);
-  animation: neonSweep 0.26s ease-out 0.23s both;
+  animation: neonSweep 0.26s ease-out 0.18s both;
   pointer-events: none;
 }
 @keyframes neonSweep { to { transform: translateY(430%); } }
 /* ③ 界面内容最后淡入 */
 html[data-style="neon"] .win.opening .win-body > * {
-  animation: neonContentIn 0.22s ease-out 0.35s both;
+  animation: neonContentIn 0.22s ease-out 0.3s both;
 }
 @keyframes neonContentIn { from { opacity: 0; } }
 /* 未聚焦窗:灯条(含展开中)停摆 */

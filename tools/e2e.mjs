@@ -76,6 +76,18 @@ async function waitReady() {
 /* 组间重置:回到初始桌面(localStorage 保留,由用例自行清理) */
 async function fresh() { await c.goto(URL_BASE); await waitReady(); }
 
+/* 轮询等待表达式为真值(默认 5s 超时,返回最终值)。
+   用于异步 UI 就绪等待:如加密解密(PBKDF2 派生)、弹窗窗口创建等无固定耗时的环节 */
+async function waitFor(expr, timeout = 5000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await ev(expr);
+    if (v) return v;
+    if (Date.now() - t0 > timeout) return v;
+    await sleep(120);
+  }
+}
+
 /* ---- 共享助手(从各用例组上提,跨组复用) ---- */
 
   const termType = async (cmd) => {
@@ -1972,39 +1984,37 @@ group('T32', '笔记(含加密)', async () => {
   })()`);
   await sleep(500);
 
-  // 点击解锁查看(密码) → 明文显示在对话框
+  // 点击解锁查看(密码) → 明文显示在对话框(解密走 PBKDF2 派生,轮询等待)
   await ev(`(() => {
     const card = [...document.querySelectorAll('.memo-card')].find(c => c.textContent.includes('银行账号'));
     [...card.querySelectorAll('.icon-btn')].find(b => b.title === '解锁查看').click();
   })()`);
-  await sleep(450);
+  await waitFor(`!!document.querySelector('.win[data-app=sysdialog] .dlg-input')`);
   await ev(`(() => {
     const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
     i.value = 'memo-pw';
     i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
-  await sleep(500);
-  const mm2 = await ev(`(() => {
+  const mm2 = await waitFor(`(() => {
     const box = [...document.querySelectorAll('.modal-box')].pop();
-    return { shown: box?.textContent.includes('6222 0000 1234 5678') };
-  })()`);
-  t('T32.2 密码解锁查看明文', mm2.shown === true, JSON.stringify(mm2));
+    return !!box && box.textContent.includes('6222 0000 1234 5678');
+  })()`, 5000);
+  t('T32.2 密码解锁查看明文', mm2 === true, `shown=${mm2}`);
   await ev(`[...document.querySelectorAll('.modal-box .btn')].find(b => b.textContent === '关闭')?.click()`);
   await sleep(300);
 
-  // 错误密码被拒
+  // 错误密码被拒(同上,解密 + 错误弹窗创建均为异步,轮询等待报错文案)
   await ev(`(() => {
     const card = [...document.querySelectorAll('.memo-card')].find(c => c.textContent.includes('银行账号'));
     [...card.querySelectorAll('.icon-btn')].find(b => b.title === '解锁查看').click();
   })()`);
-  await sleep(450);
+  await waitFor(`!!document.querySelector('.win[data-app=sysdialog] .dlg-input')`);
   await ev(`(() => {
     const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
     i.value = 'wrong';
     i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
-  await sleep(500);
-  const mm3 = await ev(`document.querySelector('.win[data-app=sysdialog] .dlg-msg')?.textContent.includes('密码错误')`);
+  const mm3 = await waitFor(`document.querySelector('.win[data-app=sysdialog] .dlg-msg')?.textContent.includes('密码错误') === true`, 5000);
   t('T32.3 错误密码被拒', mm3 === true);
   await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].pop().click()`);
   await sleep(300);
@@ -2670,6 +2680,12 @@ group('T41', '应用内右键', async () => {
   t('T41.3 全选生效', selAll === true);
 
   // 41.4 任务应用:任务行自定义右键(标记完成 / 删除任务)
+  // 任务数据按用户持久化:历史轮次的「删除任务」会耗尽种子任务,
+  // 先清该用户的任务存储再打开(应用检测不到存储即重新播种),并用轮询等行渲染
+  await ev(`(() => {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('webos.todo.v1')) localStorage.removeItem(k);
+    return true;
+  })()`);
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
     if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
@@ -2677,7 +2693,7 @@ group('T41', '应用内右键', async () => {
   })()`);
   await sleep(300);
   await ev(`WebOS.wm.open('todo')`);
-  await sleep(700);
+  await waitFor(`!!document.querySelector('.todo-item')`);
   const ctx3 = await ev(`(() => {
     const row = [...document.querySelectorAll('.todo-item')][0];
     if (!row) return { noRow: true };
