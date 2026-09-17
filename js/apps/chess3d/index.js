@@ -154,9 +154,22 @@ register({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1526);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.shadowMap.enabled = true;
-    container.append(renderer.domElement);
+
+    // 渲染器:某些环境(无硬件加速 / 远程桌面)拿不到 WebGL 上下文,
+    // 这里兜住异常,给出可读提示而不是整窗口崩掉。
+    let renderer = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = true;
+      container.append(renderer.domElement);
+    } catch (err) {
+      console.error('[chess3d] WebGL 初始化失败:', err);
+      container.append(el('div', { class: 'dim', style: { padding: '20px', textAlign: 'center', lineHeight: '1.8' } },
+        '当前环境无法创建 WebGL 上下文,无法显示 3D 画面。',
+        el('br'),
+        el('span', { class: 'mono', style: { fontSize: '12px' } }, String(err?.message || err))));
+    }
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const dir = new THREE.DirectionalLight(0xffffff, 1.1);
@@ -182,11 +195,11 @@ register({
         sqMeshes[r].push(m);
       }
     }
-    // 边框
+    // 边框(顶面略低于格子顶面,否则会整片盖住棋盘格纹)
     const frame = new THREE.Mesh(
       new THREE.BoxGeometry(8.7, 0.22, 8.7),
       new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.5 }));
-    frame.position.y = -0.1;
+    frame.position.y = -0.16;
     boardGroup.add(frame);
     scene.add(boardGroup);
 
@@ -251,20 +264,25 @@ register({
     }
     updateCam();
     let dragging = false, lx = 0, ly = 0;
-    renderer.domElement.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
-    window.addEventListener('pointermove', (e) => {
+    const onMove = (e) => {
       if (!dragging) return;
       theta += (e.clientX - lx) * 0.008;
       phi = Math.min(1.45, Math.max(0.35, phi + (e.clientY - ly) * 0.006));
       lx = e.clientX; ly = e.clientY;
       updateCam();
-    });
-    window.addEventListener('pointerup', () => { dragging = false; });
-    renderer.domElement.addEventListener('wheel', (e) => {
+    };
+    const onUp = () => { dragging = false; };
+    const onWheel = (e) => {
       e.preventDefault();
       radius = Math.min(24, Math.max(7, radius + e.deltaY * 0.01));
       updateCam();
-    }, { passive: false });
+    };
+    if (renderer) {
+      renderer.domElement.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
+      renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    }
 
     /* 点击走子(Raycaster) */
     const ray = new THREE.Raycaster();
@@ -272,6 +290,7 @@ register({
     function onClick(e) {
       if (gameOver || (vsAI && turn === 'b')) return;
       const rect = renderer.domElement.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       ray.setFromCamera(mouse, camera);
@@ -280,7 +299,7 @@ register({
       const { r, c } = hits[0].object.userData;
       handleSquare(r, c);
     }
-    renderer.domElement.addEventListener('click', onClick);
+    if (renderer) renderer.domElement.addEventListener('click', onClick);
 
     function handleSquare(r, c) {
       const target = legal.find(([tr, tc]) => tr === r && tc === c);
@@ -383,17 +402,34 @@ register({
         el('span', { class: 'grow' }),
         el('span', { class: 'mono' }, 'Three.js r160'))));
 
-    // 尺寸自适应
+    /* ---------- 尺寸自适应 + 渲染循环 ----------
+     * WebGL 不会自动刷新画面,必须每帧手动 render()。
+     */
+    let vw = 0, vh = 0;
     function fit() {
+      if (!renderer) return;
       const r = container.getBoundingClientRect();
-      if (r.width < 10) return;
-      renderer.setSize(r.width, r.height);
-      camera.aspect = r.width / r.height;
+      if (r.width < 10 || r.height < 10) return;           // 未布局 / 窗口最小化
+      if (Math.abs(r.width - vw) < 1 && Math.abs(r.height - vh) < 1) return;
+      vw = r.width; vh = r.height;
+      renderer.setSize(vw, vh);
+      camera.aspect = vw / vh;
       camera.updateProjectionMatrix();
     }
-    setTimeout(fit, 60);
-    const ro = new ResizeObserver(fit);
-    ro.observe(container);
+
+    let disposed = false, raf = 0;
+    function tick() {
+      if (disposed) return;
+      raf = requestAnimationFrame(tick);
+      if (!renderer) return;
+      fit();
+      renderer.render(scene, camera);
+    }
+    tick();
+
+    const ro = renderer ? new ResizeObserver(fit) : null;
+    if (ro) ro.observe(container);
+    window.addEventListener('resize', fit);
 
     updateStatus();
 
@@ -402,6 +438,31 @@ register({
       click: (r, c) => handleSquare(r, c),
       turn: () => turn,
       board: () => board,
+      /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧 */
+      stats: () => renderer ? {
+        alive: true, frames: renderer.info.render.frame,
+        size: [vw, vh], calls: renderer.info.render.calls,
+      } : { alive: false },
+    };
+
+    /* ---------- 关闭时释放 ---------- */
+    return {
+      onResize: fit,
+      onClose() {
+        disposed = true;
+        cancelAnimationFrame(raf);
+        window.removeEventListener('resize', fit);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        ro?.disconnect();
+        delete window.__chess;
+        // 释放 GPU 资源(WebGL 上下文数量有限,不释放会拖垮后续 reopen)
+        highlights.clear();
+        boardGroup.traverse((o) => {
+          if (o.geometry) o.geometry.dispose();
+        });
+        renderer?.dispose();
+      },
     };
   },
 });
