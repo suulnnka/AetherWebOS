@@ -12,8 +12,8 @@ export const ACCENTS = ['#5b6cff', '#8b5cf6', '#d946ef', '#f43f5e', '#f59e0b', '
 
 /** 风格主题(整套系统皮肤:窗口 / 任务栏 / 开始菜单 / 控件) */
 export const STYLES = [
-  { id: 'modern', name: '现代' },
   { id: 'neon', name: '霓虹未来' },
+  { id: 'modern', name: '现代' },
   { id: 'mac', name: 'macOS' },
   { id: 'win31', name: 'Win3.1' },
   { id: 'win98', name: 'Win98' },
@@ -39,7 +39,7 @@ export const WALLPAPERS = [
 
 const DEFAULTS = {
   theme: 'auto',            // light | dark | auto
-  style: 'modern',          // 风格皮肤:modern | mac | win98 | winxp | win7
+  style: 'neon',            // 默认风格皮肤:霓虹未来(modern | neon | mac | win31 | win98 | winxp | win7 | ubuntu)
   accent: '#5b6cff',
   wallpaper: 'aurora',      // 内置壁纸 id,或 'custom'
   wallpaperUrl: '',         // 自定义壁纸 URL / dataURL
@@ -60,6 +60,8 @@ function load() {
 }
 
 let state = { ...DEFAULTS, ...load() };
+// 注:老用户存储里若没有 style 字段,上面的 DEFAULTS 合并会自动给它们
+// 新的默认风格(霓虹未来);显式选过风格的用户不受影响。
 let persistTimer;
 
 function persist() {
@@ -79,7 +81,7 @@ function resolvedTheme() { return state.theme === 'auto' ? (mq.matches ? 'dark' 
 export function applyAll() {
   const html = document.documentElement;
   html.dataset.theme = resolvedTheme();
-  html.dataset.style = state.style || 'modern';
+  html.dataset.style = state.style || 'neon';
   // 自带强调色的皮肤(Ubuntu 橙 / 霓虹青)让位给样式表,其余用用户自选色
   if (STYLE_ACCENT[state.style]) html.style.removeProperty('--accent');
   else html.style.setProperty('--accent', state.accent);

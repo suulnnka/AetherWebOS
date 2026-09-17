@@ -301,8 +301,8 @@ npm run e2e -- --clean             # 清空测试 profile,全新 localStorage �
 
 ### 风格主题架构
 
-皮肤通过 `<html data-style="...">` 属性驱动,全部实现在 `css/themes/<id>.css`
-(modern 为默认外观,无需样式表),
+默认风格为霓虹未来(暗色 + 动态背景)。皮肤通过 `<html data-style="...">` 属性驱动,全部实现在 `css/themes/<id>.css`
+(neon 霓虹未来为默认外观),
 不改动任何 DOM 与 JS 结构即可新增皮肤:
 
 - 各皮肤覆盖 CSS 变量(调色板、圆角、任务栏高度 `--tb`、字体)与组件样式
