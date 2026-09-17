@@ -8,8 +8,11 @@
 import { el, escapeHtml, fmtTime } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import { accounts } from '../../core/accounts.js';
 
 const KEY = 'webos.qq.v1';
+let keyUser = 'guest';                 // 登录时确定,Q Q 数据与该绑定一致
+const userKey = () => `${KEY}::${keyUser}`;
 
 const FRIENDS = [
   { qq: '10001', name: '小雨', avatar: '🌧', color: '#5b9bd5', group: '好友',
@@ -52,7 +55,7 @@ register({
     let shownMsgIds = new Set();
 
     const persist = () => {
-      try { localStorage.setItem(KEY, JSON.stringify({ user, history, onlineSet })); } catch { /* 忽略 */ }
+      try { localStorage.setItem(userKey(), JSON.stringify({ user, history, onlineSet })); } catch { /* 忽略 */ }
     };
 
     /* ---------------- 登录页 ---------------- */
@@ -67,9 +70,17 @@ register({
         el('label', {}, '昵称', el('input', { class: 'input', id: 'qq-name', value: 'webos 用户', placeholder: '昵称' })),
         el('button', {
           class: 'btn primary qq-login-btn',
-          onClick: () => {
+          onClick: async () => {
             const num = root.querySelector('#qq-num').value.trim() || '88888888';
             const name = root.querySelector('#qq-name').value.trim() || 'QQ 用户';
+            // 同步到系统账号(尽力而为:密码=号码;与既有账号冲突时跳过)
+            try {
+              if (accounts.current() !== name) {
+                const reg = await accounts.register(name, num, { displayName: name });
+                if (!reg.ok) await accounts.login(name, num);
+              }
+            } catch { /* QQ 自有用户体系,系统账号同步失败不影响使用 */ }
+            keyUser = 'qq-' + num;
             user = { qq: num, name, avatar: '🐧' };
             // 首次登录:初始化在线状态(随机几个在线)
             for (const f of FRIENDS) {
@@ -224,6 +235,16 @@ register({
     }
 
     /* ---------------- 入口 ---------------- */
+    // 恢复:存在任一 QQ 会话数据则尝试用其 user 自动登录
+    try {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(KEY + '::qq-'));
+      if (!user && keys.length) {
+        for (const k of keys) {
+          const s = JSON.parse(localStorage.getItem(k) || 'null');
+          if (s?.user) { keyUser = k.split('::')[1]; user = s.user; history = s.history || {}; onlineSet = s.onlineSet || {}; break; }
+        }
+      }
+    } catch { /* 忽略 */ }
     if (user) renderMain();
     else renderLogin();
   },

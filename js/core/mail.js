@@ -14,10 +14,32 @@ import { publish } from './bus.js';
 import { uuid } from './utils.js';
 
 const KEY = 'webos.mail.v1';
-let state = load();
+let activeUser = null;          // 由 mail 应用登录后设置(setUser)
+let state = null;
+
+/** 登录后由应用调用:切换用户数据空间 */
+const seedHooks = [];
+/** 注册"新用户空间首次使用"钩子(用于播种初始邮件) */
+export function onFirstUse(fn) { seedHooks.push(fn); }
+export function setUser(name) {
+  if (activeUser === name && state) return;
+  activeUser = name;
+  const wasNew = !localStorage.getItem(storageKey());
+  state = load();
+  if (wasNew) for (const fn of [...seedHooks]) {
+    try { fn(); } catch (e) { console.error('[mail] seed hook error', e); }
+  }
+}
+
+function storageKey() {
+  return activeUser ? `${KEY}::${activeUser}` : `${KEY}::default`;
+}
+function ensure() {
+  if (!state) state = load();
+}
 function load() {
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
+    const s = JSON.parse(localStorage.getItem(storageKey()));
     if (s && Array.isArray(s.mails)) return s;
   } catch { /* 忽略 */ }
   return { seq: 1, mails: [] };
@@ -26,7 +48,7 @@ let t;
 function persist() {
   clearTimeout(t);
   t = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn('[mail] 持久化失败', e); }
+    try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (e) { console.warn('[mail] 持久化失败', e); }
   }, 200);
 }
 
@@ -34,6 +56,7 @@ const sendHooks = [];
 
 /** 投递一封邮件(默认进收件箱,folder 可指定 sent/drafts) */
 export function deliver(spec = {}) {
+  ensure();
   const msg = {
     id: 'm' + (state.seq++),
     folder: spec.folder || 'inbox',
@@ -79,8 +102,8 @@ export function send({ to, subject, body }) {
 /** 游戏作者注册发信钩子 */
 export function onSend(fn) { sendHooks.push(fn); }
 
-export const listBy = (folder) => state.mails.filter(m => m.folder === folder);
-export const get = (id) => state.mails.find(m => m.id === id);
+export const listBy = (folder) => { ensure(); return state.mails.filter(m => m.folder === folder); };
+export const get = (id) => { ensure(); return state.mails.find(m => m.id === id); };
 export function markRead(id, val = true) {
   const m = get(id); if (!m) return;
   m.read = val; persist();
@@ -101,14 +124,17 @@ export function move(id, folder) {
   persist();
   publish('mail:changed', { from: 'mail', type: 'changed', payload: { id, folder } });
 }
-export const stats = () => ({
-  total: state.mails.length,
-  unread: state.mails.filter(m => m.folder === 'inbox' && !m.read).length,
-  inbox: listBy('inbox').length,
-  sent: listBy('sent').length,
-  drafts: listBy('drafts').length,
-  trash: listBy('trash').length,
-});
+export const stats = () => {
+  ensure();
+  return {
+    total: state.mails.length,
+    unread: state.mails.filter(m => m.folder === 'inbox' && !m.read).length,
+    inbox: listBy('inbox').length,
+    sent: listBy('sent').length,
+    drafts: listBy('drafts').length,
+    trash: listBy('trash').length,
+  };
+};
 
-export const mail = { deliver, deliverLater, send, onSend, listBy, get, markRead, toggleStar, move, stats };
+export const mail = { deliver, deliverLater, send, onSend, listBy, get, markRead, toggleStar, move, stats, setUser, onFirstUse };
 export default mail;

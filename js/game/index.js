@@ -195,8 +195,7 @@ subscribe('vnet:flag-changed', ({ key }) => {
 });
 
 /* ================= 邮件:种子信件 + 提示自动回信 ================= */
-// 首次进入:播种三封初始邮件(带过去时间戳)
-if (mail.stats().total === 0) {
+mail.onFirstUse(() => {
   const H = 3600e3;
   mail.deliver({
     from: 'admin@nexus', fromName: 'NEXUS 系统管理员', subject: '欢迎接入 NEXUS 内网',
@@ -216,7 +215,7 @@ if (mail.stats().total === 0) {
     attachments: [{ name: '内网使用手册 v3.1.pdf', kind: 'proxy', url: 'http://portal.nexus/manual.pdf' }],
     date: Date.now() - 3 * H,
   });
-}
+});
 
 // 服务台自动回信(玩家发信钩子)
 mail.onSend((m) => {
@@ -228,6 +227,7 @@ mail.onSend((m) => {
   return { fromName: '服务台 · 自动回信', subject: 'Re: ' + m.subject,
     body: '已收到你的邮件。试试在主题或正文里提到「档案」,我们会给出针对性提示。' };
 });
+
 
 /* ================= 短信:种子会话 + 服务台短信钩子 ================= */
 if (sms.stats().msgs === 0) {

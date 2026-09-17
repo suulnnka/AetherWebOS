@@ -1,8 +1,9 @@
 # WebOS —— 纯前端网页操作系统
 
-一个类群晖 DSM / Windows 11 风格的网页操作系统。**零依赖、零构建、零后端**:
-所有代码是原生 ES Modules,所有数据(设置、文件、图标位置)保存在浏览器
-`localStorage` 中,用任意静态服务器打开即用。
+一个类群晖 DSM / Windows 11 风格的网页操作系统。**零后端、零外部资源**:
+所有数据(设置、文件、图标位置)保存在浏览器 `localStorage` 中;唯一的运行时
+依赖 three.js 经 npm 安装并由 Vite 一并打包,不引用任何外部 CDN,构建产物
+放在任意静态服务器上即可运行。
 
 > 灵感与架构参考:[win11React](https://github.com/blueedgetechno/win11React)、
 > [OS.js](https://github.com/os-js/OS.js)、[Puter](https://github.com/HeyPuter/puter)。
@@ -27,16 +28,14 @@
 
 ## 快速开始
 
-需要用 HTTP 方式访问(ES Modules 不支持 file:// 直开):
+需要 Node.js 20.19+ 或 22.12+:
 
 ```bash
-# 方式一:Python
-python -m http.server 8080
+npm install        # 首次运行安装依赖(vite + three)
+npm run dev        # 开发模式,http://localhost:8080
 
-# 方式二:Node
-npx -y serve . -l 8080
-
-# 或使用附带脚本(Windows 双击 serve.bat)
+npm run build      # 产线构建,输出到 dist/(纯静态,任意服务器可跑)
+npm run preview    # 本地预览构建产物
 ```
 
 浏览器打开 <http://localhost:8080> 即可。首次进入会播放约 1 秒开机画面。
@@ -80,7 +79,7 @@ webos/
 │  │  ├─ startmenu.js    开始菜单
 │  │  ├─ tray.js         系统托盘(音量/日历/通知/开关机)
 │  │  ├─ shortcuts.js    布局按钮 + 全局快捷键
-│  │  └─ appstyles.js    应用样式注入器(加载 js/apps/<id>/<id>.css)
+│  │  └─ appstyles.js    应用样式加载器(ES import 各 js/apps/<id>/<id>.css)
 │  └─ apps/              应用(每个应用一个目录)
 │     └─ <id>/index.js   应用代码(mount + 逻辑)
 ├─ js/game/index.js      内置游戏内容(示例谜题链)
@@ -89,7 +88,7 @@ webos/
 
 **新增应用**:在 `js/apps/<id>/index.js` 实现 mount 并 register,在
 `js/main.js` 加一行 import;若有专属样式,放 `js/apps/<id>/<id>.css` 并在
-`js/system/appstyles.js` 的清单里加名字即可。
+`js/system/appstyles.js` 里加一行 import 即可。
 
 ## 一、窗口系统
 
@@ -275,11 +274,11 @@ register({
 
 ## 自动化测试
 
-内置一套零依赖端到端冒烟测试(需要本机装有 Chrome,走 CDP 协议):
+内置一套端到端冒烟测试(需要本机装有 Chrome,走 CDP 协议):
 
 ```bash
-python -m http.server 8080        # 先起服务
-node tools/e2e.mjs                # 25 项断言 + .shots/ 全程截图
+npm run dev                        # 先起开发服务器(8080 端口)
+npm run e2e                        # 25 项断言 + .shots/ 全程截图
 ```
 
 覆盖:桌面/开始菜单/窗口生命周期(最小化、最大化、关闭)/主题与壁纸切换及持久化/
@@ -402,7 +401,7 @@ WebOS.__errs                         // 运行期错误
   判定、实时子数比,位置权重 AI 人机对弈或双人
 - **扫雷**:初级/中级/高级三难度,首击安全、右键插旗、双击快开(chord)、
   LED 计时器与计雷器,胜利/失败判定
-- **3D 国际象棋**:Three.js 渲染的可旋转 3D 棋盘 —— 拖拽旋转视角、
+- **3D 国际象棋**:Three.js(经 npm 打包,无 CDN)渲染的可旋转 3D 棋盘 —— 拖拽旋转视角、
   滚轮缩放;完整规则(王车易位、吃过路兵、兵升变、将军/将死/逼和),
   内置贪心 AI 可人机对弈,也支持人人对战
 - **备忘录**:卡片式便签(置顶/颜色/搜索),**每条可单独加密**

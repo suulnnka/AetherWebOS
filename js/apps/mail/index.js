@@ -11,6 +11,8 @@ import { open } from '../../core/wm.js';
 import mail from '../../core/mail.js';
 import { settings } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
+import { accounts } from '../../core/accounts.js';
+import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 
 const FOLDERS = [
   { id: 'inbox', name: '收件箱', icon: 'mail' },
@@ -43,7 +45,10 @@ register({
   min: { w: 640, h: 400 },
   singleton: true,
   order: 1.7,
-  mount({ root, setTitle, bus }) {
+  mount({ root, setTitle, bus, accounts: _a }) {
+    // ---- 账号门 ----
+    if (requireLogin(root, '邮件', () => { root.innerHTML = ''; appRemount(); })) return;
+    mail.setUser(accounts.current() || 'default');
     let folder = 'inbox';
     let selId = null;
     let composing = null;   // { to, subject, body, draftId } | null
@@ -214,6 +219,7 @@ register({
         replyBtn, delBtn,
         el('button', { class: 'btn icon', title: '刷新', onClick: () => render() }, icon('refresh', 14)),
         el('span', { class: 'grow' }),
+        logoutButton(() => { root.innerHTML = ''; appRemount(); }),
         el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@webos`)),
       el('div', { class: 'app-mid' }, side, right),
       el('div', { class: 'app-status' }, statusL,
@@ -227,3 +233,10 @@ register({
     return { onClose() { offNew(); offChanged(); return true; } };
   },
 });
+
+
+/** 重新挂载当前应用(登录状态变化后调用) */
+async function appRemount() {
+  const { reopen } = await import('../../core/wm.js');
+  reopen('mail');
+}

@@ -13,13 +13,17 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
+import { accounts } from '../../core/accounts.js';
+import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 
 const KEY = 'webos.memo.v1';
 
-let state = load();
+let state = null;
 function load() {
+  const userKey = accounts.userKey(KEY);
+  if (!userKey) return null;
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
+    const s = JSON.parse(localStorage.getItem(userKey));
     if (s && Array.isArray(s.memos)) return s;
   } catch { /* 忽略 */ }
   return {
@@ -34,7 +38,9 @@ let saveT;
 const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn('[memo] 持久化失败', e); }
+    const userKey = accounts.userKey(KEY);
+  if (!userKey) return;
+  try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[memo] 持久化失败', e); }
   }, 200);
 };
 
@@ -51,6 +57,14 @@ register({
   singleton: true,
   order: 2.6,
   mount({ root, setTitle, bus }) {
+    if (requireLogin(root, '备忘录', () => { root.innerHTML = ''; appRemount(); })) return;
+    state = load();
+    if (!state) {
+      state = { seq: 1, memos: [
+        { id: 'm1', title: '欢迎使用备忘录', body: '右键或按钮均可新建。每条备忘录可单独加密。', color: '#fef3c7', pinned: false, created: Date.now() },
+      ] };
+      persist();
+    }
     let query = '';
     let plainCache = {};   // 本次解锁会话内的明文缓存 { id: body }
 
@@ -203,6 +217,7 @@ register({
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         el('button', { class: 'btn primary', onClick: () => editMemo(null) }, icon('plus', 13), '新建'),
+        logoutButton(() => { root.innerHTML = ''; appRemount(); }),
         el('input', {
           class: 'input', placeholder: '搜索标题…', style: { width: '180px' },
           onInput: (e) => { query = e.target.value; render(); },

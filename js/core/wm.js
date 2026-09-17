@@ -456,5 +456,13 @@ export function focusCycle() {
   focus(pool[(cur + 1) % pool.length].id);
 }
 
+/** 关闭并重新打开某应用的所有窗口(登录状态变化后刷新界面) */
+export function reopen(appId) {
+  const ids = [...wins.values()].filter(w => w.appId === appId).map(w => w.id);
+  for (const id of ids) close(id);
+  // 等动画结束后重开
+  setTimeout(() => open(appId), 200);
+}
+
 /** 当前活动窗口数(应恒为 0 或 1) */
 export const focusedCount = () => document.querySelectorAll('.win.focused').length;

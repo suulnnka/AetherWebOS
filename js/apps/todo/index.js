@@ -14,12 +14,16 @@ import { dialogs } from '../../core/dialogs.js';
 import { subscribe, publish } from '../../core/bus.js';
 import fs from '../../core/fs.js';
 import sms from '../../core/sms.js';
+import { accounts } from '../../core/accounts.js';
+import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 
 const KEY = 'webos.todo.v1';
-let state = load();
+let state = null;
 function load() {
+  const userKey = accounts.userKey(KEY);
+  if (!userKey) return null;
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
+    const s = JSON.parse(localStorage.getItem(userKey));
     if (s && Array.isArray(s.tasks)) return s;
   } catch { /* 忽略 */ }
   return {
@@ -36,7 +40,9 @@ let saveT;
 const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn('[todo] 持久化失败', e); }
+    const userKey = accounts.userKey(KEY);
+    if (!userKey) return;
+    try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[todo] 持久化失败', e); }
   }, 200);
 };
 
@@ -65,9 +71,18 @@ register({
   singleton: true,
   order: 2.5,
   mount({ root, setTitle, bus }) {
+    // ---- 账号门:未登录先渲染登录面板 ----
+    if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
+      return;
+    }
+    state = load();
+    if (!state) {
+      state = { seq: 1, projects: ['个人', '工作'], tasks: [] };
+      persist();
+    }
     let project = 'all';        // all | 项目名 | done
     let filter = 'all';         // all | active | done | starred
-    let draft = { text: '', due: '', prio: 1 };
+    let draft = { text: '', due: '', prio: 1, project: '个人' };
 
     const side = el('div', { class: 'app-side' });
     const list = el('div', { class: 'app-body todo-list' });
@@ -343,3 +358,9 @@ register({
     return { onClose() { clearInterval(dueTimer); clearInterval(syncTimer); offFs(); return true; } };
   },
 });
+
+
+/** 重新挂载当前应用(登录状态变化后调用) */
+function appRemount() {
+  import('../../core/wm.js').then(({ reopen }) => reopen && reopen('todo'));
+}
