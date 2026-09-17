@@ -342,6 +342,49 @@ root_completed_threefold` + `check_node_repetition` 两个函数做的事,我原
 4. 评估项做减法:先砍 mobility(需要额外遍历),保留子力 / PST / 兵结构 / 王盾
 5. 砍 futility / razoring 这类纯加速项(**静态搜索不能砍**,它关系到正确性,不是性能项)
 
+### 7.6 附:three.js 能不能瘦身 / 换库(Rev.6,**已执行 ✅**)
+
+> **执行结果(Rev.7)**:已换用 ogl 1.0.11 并移除 three。`app-chess3d` chunk 从 **454 KB / 116 KB gzip → 80.7 KB / 24.8 KB gzip**(4.7×)。渲染 + 真实阴影 + 点击拾取 + 走子/AI 全部经无头 Chrome 探针验证通过,零控制台错误。
+> 过程中修了两个 ogl 阴影特有的坑:① `Shadow` 自建 RenderTarget 默认 LINEAR 过滤,会插值破坏 RGBA 打包的深度 → 换 NEAREST;② 深度通道清屏色会混入场景背景色,导致只接收阴影的棋盘整体误判进阴影 → 阴影 pass 前把清屏色改为白色(深度 1.0)。
+> 点击拾取没有用 `Raycast.intersectBounds`(包围球对扁平方格会重叠),改为射线与棋盘平面求交 + 格子坐标换算,更准也更小。
+
+用户追问「three 能否缩减或更换」。全部为**实测数据**,不是估计:
+
+| 方案 | 原始 | gzip | 说明 |
+|---|---|---|---|
+| three r160 现状 | 460.0 KB | **116.2 KB** | — |
+| three **按需引入**(只 import 实际用到的 16 个类) | 460.0 KB | **116.2 KB** | **tree-shaking 完全无效**:`WebGLRenderer` 会把整个渲染器(着色器块/材质/光照)拖进来 |
+| **ogl**(按需 11 类:Renderer/Camera/Transform/Box/Sphere/Cylinder/Program/Mesh/Vec3/Color/Geometry) | 50.8 KB | **14.9 KB** | ESM 源码分发,可 tree-shake |
+| **ogl** 完整需求集(再加 Plane/Orbit/Raycast/**Shadow**/Mat4) | 73.4 KB | **21.0 KB** | 有真实阴影模块,能力基本对齐 |
+| **zdog** | 29 KB | **7 KB** | 伪 3D(Canvas/SVG),**无光照无阴影**,视觉风格完全不同 |
+| twgl.js | 388 KB | 73 KB | 太大 |
+| regl | 293 KB | 60 KB | 太大 |
+| **纯手写 WebGL**(无库) | — | 约 3–5 KB | 需自己写约 400–700 行(相机/网格生成/着色器/拾取) |
+
+**ogl 与 three 的能力对照**(当前 chess3d 用到的东西都有对应):
+
+| three | ogl |
+|---|---|
+| `Scene` | `Transform`(根节点) |
+| `PerspectiveCamera` | `Camera` |
+| `WebGLRenderer` | `Renderer` |
+| `BoxGeometry` / `CylinderGeometry` / `SphereGeometry` | `Box` / `Cylinder` / `Sphere` |
+| `MeshStandardMaterial` + 灯光 | **没有光照系统**,需自写约 20 行 GLSL(一个方向光 + 环境光) |
+| `Raycaster` | `Raycast` ✔ |
+| 自写的 theta/phi 轨道 | `Orbit` ✔(也可保留我们自己的,省体积) |
+| `castShadow` / `shadowMap` | `Shadow` ✔ |
+
+**两个前提事实**:
+
+1. **three 目前已是懒加载** —— 应用通过 `js/apps/index.js` 的动态 `import()` 分发,`app-chess3d-*.js` 是独立 chunk,用户不打开象棋就完全不会加载 three。所以如果 35 KB 约束指的是引擎 chunk,**three 根本不参与**,不用动。
+2. **three 只有 chess3d 在用**(全仓库 grep 确认)。换库的影响面就这一个文件,不牵连其他应用。
+
+**结论**:
+
+- 若 35 KB = 引擎 chunk → **不用动 three**,预估 9 KB 已经满足。
+- 若 35 KB = 整个 `app-chess3d` chunk → **换 ogl 是唯一现实的选择**:21 KB(或精简到 15 KB)+ 引擎 9 KB + UI 约 5 KB ≈ **29–35 KB gzip**,刚好压线;若要更宽松,可只取 ogl 最小集(14.9 KB)、保留自写轨道数学与假阴影。纯手写 WebGL 能到约 18 KB,但要多写几百行且失去依赖维护。zdog 虽只有 7 KB,但会彻底改变视觉(变扁平卡通风),属于重新设计,不是优化。
+- 换库的代价:重写 `index.js` 的渲染段(约 150–250 行)+ 一个 GLSL 着色器,并重新做视觉验证。**好消息是我们已经有 `tools/probe-chess.mjs`**,能自动断言"画面真的渲染出来了、像素多样性达标",验证成本很低。
+
 ---
 
 ## 八、需要你拍板
@@ -349,4 +392,7 @@ root_completed_threefold` + `check_node_repetition` 两个函数做的事,我原
 1. 是否同意**阶段一 ~ 四**按上表顺序推进(纯 JS + Worker + 多档难度),WASM 留到阶段五按需启动?
 2. 默认难度档定在哪一档?(我建议默认「高级」,初次进入门槛低又能立刻感受到强度)
 3. 要不要保留「初级」这种带随机的弱档?(保留有利于给新手/演示留体验空间,但会让 UI 多一个状态)
-4. **确认 35 KB 的口径**:我按「引擎 Worker 独立 chunk 的 gzip ≤ 35 KB」理解(预估 9 KB,余量充足)。如果你指的是整个 `app-chess3d` 分包 ≤35 KB,那需要放弃 three.js 与 3D 渲染才能做到 —— 请确认是哪种。
+4. **确认 35 KB 的口径**:
+   - 若指「引擎 Worker chunk 的 gzip」→ 预估 9 KB,**不需要动 three**,直接开工。
+   - 若指「整个 `app-chess3d` chunk 的 gzip」→ 需要**把 three.js 换成 ogl**(116 KB → 15~21 KB),才能压到 29~35 KB,仍然**保得住 3D**;代价是重写渲染段。这是可选项,不是无解项。
+5. **是否要把「three → ogl 换库」排进计划**(作为独立阶段,与 AI 引擎工作解耦,可先做可后做)?

@@ -12,7 +12,7 @@
     "e2e": "node tools/e2e.mjs"
   },
   "dependencies": {
-    "three": "^0.160.0"
+    "ogl": "^1.0.11"
   },
   "devDependencies": {
     "vite": "^7.1.0"
