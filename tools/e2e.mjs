@@ -96,9 +96,10 @@ async function fresh() { await c.goto(URL_BASE); await waitReady(); }
     await sleep(1400); // 模拟加载动画 + 渲染
   };
 
+  /* bash 子 shell 命令:与 termType 同一终端窗口(先输入 bash 进入子 shell) */
   const bashType = async (cmd) => {
     await ev(`(async () => {
-      const w = document.querySelector('.win[data-app=bash]');
+      const w = document.querySelector('.win[data-app=terminal]');
       const inp = w.querySelector('.term-in input');
       inp.value = ${JSON.stringify(cmd)};
       inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -106,7 +107,7 @@ async function fresh() { await c.goto(URL_BASE); await waitReady(); }
     await sleep(320);
   };
 
-  const bashOut = () => ev(`document.querySelector('.win[data-app=bash] .term-out').textContent`);
+  const bashOut = () => ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent`);
 
   const ctxClick = async (label) => {
     await ev(`(() => {
@@ -182,7 +183,7 @@ group('T2', '开始菜单与搜索', async () => {
   await ev(`const i=document.getElementById('sm-input'); i.value='终端'; i.dispatchEvent(new Event('input'))`);
   await sleep(150);
   const filtered = await ev(`document.querySelectorAll('.sm-item:not(.hide)').length`);
-  t('T2.1 搜索过滤', filtered === 2, `visible=${filtered}(终端 + Bash 终端)`);
+  t('T2.1 搜索过滤', filtered === 1, `visible=${filtered}(终端)`);
   await ev(`const i=document.getElementById('sm-input'); i.value=''; i.dispatchEvent(new Event('input'))`);
   await c.shot('t2-startmenu');
   await ev(`document.getElementById('start-btn').click()`); // 关闭
@@ -713,7 +714,7 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
   /* ---- T19 霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务栏 / 动态桌面 ---- */
   await ev(`WebOS.settings.set({ style: 'neon' })`);
   await ev(`WebOS.wm.open('files'); WebOS.wm.open('monitor')`);
-  await sleep(800);
+  await sleep(1050);   // 霓虹出场编排 ~0.8s,读完稳态需等它结束
   const ne2 = await ev(`(() => {
     const winOf = (id) => document.querySelector('.win[data-app="' + id + '"]');
     const f = winOf('files'), m = winOf('monitor');
@@ -738,9 +739,9 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
   })()`);
   t('T19 每应用专属灯条色', ne2.filesA === '#ffb400' && ne2.monitorA === '#ff3860' && ne2.filesA !== ne2.monitorA,
     `files=${ne2.filesA} monitor=${ne2.monitorA}`);
-  t('T19.1 灯条流光动画', ne2.stripAnim === 'neonFlow' && ne2.stripSize.includes('200%'), JSON.stringify({ anim: ne2.stripAnim, size: ne2.stripSize }));
+  t('T19.1 灯条流光动画', ne2.stripAnim.includes('neonFlow') && ne2.stripSize.includes('200%'), JSON.stringify({ anim: ne2.stripAnim, size: ne2.stripSize }));
   t('T19.2 未聚焦灯条停摆', ne2.unfocusedPaused === 'paused', `playState=${ne2.unfocusedPaused}`);
-  t('T19.3 活动窗口呼吸辉光', ne2.breath === 'neonBreath', `anim=${ne2.breath}`);
+  t('T19.3 活动窗口呼吸辉光', ne2.breath.includes('neonBreath'), `anim=${ne2.breath}`);
   t('T19.4 任务栏现代深色(全宽+无切角+静态顶线)', !ne2.tbClip && !ne2.tbFloat && ne2.tbStrip === 'none',
     `clip=${ne2.tbClip} float=${ne2.tbFloat} strip=${ne2.tbStrip}`);
   t('T19.5 动态桌面(漂浮光球,无网格/扫描带)', ne2.orbsAnim && ne2.sweepAnim === 'none',
@@ -754,14 +755,18 @@ group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务�
 
 });
 
-group('T20', 'Bash 终端:白名单指令 / 管道 / 重定向', async () => {
-  /* ---- T20 Bash 终端:白名单指令 / 管道 / 重定向 ---- */
-  await ev(`WebOS.wm.open('bash')`);
+group('T20', '终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络', async () => {
+  /* ---- T20 终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络 ---- */
+  await ev(`WebOS.wm.open('terminal')`);
   await sleep(600);
+
+  const b0 = await bashOut();
+  const b0prompt = await ev(`document.querySelector('.win[data-app=terminal] .t-prompt').textContent`);
+  t('T20.0 Bash 启动(唯一 shell)', b0.includes('GNU Bash 5.2') && b0prompt.includes('@webos:'), `prompt=${b0prompt}`);
 
   await bashType('ls /home');
   const b1 = await bashOut();
-  t('T20 Bash ls 白名单', b1.includes('documents/') && b1.includes('downloads/'), 'ls /home ✓');
+  t('T20 Bash ls', b1.includes('documents/') && b1.includes('downloads/'), 'ls /home ✓');
 
   await bashType('echo hello-bash > /home/bash_t.txt');
   await bashType('cat /home/bash_t.txt');
@@ -782,10 +787,11 @@ group('T20', 'Bash 终端:白名单指令 / 管道 / 重定向', async () => {
 
   await bashType('sudo rm -rf /');
   const b6 = await bashOut();
-  t('T20.4 非白名单拒绝(sudo)', b6.includes('bash: sudo: command not found'), '');
-  await bashType('curl http://portal.nexus/');
+  t('T20.4 未知命令拒绝(sudo)', b6.includes('bash: sudo: command not found'), '');
+
+  await bashType('ifconfig');
   const b7 = await bashOut();
-  t('T20.5 网络命令禁用(curl)', b7.includes('bash: curl: command not found'), '');
+  t('T20.5 虚拟网络命令(ifconfig)', b7.includes('eth0: 10.0.0.2'), '');
 
   await bashType('rm /home/bash_t.txt');
   await bashType('cat /home/bash_t.txt');
@@ -795,12 +801,20 @@ group('T20', 'Bash 终端:白名单指令 / 管道 / 重定向', async () => {
   await bashType('find /home -name "*.txt"');
   const b9 = await bashOut();
   t('T20.7 find 通配符', b9.includes('/home/documents/'), b9.slice(-80));
+
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=terminal] .term-in input');
+    inp.value = 'ec';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  })()`);
+  const bTab = await ev(`document.querySelector('.win[data-app=terminal] .term-in input').value`);
+  t('T20.8 Tab 补全命令名', bTab === 'echo ', `value=${JSON.stringify(bTab)}`);
   await c.shot('t20-bash');
 
   await bashType('exit');
   await sleep(400);
-  const bExit = await ev(`document.querySelectorAll('.win[data-app=bash]').length`);
-  t('T20.8 exit 关闭窗口', bExit === 0, `wins=${bExit}`);
+  const bExit = await ev(`document.querySelectorAll('.win[data-app=terminal]').length`);
+  t('T20.9 exit 关闭终端窗口', bExit === 0, `wins=${bExit}`);
 
 });
 
@@ -883,10 +897,12 @@ group('T21', '本地资源 + 文件预览', async () => {
 
 group('T22', '多窗口模式:平铺/层叠/贴边/单活动', async () => {
   /* ---- T22 多窗口模式:平铺/层叠/贴边/单活动 ---- */
-  // 准备三个窗口
+  // 准备三个窗口(wm.open 是 async —— 顺序 await,保证 monitor 最后打开并持有焦点)
   await ev(`[...document.querySelectorAll('.win')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(500);
-  await ev(`WebOS.wm.open('files'); WebOS.wm.open('terminal'); WebOS.wm.open('monitor')`);
+  await ev(`(async () => { await WebOS.wm.open('files'); return true; })()`);
+  await ev(`(async () => { await WebOS.wm.open('terminal'); return true; })()`);
+  await ev(`(async () => { await WebOS.wm.open('monitor'); return true; })()`);
   await sleep(800);
   const pre = await ev(`({
     wins: document.querySelectorAll('.win').length,
@@ -1761,16 +1777,9 @@ group('T29', '文件加密(AES-GCM)', async () => {
   t('T29.5 双击解锁只读预览(明文不落盘)', c6.preview === '绝密内容 top-secret' && c6.notPersisted, JSON.stringify(c6));
   await c.shot('t29-unlock-preview');
 
-  // bash cat 加密文件被拒
-  await ev(`WebOS.wm.open('bash')`);
-  await sleep(600);
-  await ev(`(() => {
-    const inp = document.querySelector('.win[data-app=bash] .term-in input');
-    inp.value = 'cat /home/documents/机密.txt';
-    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  })()`);
-  await sleep(400);
-  const c7 = await ev(`document.querySelector('.win[data-app=bash] .term-out').textContent.includes('是加密文件')`);
+  // Bash 终端 cat 加密文件被拒(终端本身就是 bash,直接输入)
+  await bashType('cat /home/documents/机密.txt');
+  const c7 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('是加密文件')`);
   t('T29.6 Bash cat 拒绝加密文件', c7 === true);
 
   // 解密还原(终端)并清理
@@ -1923,10 +1932,17 @@ group('T31', '压缩包支持', async () => {
   t('T31.3 全程无错误', errs3 === 0, `errs=${errs3}`);
 });
 
-group('T32', '备忘录(含加密)', async () => {
-  /* ---- T32 备忘录(含加密) ---- */
+group('T32', '笔记(含加密)', async () => {
+  /* ---- T32 笔记(含加密) ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.memo.v1')) localStorage.removeItem(k);
+    return true;
+  })()`);
+  // 独立运行前置:登录测试账号(笔记数据按账号隔离,不能依赖遗留会话)
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (accounts.current()) return true;
+    if (!(await accounts.login('memoer', 'memopass')).ok) await accounts.register('memoer', 'memopass');
     return true;
   })()`);
   await fresh();
@@ -1936,9 +1952,9 @@ group('T32', '备忘录(含加密)', async () => {
     cards: document.querySelectorAll('.memo-card').length,
     pinned: document.querySelector('.memo-pin.on') ? true : false,
   }))()`);
-  t('T32 备忘录:种子卡片+置顶', mm0.cards === 2 && mm0.pinned, JSON.stringify(mm0));
+  t('T32 笔记:种子卡片+置顶', mm0.cards === 2 && mm0.pinned, JSON.stringify(mm0));
 
-  // 新建加密备忘录(全 GUI,单 cell 内完成以保证时序)
+  // 新建加密笔记(全 GUI,单 cell 内完成以保证时序)
   await ev(`(async () => {
     [...document.querySelectorAll('.win[data-app=memo] .btn')].find(b => b.textContent.includes('新建')).click();
     await new Promise(r => setTimeout(r, 450));
@@ -2678,7 +2694,7 @@ group('T41', '应用内右键', async () => {
   const afterDel = await ev(`document.querySelectorAll('.todo-item').length`);
   t('T41.5 右键删除任务', afterDel === ctx3.count - 1, `${ctx3.count} → ${afterDel}`);
 
-  // 41.6 备忘录卡片自定义右键
+  // 41.6 笔记卡片自定义右键
   await ev(`WebOS.wm.open('memo')`);
   await sleep(700);
   const ctx4 = await ev(`(() => {
@@ -2687,7 +2703,7 @@ group('T41', '应用内右键', async () => {
     card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
     return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
   })()`);
-  t('T41.6 备忘录卡片右键', (ctx4 || []).some(i => i === '置顶' || i === '取消置顶') && (ctx4 || []).includes('删除备忘录'),
+  t('T41.6 笔记卡片右键', (ctx4 || []).some(i => i === '置顶' || i === '取消置顶') && (ctx4 || []).includes('删除笔记'),
     JSON.stringify(ctx4));
 
   // 41.7 浏览器:地址栏右键 → 刷新 + 复制页面地址(先写入地址,初始值为空)
@@ -2891,6 +2907,81 @@ group('T42', '弹框分级', async () => {
 
   const errs42 = await ev(`window.__errs.length`);
   t('T42.8 全程无错误', errs42 === 0, `errs=${errs42}`);
+});
+
+group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
+  /* ---- T43 日记:按日期记录 / 心情 / 自动保存 ---- */
+  await ev(`(() => {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('webos.diary.v1')) localStorage.removeItem(k);
+    return true;
+  })()`);
+  // 独立运行前置:登录测试账号(日记数据按账号隔离,不能依赖遗留会话)
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (accounts.current()) return true;
+    if (!(await accounts.login('diaryer', 'diarypass')).ok) await accounts.register('diaryer', 'diarypass');
+    return true;
+  })()`);
+  await fresh();
+  await ev(`WebOS.wm.open('diary')`);
+  await sleep(700);
+
+  // 今天默认选中;写入正文(自动保存)
+  const d0 = await ev(`(() => {
+    const pad = n => String(n).padStart(2, '0');
+    const d = new Date();
+    const key = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const win = document.querySelector('.win[data-app=diary]');
+    const ta = win.querySelector('.diary-text');
+    ta.value = '今天是终端合并成 bash 的日子,充实。';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return { key, dateH: win.querySelector('.diary-date').textContent };
+  })()`);
+  t('T43 今天默认选中(标题含日期)', d0.dateH.includes('年') && d0.dateH.includes('星期'), d0.dateH);
+  await sleep(500);   // 等防抖落盘
+
+  const saved = await ev(`(() => {
+    const k = Object.keys(localStorage).find(k => k.startsWith('webos.diary.v1'));
+    const s = JSON.parse(localStorage.getItem(k) || '{}');
+    const e = s.entries && s.entries[${JSON.stringify(d0.key)}];
+    return { has: !!e, text: (e && e.text) || '' };
+  })()`);
+  t('T43.1 输入自动落盘', saved.has && saved.text.includes('充实'), JSON.stringify(saved));
+
+  // 圆点标记 + 心情
+  const dot = await ev(`!!document.querySelector('.win[data-app=diary] .diary-day.sel .dot')`);
+  t('T43.2 月历圆点标记', dot === true);
+  await ev(`document.querySelectorAll('.win[data-app=diary] .diary-mood')[1].click()`);
+  await sleep(450);
+  const mood = await ev(`(() => {
+    const k = Object.keys(localStorage).find(k => k.startsWith('webos.diary.v1'));
+    const s = JSON.parse(localStorage.getItem(k) || '{}');
+    return (s.entries[${JSON.stringify(d0.key)}] || {}).mood;
+  })()`);
+  t('T43.3 心情选择持久化', mood === '🙂', `mood=${mood}`);
+
+  // 切到昨天(空)再切回今天(内容仍在)
+  await ev(`(() => {
+    const pad = n => String(n).padStart(2, '0');
+    const d = new Date(Date.now() - 86400e3);
+    const key = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const cell = [...document.querySelectorAll('.win[data-app=diary] .diary-day')].find(c => c.dataset.key === key);
+    cell.click();
+    return key;
+  })()`);
+  await sleep(350);
+  const emptyText = await ev(`document.querySelector('.win[data-app=diary] .diary-text').value`);
+  t('T43.4 切换日期编辑器跟随', emptyText === '', JSON.stringify(emptyText));
+
+  await ev(`[...document.querySelectorAll('.win[data-app=diary] .btn')].find(b => b.textContent.includes('今天')).click()`);
+  await sleep(350);
+  const back = await ev(`document.querySelector('.win[data-app=diary] .diary-text').value`);
+  t('T43.5 「今天」回位且内容恢复', back.includes('充实'), JSON.stringify(back));
+
+  const title = await ev(`document.querySelector('.win[data-app=diary] .win-title').textContent`);
+  const errs = await ev(`window.__errs.length`);
+  t('T43.6 标题计数+无错误', title.includes('1 篇') && errs === 0, `title=${title} errs=${errs}`);
+  await c.shot('t43-diary');
 });
 
 

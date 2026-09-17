@@ -1,12 +1,12 @@
 /* ============================================================
- * 应用:备忘录(Memo)
+ * 应用:笔记(Notes,由备忘录升级)
  *
- * 卡片式便签:新增 / 编辑 / 删除 / 置顶 / 颜色标记,
- * 每条备忘录可单独加密(AES-GCM,复用 core/crypto):
+ * 卡片式笔记:新增 / 编辑 / 删除 / 置顶 / 颜色标记 / 分类过滤,
+ * 每条笔记可单独加密(AES-GCM,复用 core/crypto):
  *  - 加密后存储为密文,列表只显示锁标与标题;
  *  - 打开需输入密码,解锁后可查看与编辑(保存即重新加密);
  *  - 忘记密码无法找回(无后门),但可删除重建。
- * 数据持久化到 localStorage(webos.memo.v1)。
+ * 数据持久化到 localStorage(webos.memo.v1::<user>)。
  * ============================================================ */
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -17,8 +17,10 @@ import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { accounts } from '../../core/accounts.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
+import { reopen } from '../../core/wm.js';
 
 const KEY = 'webos.memo.v1';
+const CATS = ['默认', '工作', '生活', '学习'];
 
 let state = null;
 function load() {
@@ -32,7 +34,7 @@ function load() {
     seq: 1,
     memos: [
       { id: 'm1', title: '购物清单', body: '牛奶、鸡蛋、咖啡豆', color: '#fde68a', pinned: true, created: Date.now() - 86400e3 },
-      { id: 'm2', title: '日记(示例)', body: '右键本卡片选加密,可以体验备忘录加密功能。', color: '#bbf7d0', pinned: false, created: Date.now() - 3600e3 },
+      { id: 'm2', title: '小提示', body: '新的「日记」应用可以按日期记录每天;右键本卡片可体验笔记加密。', color: '#bbf7d0', pinned: false, created: Date.now() - 3600e3 },
     ],
   };
 }
@@ -41,8 +43,8 @@ const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(() => {
     const userKey = accounts.userKey(KEY);
-  if (!userKey) return;
-  try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[memo] 持久化失败', e); }
+    if (!userKey) return;
+    try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[memo] 持久化失败', e); }
   }, 200);
 };
 
@@ -51,11 +53,11 @@ const COLORS = ['#fef3c7', '#bbf7d0', '#bfdbfe', '#fbcfe8', '#e9d5ff', '#e2e8f0'
 register({
   ...manifest,
   mount({ root, setTitle, bus, onContextMenu }) {
-    if (requireLogin(root, '备忘录', () => { root.innerHTML = ''; appRemount(); })) return;
+    if (requireLogin(root, '笔记', () => { root.innerHTML = ''; appRemount(); })) return;
     state = load();
     if (!state) {
       state = { seq: 1, memos: [
-        { id: 'm1', title: '欢迎使用备忘录', body: '右键或按钮均可新建。每条备忘录可单独加密。', color: '#fef3c7', pinned: false, created: Date.now() },
+        { id: 'm1', title: '欢迎使用笔记', body: '右键或按钮均可新建。每条笔记可单独加密。', color: '#fef3c7', pinned: false, created: Date.now() },
       ] };
       persist();
     }
@@ -70,10 +72,11 @@ register({
         { label: m.pinned ? '取消置顶' : '置顶', icon: 'arrowUp', fn: () => { m.pinned = !m.pinned; persist(); render(); } },
         { label: '编辑', icon: 'pencil', fn: () => editMemo(m) },
         { sep: true },
-        { label: '删除备忘录', icon: 'trash', danger: true, fn: () => { state.memos = state.memos.filter(x => x.id !== m.id); persist(); render(); } },
+        { label: '删除笔记', icon: 'trash', danger: true, fn: () => { state.memos = state.memos.filter(x => x.id !== m.id); persist(); render(); } },
       ];
     });
     let query = '';
+    let catFilter = '全部';
     let plainCache = {};   // 本次解锁会话内的明文缓存 { id: body }
 
     // 单例重开时重读持久化数据(其他窗口/注入可能已更新)
@@ -85,7 +88,7 @@ register({
     function refreshTitle() {
       const n = state.memos.length;
       const locked = state.memos.filter(m => isEncrypted(m.body)).length;
-      setTitle(`备忘录 — ${n} 条${locked ? `(🔒${locked})` : ''}`);
+      setTitle(`笔记 — ${n} 条${locked ? `(🔒${locked})` : ''}`);
     }
 
     /** 编辑器:新建或编辑(加密条目需先解锁) */
@@ -93,7 +96,7 @@ register({
       let body = memo?.body ?? '';
       let encryptedAgain = false;
       if (memo && isEncrypted(body)) {
-        const pw = await dialogs.password({ title: '备忘录已加密', message: `输入「${memo.title}」的密码` });
+        const pw = await dialogs.password({ title: '笔记已加密', message: `输入「${memo.title}」的密码` });
         if (pw == null) return;
         try { body = await decryptText(body, pw); encryptedAgain = true; }
         catch (e) { dialogs.error({ title: '解锁失败', message: String(e.message) }); return; }
@@ -115,13 +118,18 @@ register({
             e.currentTarget.classList.add('on');
           },
         })));
+      const catSel = el('select', { class: 'select', style: { width: 'auto' } },
+        ...CATS.map(c => el('option', { value: c, selected: (memo?.cat ?? CATS[0]) === c }, c)));
       const lockCheck = el('input', { type: 'checkbox', onChange: (e) => { doLock = e.target.checked; } });
       if (memo && encryptedAgain) lockCheck.checked = true;
 
       const box = el('div', { class: 'memo-editor' },
         titleIn,
         bodyIn,
-        el('div', { class: 'row', style: { margin: '10px 0' } }, el('span', { class: 'dim', style: { fontSize: '12px' } }, '颜色'), swatches),
+        el('div', { class: 'row', style: { margin: '10px 0' } },
+          el('span', { class: 'dim', style: { fontSize: '12px' } }, '颜色'), swatches,
+          el('span', { class: 'grow' }),
+          el('span', { class: 'dim', style: { fontSize: '12px' } }, '分类'), catSel),
         el('label', { class: 'row', style: { gap: '7px', fontSize: '12.5px' } },
           lockCheck, icon('lock', 13), '保存时加密(需密码)'),
         el('div', { class: 'modal-actions' },
@@ -132,24 +140,24 @@ register({
               const title = titleIn.value.trim() || '无标题';
               let finalBody = bodyIn.value;
               if (lockCheck.checked) {
-                const pw = await dialogs.password({ title: '加密备忘录', message: '设置密码' });
+                const pw = await dialogs.password({ title: '加密笔记', message: '设置密码' });
                 if (pw == null) return;
                 if (!pw) { dialogs.error({ title: '加密失败', message: '密码不能为空' }); return; }
                 finalBody = await encryptText(finalBody, pw);
               }
               if (memo) {
-                memo.title = title; memo.body = finalBody; memo.color = color;
+                memo.title = title; memo.body = finalBody; memo.color = color; memo.cat = catSel.value;
               } else {
                 state.memos.unshift({
                   id: 'm' + (state.seq++), title, body: finalBody,
-                  color, pinned: false, created: Date.now(),
+                  color, cat: catSel.value, pinned: false, created: Date.now(),
                 });
               }
               delete plainCache[memo?.id];
               persist();
               box.remove();
               render();
-              bus.notify(lockCheck.checked ? '已加密保存 🔒' : '备忘录已保存', title);
+              bus.notify(lockCheck.checked ? '已加密保存 🔒' : '笔记已保存', title);
             },
           }, '保存')));
 
@@ -163,7 +171,7 @@ register({
     async function viewMemo(memo) {
       let body = memo.body;
       if (isEncrypted(body)) {
-        const pw = await dialogs.password({ title: '备忘录已加密', message: `输入「${memo.title}」的密码` });
+        const pw = await dialogs.password({ title: '笔记已加密', message: `输入「${memo.title}」的密码` });
         if (pw == null) return;
         try { body = await decryptText(body, pw); plainCache[memo.id] = body; }
         catch (e) { dialogs.error({ title: '解锁失败', message: String(e.message) }); return; }
@@ -185,12 +193,13 @@ register({
       grid.innerHTML = '';
       const q = query.trim().toLowerCase();
       const memos = [...state.memos]
+        .filter(m => catFilter === '全部' || (m.cat ?? CATS[0]) === catFilter)
         .filter(m => !q || m.title.toLowerCase().includes(q) || (plainCache[m.id] || '').toLowerCase().includes(q))
         .sort((a, b) => (b.pinned - a.pinned) || (b.created - a.created));
 
-      statusL.textContent = `${state.memos.length} 条备忘录`;
+      statusL.textContent = `${state.memos.length} 条笔记`;
       if (!memos.length) {
-        grid.append(el('div', { class: 'empty', style: { gridColumn: '1/-1' } }, icon('fileText', 40), '暂无备忘录,点击左上角新建'));
+        grid.append(el('div', { class: 'empty', style: { gridColumn: '1/-1' } }, icon('fileText', 40), '暂无笔记,点击左上角新建'));
       }
       for (const m of memos) {
         const locked = isEncrypted(m.body);
@@ -204,6 +213,7 @@ register({
           el('div', { class: 'memo-body', style: locked ? { filter: 'blur(3px)', userSelect: 'none' } : {} },
             locked ? '加密内容(点击查看)' : escapeHtml(m.body).slice(0, 120)),
           el('div', { class: 'memo-foot' },
+            el('span', { class: 'memo-cat' }, m.cat ?? CATS[0]),
             el('span', { class: 'dim' }, new Date(m.created).toLocaleDateString('zh-CN')),
             el('span', { class: 'grow' }),
             el('button', { class: 'icon-btn', title: locked ? '解锁查看' : '查看', onClick: () => viewMemo(m) }, icon(locked ? 'lock' : 'search', 13)),
@@ -211,7 +221,7 @@ register({
             el('button', {
               class: 'icon-btn', title: '删除',
               onClick: async () => {
-                const ok = await dialogs.confirm({ title: '删除备忘录', message: `删除「${m.title}」?`, danger: true, okText: '删除' });
+                const ok = await dialogs.confirm({ title: '删除笔记', message: `删除「${m.title}」?`, danger: true, okText: '删除' });
                 if (!ok) return;
                 state.memos = state.memos.filter(x => x.id !== m.id);
                 persist(); render();
@@ -227,17 +237,27 @@ register({
         el('button', { class: 'btn primary', onClick: () => editMemo(null) }, icon('plus', 13), '新建'),
         logoutButton(() => { root.innerHTML = ''; appRemount(); }),
         el('input', {
-          class: 'input', placeholder: '搜索标题…', style: { width: '180px' },
+          class: 'input', placeholder: '搜索标题…', style: { width: '170px' },
           onInput: (e) => { query = e.target.value; render(); },
         }),
+        el('select', {
+          class: 'select', style: { width: 'auto' },
+          onChange: (e) => { catFilter = e.target.value; render(); },
+        },
+          el('option', { value: '全部' }, '全部'),
+          ...CATS.map(c => el('option', { value: c }, c))),
         el('span', { class: 'grow' }),
         el('span', { class: 'badge-pill' }, '支持加密')),
       grid,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        el('span', {}, '加密备忘录以 🔒 显示,点击解锁'))));
+        el('span', {}, '加密笔记以 🔒 显示,点击解锁'))));
 
     render();
     return { onClose() { return true; } };
   },
 });
+
+function appRemount() {
+  reopen('memo');
+}

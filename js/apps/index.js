@@ -26,6 +26,7 @@ import monitor from './monitor/manifest.js';
 import music from './music/manifest.js';
 import weather from './weather/manifest.js';
 import memo from './memo/manifest.js';
+import diary from './diary/manifest.js';
 import minesweeper from './minesweeper/manifest.js';
 import chess3d from './chess3d/manifest.js';
 import reversi from './reversi/manifest.js';
@@ -50,6 +51,7 @@ const APPS = [
   [music, () => import('./music/index.js')],
   [weather, () => import('./weather/index.js')],
   [memo, () => import('./memo/index.js')],
+  [diary, () => import('./diary/index.js')],
   [minesweeper, () => import('./minesweeper/index.js')],
   [chess3d, () => import('./chess3d/index.js')],
   [reversi, () => import('./reversi/index.js')],

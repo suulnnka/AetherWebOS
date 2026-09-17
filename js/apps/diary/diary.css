@@ -1,0 +1,37 @@
+/* 日记应用专属样式 */
+.diary-side { padding: 10px 8px; overflow-y: auto; }
+.diary-cal-head { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+.diary-cal-title { flex: 1; text-align: center; font-weight: 700; font-size: 12.5px; }
+.diary-week {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  text-align: center; font-size: 10px; opacity: 0.55; margin-bottom: 2px;
+}
+.diary-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.diary-day {
+  position: relative; height: 27px; font-size: 11.5px;
+  border-radius: 6px; background: none; border: none; color: inherit; cursor: pointer;
+}
+.diary-day:hover { background: rgba(127, 127, 127, 0.18); }
+.diary-day.out { opacity: 0.35; }
+.diary-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.diary-day.sel { background: var(--accent); color: #fff; font-weight: 700; }
+.diary-day .dot {
+  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+}
+.diary-day.sel .dot { background: #fff; }
+.diary-body { display: flex; flex-direction: column; padding: 16px 18px; }
+.diary-date { margin: 0 0 10px; font-size: 15px; }
+.diary-moods { display: flex; gap: 6px; margin-bottom: 10px; }
+.diary-mood {
+  width: 32px; height: 32px; font-size: 17px; line-height: 1;
+  border-radius: 50%; border: none; background: none; cursor: pointer;
+  opacity: 0.4; filter: grayscale(0.6);
+}
+.diary-mood:hover { opacity: 0.8; filter: none; }
+.diary-mood.on { opacity: 1; filter: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.diary-text {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  background: transparent; color: var(--text);
+  font-size: 13.5px; line-height: 1.9; padding: 4px 2px;
+}
