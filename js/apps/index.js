@@ -22,7 +22,6 @@ import notes from './notes/manifest.js';
 import settings from './settings/manifest.js';
 import calc from './calc/manifest.js';
 import terminal from './terminal/manifest.js';
-import bash from './bash/manifest.js';
 import monitor from './monitor/manifest.js';
 import music from './music/manifest.js';
 import weather from './weather/manifest.js';
@@ -47,7 +46,6 @@ const APPS = [
   [settings, () => import('./settings/index.js')],
   [calc, () => import('./calc/index.js')],
   [terminal, () => import('./terminal/index.js')],
-  [bash, () => import('./bash/index.js')],
   [monitor, () => import('./monitor/index.js')],
   [music, () => import('./music/index.js')],
   [weather, () => import('./weather/index.js')],
