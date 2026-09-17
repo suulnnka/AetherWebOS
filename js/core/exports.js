@@ -2,6 +2,6 @@
 export const WebOS = {
   name: 'WebOS',
   version: '1.0.0',
-  build: 'vanilla',
+  build: 'web',
   bootTime: Date.now(),
 };

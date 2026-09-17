@@ -10,6 +10,8 @@
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './browser.css';
 import { httpGet, dnsList } from '../../core/vnet.js';
 import { copyText } from '../../core/menu.js';
 
@@ -43,15 +45,7 @@ const ERRORS = {
 };
 
 register({
-  id: 'browser',
-  neon: { a: '#00f0ff', b: '#3d7bff' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '浏览器',
-  icon: 'globe',
-  color: 'linear-gradient(135deg,#06b6d4,#0284c7)',
-  width: 900, height: 620,
-  min: { w: 520, h: 360 },
-  singleton: true,
-  order: 0,
+  ...manifest,
   mount({ root, setTitle, bus, params, onContextMenu }) {
     let history = ['about:start'];
     let hIdx = 0;

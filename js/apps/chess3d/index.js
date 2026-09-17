@@ -8,6 +8,8 @@ import * as THREE from 'three';
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './chess3d.css';
 import { dialogs } from '../../core/dialogs.js';
 
 /* ============ 棋规引擎(8x8 数组,null 或 {t:'p/r/n/b/q/k', c:'w/b'}) ============ */
@@ -128,15 +130,7 @@ function hasAnyMove(b, color, state) {
 
 /* ============ 注册应用 ============ */
 register({
-  id: 'chess3d',
-  name: '3D 国际象棋',
-  icon: 'star',
-  color: 'linear-gradient(135deg,#0f766e,#134e4a)',
-  neon: { a: '#2dd4bf', b: '#818cf8' },
-  width: 900, height: 660,
-  min: { w: 620, h: 460 },
-  singleton: true,
-  order: 9.5,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let board = initBoard();
     let turn = 'w';

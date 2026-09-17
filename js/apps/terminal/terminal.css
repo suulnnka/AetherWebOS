@@ -1,25 +1,23 @@
-/* 终端 + Bash 终端 */
-/* ---- 计算器 ---- */
-.calc { display: flex; flex-direction: column; height: 100%; }
-.calc-screen {
-  flex: none; padding: 16px 16px 12px; text-align: right;
-  border-bottom: 1px solid var(--border); background: var(--panel-2);
+/* ---- 终端 ---- */
+.term { display: flex; flex-direction: column; height: 100%; background: #0d1420; color: #cdd8ee; }
+.term-out {
+  flex: 1; overflow-y: auto; padding: 12px 14px 4px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  user-select: text; -webkit-user-select: text;
 }
-.calc-expr { min-height: 18px; font-size: 12.5px; color: var(--text-2); font-family: var(--mono); word-break: break-all; }
-.calc-main { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; margin-top: 4px; }
-.calc-keys {
-  flex: 1; display: grid;
-  grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px;
+.term-out .t-cmd { color: #8fd0ff; }
+.term-out .t-ok { color: #7ce38b; }
+.term-out .t-err { color: #ff8a8a; }
+.term-out .t-dim { color: #6b7a99; }
+.term-out div { white-space: pre-wrap; word-break: break-all; }
+.term-in { display: flex; align-items: center; gap: 8px; padding: 8px 14px 12px; }
+.term-in .t-prompt { font-family: var(--mono); font-size: 12.5px; color: #7ce38b; white-space: nowrap; }
+
+/* Bash 终端:Ubuntu 紫底 + 彩色提示符 */
+.term.bash { background: #300a24; }
+.term.bash .bp-user { color: #8ae234; font-weight: 700; }
+.term.bash .bp-path { color: #729fcf; font-weight: 700; }
+.term-in input {
+  flex: 1; background: none; border: none; outline: none;
+  color: #e8eeff; font-family: var(--mono); font-size: 12.5px; caret-color: #8fd0ff;
 }
-.ckey {
-  border-radius: var(--radius-s); font-size: 16px;
-  background: var(--hover); color: var(--text);
-  transition: background 0.1s, transform 0.05s;
-  min-height: 38px;
-}
-.ckey:hover { background: color-mix(in srgb, var(--accent) 14%, var(--hover)); }
-.ckey:active { transform: scale(0.95); }
-.ckey.fn { font-size: 13.5px; color: var(--text-2); }
-.ckey.op { color: var(--accent); font-weight: 700; }
-.ckey.eq { background: var(--accent); color: #fff; font-weight: 700; }
-.ckey.eq:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }

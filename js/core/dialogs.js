@@ -1,5 +1,5 @@
 /* ============================================================
- * Dialogs —— 系统对话框服务(真窗口 + 模态遮罩)
+ * Dialogs —— 系统对话框服务(真窗口 + 三级模态)
  *
  * 一组系统自带窗口,任何应用/系统代码都可直接调用:
  *   dialogs.info / success / warning / error     → Promise<void>
@@ -9,8 +9,16 @@
  *   dialogs.password()                           → Promise<string|null>
  *   dialogs.progress({ cancelable })             → 句柄 { set(v,msg), done(msg), cancel() } + .promise
  *
+ * 模态分级(level):
+ *   1 一级 · 非模态    —— 不影响任何界面:弹框浮在桌面,其余一切照常可操作
+ *   2 二级 · 应用模态  —— 锁定 owner 应用打开的所有窗口(遮罩盖住标题栏与内容),
+ *                        其他应用、任务栏、桌面照常可操作
+ *   3 三级 · 系统模态  —— 全屏遮罩,整个系统在弹框关闭前不可操作(默认级别)
+ * 全局 dialogs.* 默认三级;应用内请用 mount ctx 提供的 ctx.dialogs.*
+ * (owner 自动绑定为本应用,默认二级),传 { level } 可覆盖。
+ *
  * 对话框是真正的窗口(可拖动、任务栏可见、风格主题跟随),
- * 打开期间由 WM 保证模态:遮罩阻挡其他窗口,焦点只在对话框间切换。
+ * 模态约束由 WM 按级别保证(见 wm.js 模态分级)。
  * ============================================================ */
 import { el } from './utils.js';
 import { icon } from './icons.js';
@@ -35,35 +43,37 @@ let tokenSeq = 0;
 
 function spawn(params) {
   return new Promise((resolve) => {
-    openWin('sysdialog', { params: { ...params, _resolve: resolve } });
+    const { level, owner, ...rest } = params;
+    openWin('sysdialog', { params: { ...rest, _resolve: resolve }, level: level ?? 3, owner });
     publish('sys:dialog', { from: 'dialogs', type: 'dialog-open', payload: { kind: params.kind, title: params.title } });
   });
 }
 
 export const dialogs = {
+  // info/success/warning/error 的 level/owner 随 ...o 透传给 spawn
   info: (o = {}) => spawn({ kind: 'info', buttons: ['ok'], ...o }),
   success: (o = {}) => spawn({ kind: 'success', buttons: ['ok'], ...o }),
   warning: (o = {}) => spawn({ kind: 'warning', buttons: ['ok'], ...o }),
   error: (o = {}) => spawn({ kind: 'error', buttons: ['ok'], ...o }),
 
   /** 确认框:确定 → true;取消/关闭/Esc → false */
-  confirm({ title = '确认', message = '', detail = '', okText = '确定', cancelText = '取消', danger = false } = {}) {
-    return spawn({ kind: danger ? 'warning' : 'question', buttons: ['cancel', 'ok'], danger, title, message, detail, okText, cancelText });
+  confirm({ level, owner, title = '确认', message = '', detail = '', okText = '确定', cancelText = '取消', danger = false } = {}) {
+    return spawn({ level, owner, kind: danger ? 'warning' : 'question', buttons: ['cancel', 'ok'], danger, title, message, detail, okText, cancelText });
   },
 
   /** 是/否框:→ 'yes' | 'no' | null(关闭) */
-  yesno({ title = '请选择', message = '', detail = '' } = {}) {
-    return spawn({ kind: 'question', buttons: ['no', 'yes'], title, message, detail, okText: '是', cancelText: '否' });
+  yesno({ level, owner, title = '请选择', message = '', detail = '' } = {}) {
+    return spawn({ level, owner, kind: 'question', buttons: ['no', 'yes'], title, message, detail, okText: '是', cancelText: '否' });
   },
 
   /** 输入框:确定 → 输入值(可为空串);取消/关闭 → null */
-  prompt({ title = '输入', message = '', value = '', placeholder = '', okText = '确定' } = {}) {
-    return spawn({ kind: 'info', input: 'text', buttons: ['cancel', 'ok'], title, message, value, placeholder, okText });
+  prompt({ level, owner, title = '输入', message = '', value = '', placeholder = '', okText = '确定' } = {}) {
+    return spawn({ level, owner, kind: 'info', input: 'text', buttons: ['cancel', 'ok'], title, message, value, placeholder, okText });
   },
 
   /** 密码输入框 */
-  password({ title = '需要密码', message = '请输入密码', okText = '解锁' } = {}) {
-    return spawn({ kind: 'lock', input: 'password', buttons: ['cancel', 'ok'], title, message, okText });
+  password({ level, owner, title = '需要密码', message = '请输入密码', okText = '解锁' } = {}) {
+    return spawn({ level, owner, kind: 'lock', input: 'password', buttons: ['cancel', 'ok'], title, message, okText });
   },
 
   /**
@@ -71,9 +81,10 @@ export const dialogs = {
    *   h.set(0~100, '阶段说明')   h.done('完成说明') → promise 为 true
    *   h.cancel() → promise 为 false;用户点取消同样为 false
    */
-  progress({ title = '处理中', message = '请稍候…', determinate = true, cancelable = true } = {}) {
+  progress({ level, owner, title = '处理中', message = '请稍候…', determinate = true, cancelable = true } = {}) {
     const token = 'pg' + (++tokenSeq);
     const promise = spawn({
+      level, owner,
       kind: 'progress', buttons: cancelable ? ['cancel'] : [], title, message,
       determinate, cancelable, progressToken: token, okText: '确定', cancelText: '取消',
     });
@@ -93,6 +104,17 @@ export const dialogs = {
     return handle;
   },
 };
+
+/** 应用绑定弹框视图(mount ctx 的 ctx.dialogs):
+ *  owner 固定为该应用,默认 level 2(应用模态);
+ *  调用时传 { level: 1 } 或 { level: 3 } 可覆盖为非模态/系统模态 */
+export function forApp(appId) {
+  const bound = {};
+  for (const [name, fn] of Object.entries(dialogs)) {
+    bound[name] = (o = {}) => fn({ level: 2, owner: appId, ...o });
+  }
+  return bound;
+}
 
 /* ============ sysdialog 应用(所有对话框共用的窗口载体) ============ */
 register({

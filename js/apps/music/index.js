@@ -2,6 +2,8 @@
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './music.css';
 import { ensureCtx, masterGain } from '../../core/audio.js';
 import { settings } from '../../core/store.js';
 
@@ -48,15 +50,7 @@ const TRACKS = [
 const trackDuration = (t) => t.notes.reduce((s, [, b]) => s + b, 0) * 60 / t.bpm;
 
 register({
-  id: 'music',
-  neon: { a: '#a855f7', b: '#22d3ee' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '音乐',
-  icon: 'music',
-  color: 'linear-gradient(135deg,#8b5cf6,#d946ef)',
-  width: 420, height: 480,
-  min: { w: 340, h: 420 },
-  singleton: true,
-  order: 7,
+  ...manifest,
   mount({ root, bus, setTitle }) {
     let idx = 0;
     let playing = false;

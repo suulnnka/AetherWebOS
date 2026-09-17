@@ -228,20 +228,25 @@ group('T4', '主题切换(设置→外观→浅色)', async () => {
 });
 
 group('T5', '壁纸切换', async () => {
-  /* ---- T5 壁纸切换 ---- */
+  /* ---- T5 壁纸切换(静态组) ---- */
   // 独立运行前置:壁纸切换需要设置窗口
   await ev(`WebOS.wm.open('settings')`);
   await sleep(500);
   await ev(`[...document.querySelectorAll('.nav-item')].find(n => n.textContent.includes('壁纸')).click()`);
   await sleep(200);
   const before = await ev(`getComputedStyle(document.getElementById('wallpaper')).backgroundImage.slice(0,40)`);
-  // 选一个与当前不同的壁纸(避免上次运行持久化导致的"点了同一个")
-  const curWall = await ev(`JSON.parse(localStorage.getItem('webos.settings.v1')||'{}').wallpaper`);
-  const wallIdx = curWall === 'sunset' ? 0 : 2;
-  await ev(`document.querySelectorAll('.wp-thumb')[${wallIdx}].click()`);
+  // 静态组里选一个与当前不同的壁纸(避免上次运行持久化导致的"点了同一个")
+  const curWall = await ev(`WebOS.settings.get('wallpaperStatic')`);
+  const target = curWall === 'ocean' ? 'forest' : 'ocean';
+  const NAMES = { ocean: '深海', forest: '青森' };
+  await ev(`document.querySelector('.wp-thumb[title="静态壁纸 · ${NAMES[target]}"]').click()`);
   await sleep(400);
-  const after = await ev(`getComputedStyle(document.getElementById('wallpaper')).backgroundImage.slice(0,40)`);
-  t('T5 壁纸切换', before !== after, `${before} → ${after}`);
+  const after = await ev(`(() => ({
+    bg: getComputedStyle(document.getElementById('wallpaper')).backgroundImage.slice(0,40),
+    stat: WebOS.settings.get('wallpaperStatic'),
+    type: WebOS.settings.get('wallpaperType'),
+  }))()`);
+  t('T5 壁纸切换', before !== after.bg && after.stat === target && after.type === 'static', `${before} → ${after.bg}`);
   await c.shot('t5-wallpaper');
 
 });
@@ -2031,7 +2036,7 @@ group('T33', '扫雷 + 3D 国际象棋', async () => {
   t('T33.1 右键插旗', g1.flag === 1);
   await c.shot('t33-minesweeper');
 
-  // 3D 象棋:等 Three.js CDN 模块加载完成(registry 出现 chess3d)再打开
+  // 3D 象棋:等 chess3d 应用注册完成(含 Three.js chunk)再打开
   for (let i = 0; i < 20 && !(await ev(`!!WebOS.apps.list().find(a => a.id === 'chess3d')`)); i++) await sleep(500);
   await ev(`WebOS.wm.open('chess3d')`);
   await sleep(2500);
@@ -2420,19 +2425,20 @@ group('T38', '账号系统', async () => {
 });
 
 group('T39', '动态壁纸', async () => {
-  /* ---- T39 动态壁纸:推移动画 / 流动光斑 / 动效开关 ---- */
+  /* ---- T39 壁纸:静态静止 / 动态流动 / 分组分开选择与记忆 / 动效开关 ---- */
   await fresh();
   for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
 
-  // 基础层:任意壁纸都有推移动画(纯 transform)
+  // 静态壁纸:完全静止(动态与静态分离后,只有动态壁纸才动)
   const base = await ev(`(() => {
-    const cs = getComputedStyle(document.getElementById('wallpaper'));
-    return { name: cs.animationName, dur: cs.animationDuration };
+    const wp = document.getElementById('wallpaper');
+    const cs = getComputedStyle(wp);
+    return { name: cs.animationName, motion: wp.dataset.motion, type: WebOS.settings.get('wallpaperType'), stat: WebOS.settings.get('wallpaperStatic') };
   })()`);
-  t('T39.1 壁纸默认推移动画', /wpPan/.test(base.name) && parseFloat(base.dur) > 0, JSON.stringify(base));
+  t('T39.1 静态壁纸默认静止', base.name === 'none' && base.motion === 'none' && base.type === 'static', JSON.stringify(base));
 
   // 切到流动型动态壁纸(星云):data-motion=flow + 双动画 + 220% 画布
-  await ev(`WebOS.settings.set({ wallpaper: 'nebula' })`);
+  await ev(`WebOS.settings.set({ wallpaperType: 'dynamic', wallpaperDynamic: 'nebula' })`);
   await sleep(600);
   const flow = await ev(`(() => {
     const wp = document.getElementById('wallpaper');
@@ -2448,14 +2454,23 @@ group('T39', '动态壁纸', async () => {
   t('T39.3 光斑画布放大 220%', flow.size.includes('220%'), flow.size);
   await c.shot('t39-wallpaper-flow');
 
-  // 切回普通壁纸:motion 恢复 pan,画布尺寸清除
-  await ev(`WebOS.settings.set({ wallpaper: 'aurora' })`);
+  // 分组各自记住选择:切回静态组 → 恢复组内记住的壁纸(静止)
+  await ev(`WebOS.settings.set({ wallpaperType: 'static' })`);
   await sleep(500);
   const back = await ev(`(() => {
     const wp = document.getElementById('wallpaper');
-    return { motion: wp.dataset.motion, size: wp.style.backgroundSize };
+    return { motion: wp.dataset.motion, stat: WebOS.settings.get('wallpaperStatic'), size: wp.style.backgroundSize };
   })()`);
-  t('T39.4 切回普通壁纸恢复推移', back.motion === 'pan' && !back.size, JSON.stringify(back));
+  t('T39.4 切回静态组恢复记住的壁纸', back.motion === 'none' && back.stat === base.stat && !back.size, JSON.stringify(back));
+
+  // 再切动态组 → 记住的星云恢复流动
+  await ev(`WebOS.settings.set({ wallpaperType: 'dynamic' })`);
+  await sleep(500);
+  const memo = await ev(`(() => {
+    const wp = document.getElementById('wallpaper');
+    return { motion: wp.dataset.motion, dyn: WebOS.settings.get('wallpaperDynamic'), names: getComputedStyle(wp).animationName };
+  })()`);
+  t('T39.5 切回动态组恢复记住的壁纸', memo.motion === 'flow' && memo.dyn === 'nebula' && /wpFlow/.test(memo.names), JSON.stringify(memo));
 
   // 关闭界面动效 → 壁纸动画一并停用;再恢复
   await ev(`WebOS.settings.set({ effects: false })`);
@@ -2464,8 +2479,8 @@ group('T39', '动态壁纸', async () => {
   await ev(`WebOS.settings.set({ effects: true })`);
   await sleep(300);
   const on = await ev(`getComputedStyle(document.getElementById('wallpaper')).animationName`);
-  t('T39.5 动效开关停用/恢复壁纸动画', off === 'none' && /wpPan/.test(on), `off=${off}, on=${on}`);
-  await ev(`WebOS.settings.set({ wallpaper: 'aurora' })`);
+  t('T39.6 动效开关停用/恢复壁纸动画', off === 'none' && /wpPan/.test(on), `off=${off}, on=${on}`);
+  await ev(`WebOS.settings.set({ wallpaperType: 'static', wallpaperStatic: ${JSON.stringify(base.stat === 'aurora' ? 'sunset' : 'aurora')} })`);
   await sleep(300);
 
   const errs39 = await ev(`window.__errs.length`);
@@ -2704,6 +2719,110 @@ group('T41', '应用内右键', async () => {
 
   const errs41 = await ev(`window.__errs.length`);
   t('T41.10 全程无错误', errs41 === 0, `errs=${errs41}`);
+});
+
+group('T42', '弹框分级', async () => {
+  /* ---- T42 弹框分级:一级非模态 / 二级应用模态 / 三级系统模态 ---- */
+  await fresh();
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+
+  // 准备:settings(被锁对象)与 calc(对照)两个窗口
+  await ev(`WebOS.wm.open('settings')`);
+  await sleep(700);
+  await ev(`WebOS.wm.open('calc')`);
+  await sleep(700);
+
+  const closeAllDialogs = `(() => {
+    for (const w of [...document.querySelectorAll('.win[data-app=sysdialog]')]) WebOS.wm.close(w.dataset.id);
+    return true;
+  })()`;
+
+  // ---- 42.1 一级:非模态 —— 不锁定任何界面 ----
+  const l1 = await ev(`(async () => {
+    WebOS.dialogs.confirm({ level: 1, title: '一级测试', message: '非模态' });
+    await new Promise(r => setTimeout(r, 600));
+    const settingsWin = document.querySelector('.win[data-app=settings]');
+    WebOS.wm.focus(settingsWin.dataset.id);
+    return {
+      dialogOpen: !!document.querySelector('.win[data-app=sysdialog]'),
+      noSysShade: !document.querySelector('.modal-shade'),
+      noAppShade: !document.querySelector('.app-shade'),
+      otherFocusable: settingsWin.classList.contains('focused'),
+    };
+  })()`);
+  t('T42.1 一级弹框不影响任何操作', l1.dialogOpen && l1.noSysShade && l1.noAppShade && l1.otherFocusable,
+    JSON.stringify(l1));
+  await ev(closeAllDialogs);
+  await sleep(300);
+
+  // ---- 42.2 二级:应用模态 —— 锁 settings 全部窗口,calc 照常 ----
+  const l2 = await ev(`(async () => {
+    WebOS.dialogs.confirm({ level: 2, owner: 'settings', title: '二级测试', message: '锁定 settings' });
+    await new Promise(r => setTimeout(r, 600));
+    const settingsWin = document.querySelector('.win[data-app=settings]');
+    const calcWin = document.querySelector('.win[data-app=calc]');
+    const dlg = [...document.querySelectorAll('.win[data-app=sysdialog]')].pop();
+    WebOS.wm.focus(settingsWin.dataset.id);
+    const settingsFocusRefused = !settingsWin.classList.contains('focused');
+    WebOS.wm.focus(calcWin.dataset.id);
+    const calcFocused = calcWin.classList.contains('focused');
+    WebOS.wm.focus(dlg.dataset.id);
+    return {
+      shadeOnSettings: !!settingsWin.querySelector('.app-shade'),
+      settingsFocusRefused,
+      noShadeOnCalc: !calcWin.querySelector('.app-shade'),
+      calcFocusable: calcFocused,
+      dialogFocusable: dlg.classList.contains('focused'),
+    };
+  })()`);
+  t('T42.2 二级锁定本应用窗口,其他应用照常',
+    l2.shadeOnSettings && l2.settingsFocusRefused && l2.noShadeOnCalc && l2.calcFocusable && l2.dialogFocusable,
+    JSON.stringify(l2));
+
+  // 关闭二级弹框 → 遮罩消失,settings 恢复可聚焦
+  const l2close = await ev(`(async () => {
+    for (const w of [...document.querySelectorAll('.win[data-app=sysdialog]')]) WebOS.wm.close(w.dataset.id);
+    await new Promise(r => setTimeout(r, 400));
+    const settingsWin = document.querySelector('.win[data-app=settings]');
+    WebOS.wm.focus(settingsWin.dataset.id);
+    return {
+      shadeGone: !document.querySelector('.app-shade'),
+      settingsFocusable: settingsWin.classList.contains('focused'),
+    };
+  })()`);
+  t('T42.3 关闭二级弹框后解锁', l2close.shadeGone && l2close.settingsFocusable, JSON.stringify(l2close));
+
+  // ---- 42.4 三级:系统模态 —— 全屏遮罩,任何窗口不可聚焦 ----
+  const l3 = await ev(`(async () => {
+    WebOS.dialogs.confirm({ level: 3, title: '三级测试', message: '系统模态' });
+    await new Promise(r => setTimeout(r, 600));
+    const calcWin = document.querySelector('.win[data-app=calc]');
+    const settingsWin = document.querySelector('.win[data-app=settings]');
+    WebOS.wm.focus(calcWin.dataset.id);
+    WebOS.wm.focus(settingsWin.dataset.id);
+    return {
+      sysShade: !!document.querySelector('.modal-shade'),
+      noAppShade: !document.querySelector('.app-shade'),
+      nothingFocused: !document.querySelector('.win.focused:not([data-app=sysdialog])'),
+    };
+  })()`);
+  t('T42.4 三级锁定整个系统', l3.sysShade && l3.noAppShade && l3.nothingFocused, JSON.stringify(l3));
+
+  // 关闭三级弹框 → 系统恢复
+  const l3close = await ev(`(async () => {
+    for (const w of [...document.querySelectorAll('.win[data-app=sysdialog]')]) WebOS.wm.close(w.dataset.id);
+    await new Promise(r => setTimeout(r, 400));
+    const calcWin = document.querySelector('.win[data-app=calc]');
+    WebOS.wm.focus(calcWin.dataset.id);
+    return {
+      shadeGone: !document.querySelector('.modal-shade'),
+      calcFocusable: calcWin.classList.contains('focused'),
+    };
+  })()`);
+  t('T42.5 关闭三级弹框后系统恢复', l3close.shadeGone && l3close.calcFocusable, JSON.stringify(l3close));
+
+  const errs42 = await ev(`window.__errs.length`);
+  t('T42.6 全程无错误', errs42 === 0, `errs=${errs42}`);
 });
 
 

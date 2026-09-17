@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "纯前端网页操作系统(类群晖 DSM),Vite 构建,无后端、无外部 CDN 资源",
+  "description": "纯前端网页操作系统(类群晖 DSM),Vite 构建,无后端",
   "scripts": {
     "dev": "vite",
     "start": "vite",

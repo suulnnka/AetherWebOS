@@ -158,6 +158,19 @@ html[data-style="win98"] .input, html[data-style="win98"] .select {
   border-color: #808080 #fff #fff #808080;
   background: #fff;
 }
-html[data-style="win98"] .dicon .tile { border-radius: 2px; }
+/* ============ 复古图标与桌面 ============ */
+/* 像素图标:去掉色块背景与投影,让手绘像素画直接立在桌面上(原版观感) */
+html[data-style="win98"] .dicon .tile,
+html[data-style="win98"] .sm-item .tile,
+html[data-style="win98"] .tbtn .t-ico,
+html[data-style="win98"] .win-head .win-ico {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+/* 像素画在磁贴里的占比比线性图标更大,读起来才像原版桌面图标 */
+html[data-style="win98"] .dicon .tile svg { width: 74%; height: 74%; }
+html[data-style="win98"] .sm-item .tile svg { width: 30px; height: 30px; }
+html[data-style="win98"] .tbtn .t-ico svg { width: 18px; height: 18px; }
 html[data-style="win98"] .app-toolbar, html[data-style="win98"] .app-side, html[data-style="win98"] .app-status { border-color: #9a9a9a; }
 

@@ -7,6 +7,8 @@
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './solitaire.css';
 import { dialogs } from '../../core/dialogs.js';
 
 const SUITS = ['♠', '♥', '♦', '♣'];
@@ -19,21 +21,13 @@ function newDeck() {
   for (const s of SUITS) for (let r = 0; r < 13; r++) deck.push({ suit: s, rank: r, up: false });
   for (let i = deck.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
+   [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
 }
 
 register({
-  id: 'solitaire',
-  name: '接龙',
-  icon: 'star',
-  color: 'linear-gradient(135deg,#166534,#14532d)',
-  neon: { a: '#22c55e', b: '#eab308' },
-  width: 900, height: 640,
-  min: { w: 640, h: 460 },
-  singleton: true,
-  order: 9.2,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let stock = [], waste = [], foundations = [[], [], [], []], tableau = [];
     let sel = null;           // { zone, index, cardIndex }

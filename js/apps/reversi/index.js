@@ -16,6 +16,8 @@
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './reversi.css';
 import { dialogs } from '../../core/dialogs.js';
 
 /* ==================== 搜索引擎(位棋盘) ==================== */
@@ -591,15 +593,7 @@ const fmtT = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms)
 const fmtNps = (res) => (res.ms > 0 ? ` · ${fmtN(Math.round(res.nodes / res.ms * 1000))}节点/s` : '');
 
 register({
-  id: 'reversi',
-  name: '黑白棋',
-  icon: 'circle',
-  color: 'linear-gradient(135deg,#059669,#065f46)',
-  neon: { a: '#10b981', b: '#a3e635' },
-  width: 640, height: 660,
-  min: { w: 460, h: 480 },
-  singleton: true,
-  order: 9.8,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let board = initBoard();
     let turn = 'b';          // 玩家执黑,先手

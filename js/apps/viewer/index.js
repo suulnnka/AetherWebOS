@@ -10,6 +10,8 @@
 import { el, formatBytes } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './viewer.css';
 import fs from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 
@@ -27,15 +29,7 @@ function route(file) {
 }
 
 register({
-  id: 'viewer',
-  name: '文件预览',
-  icon: 'image',
-  color: 'linear-gradient(135deg,#0ea5e9,#6366f1)',
-  neon: { a: '#38bdf8', b: '#818cf8' },
-  width: 760, height: 560,
-  min: { w: 420, h: 320 },
-  singleton: false,
-  order: 1.6,
+  ...manifest,
   mount({ root, setTitle, bus, params }) {
     let url = null;              // 当前对象 URL(关闭时回收)
     const stage = el('div', { class: 'viewer-stage' });

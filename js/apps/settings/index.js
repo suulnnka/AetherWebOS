@@ -2,7 +2,9 @@
 import { el, fmtDate, formatBytes } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
-import { settings, ACCENTS, WALLPAPERS, STYLES } from '../../core/store.js';
+import manifest from './manifest.js';
+import './settings.css';
+import { settings, ACCENTS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper, STYLES } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
 import { accounts } from '../../core/accounts.js';
 import { logoutSession } from '../../system/session.js';
@@ -10,6 +12,7 @@ import { beep } from '../../core/audio.js';
 import { modal } from '../../core/ui.js';
 import fs from '../../core/fs.js';
 import { dialogs } from '../../core/dialogs.js';
+import { openConfigPopup, openGamePopup } from './popup-demo.js';
 
 const SECTIONS = [
   { id: 'appearance', name: '外观', icon: 'palette' },
@@ -96,25 +99,43 @@ function renderSection(root, sec, bus) {
   }
 
   else if (sec === 'wallpaper') {
-    const grid = el('div', { class: 'wp-grid' },
-      ...WALLPAPERS.map(wp => el('button', {
-        class: 'wp-thumb' + (s.wallpaper === wp.id ? ' selected' : ''),
-        style: { background: wp.css },
-        onClick: () => {
-          settings.set({ wallpaper: wp.id });
-          bus.notify('壁纸已更换', wp.name);
-          renderSection(root, 'wallpaper', bus);
-        },
-      }, el('span', { class: 'wp-name' }, wp.name))));
+    /** 壁纸缩略图网格:动态与静态是两组独立选择,各自记住选中项 */
+    const thumbGrid = (list, kind) => {
+      const chosen = kind === 'dynamic' ? s.wallpaperDynamic : s.wallpaperStatic;
+      return el('div', { class: 'wp-grid' },
+        ...list.map(wp => el('button', {
+          class: 'wp-thumb' + (kind === 'dynamic' ? ' wp-dyn' : '') + (chosen === wp.id ? ' selected' : ''),
+          style: { background: wp.css, backgroundSize: kind === 'dynamic' ? '220% 220%' : 'cover' },
+          title: (kind === 'dynamic' ? '动态壁纸 · ' : '静态壁纸 · ') + wp.name,
+          onClick: () => {
+            pickWallpaper(wp.id);   // 选中并立即切换到该类型
+            bus.notify('壁纸已更换', wp.name);
+            renderSection(root, 'wallpaper', bus);
+          },
+        }, el('span', { class: 'wp-name' }, wp.name),
+           kind === 'dynamic' ? el('span', { class: 'wp-tag' }, '动态') : null)));
+    };
+
+    const typeSeg = el('div', { class: 'seg' },
+      ...[['static', '静态壁纸'], ['dynamic', '动态壁纸']].map(([v, name]) =>
+        el('button', {
+          class: 'seg-btn' + (s.wallpaperType === v ? ' active' : ''),
+          onClick: () => {
+            settings.set({ wallpaperType: v });
+            renderSection(root, 'wallpaper', bus);
+          },
+        }, name)));
+
+    const usingTag = (type) => s.wallpaperType === type ? el('span', { class: 'f-now' }, '使用中') : null;
 
     const urlInput = el('input', {
       class: 'input', placeholder: '粘贴图片 URL…',
-      value: s.wallpaper === 'custom' ? s.wallpaperUrl : '', style: { flex: '1' },
+      value: s.wallpaperStatic === 'custom' ? s.wallpaperUrl : '', style: { flex: '1' },
     });
     const applyUrl = () => {
       const v = urlInput.value.trim();
       if (!v) return;
-      settings.set({ wallpaper: 'custom', wallpaperUrl: v });
+      settings.set({ wallpaperType: 'static', wallpaperStatic: 'custom', wallpaperUrl: v });
       bus.notify('壁纸已更换', '自定义图片');
       renderSection(root, 'wallpaper', bus);
     };
@@ -127,7 +148,7 @@ function renderSection(root, sec, bus) {
       if (f.size > 2.5 * 1024 * 1024) { bus.notify('图片过大', '建议小于 2.5MB,以免超出浏览器存储上限'); return; }
       const r = new FileReader();
       r.onload = () => {
-        settings.set({ wallpaper: 'custom', wallpaperUrl: String(r.result) });
+        settings.set({ wallpaperType: 'static', wallpaperStatic: 'custom', wallpaperUrl: String(r.result) });
         bus.notify('壁纸已更换', f.name);
         renderSection(root, 'wallpaper', bus);
       };
@@ -135,17 +156,22 @@ function renderSection(root, sec, bus) {
     });
 
     root.append(el('div', { class: 'set-body' }, title,
+      row('壁纸类型', '静态与动态分开选择、各自记住;点任一缩略图立即换上,顶部可在两组之间切换', typeSeg),
       el('div', { class: 'field' },
-        el('div', { class: 'f-label' }, '内置壁纸'),
-        grid),
+        el('div', { class: 'f-label' }, '动态壁纸', usingTag('dynamic')),
+        thumbGrid(DYNAMIC_WALLPAPERS, 'dynamic'),
+        el('div', { class: 'f-desc' }, '画面持续缓慢流动,选中的同时会切换到动态模式。')),
       el('div', { class: 'field' },
-        el('div', { class: 'f-label' }, '自定义壁纸'),
+        el('div', { class: 'f-label' }, '静态壁纸', usingTag('static')),
+        thumbGrid(STATIC_WALLPAPERS, 'static')),
+      el('div', { class: 'field' },
+        el('div', { class: 'f-label' }, '自定义壁纸(静态)'),
         el('div', { class: 'row' },
           urlInput,
           el('button', { class: 'btn', onClick: applyUrl }, '应用'),
           el('button', { class: 'btn', onClick: () => fileInput.click() }, icon('image', 14), '上传'),
-          fileInput)),
-      el('div', { class: 'f-desc' }, '上传的图片会以 DataURL 形式保存在浏览器本地存储中。'),
+          fileInput),
+        el('div', { class: 'f-desc' }, '上传的图片会以 DataURL 形式保存在浏览器本地存储中,属于静态壁纸。')),
     ));
   }
 
@@ -273,8 +299,8 @@ function renderSection(root, sec, bus) {
       el('div', { class: 'card', style: { marginBottom: '16px' } },
         el('div', { class: 'card-title' }, icon('info', 15), '关于本系统'),
         el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '系统名称', el('b', {}, 'WebOS')),
-        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '版本', el('span', { class: 'mono' }, '1.0.0 (vanilla)')),
-        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '技术栈', el('span', { class: 'dim' }, '原生 ES Modules · 零依赖 · 零后端')),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '版本', el('span', { class: 'mono' }, '1.0.0')),
+        el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '技术栈', el('span', { class: 'dim' }, '原生 ES Modules · npm 依赖随构建打包 · 无后端')),
         el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '内核类型', el('span', { class: 'dim mono' }, navigator.userAgent.includes('Firefox') ? 'Gecko' : 'Chromium')),
       ),
       el('div', { class: 'card', style: { marginBottom: '16px' } },
@@ -293,6 +319,11 @@ function renderSection(root, sec, bus) {
           el('button', { class: 'btn', onClick: async () => { const ok = await dialogs.confirm({ title: '确认操作', message: '要继续这个演示吗?' }); dialogs.info({ title: '结果', message: `你选择了:${ok ? '确定' : '取消'}` }); } }, '确认'),
           el('button', { class: 'btn', onClick: async () => { const v = await dialogs.prompt({ title: '输入', message: '随便输入点什么:' }); if (v != null) dialogs.success({ title: '收到', message: `你输入了:「${v}」` }); } }, '输入'),
           el('button', { class: 'btn', onClick: () => { const h = dialogs.progress({ title: '系统自检' }); let v = 0; const t = setInterval(() => { v += 12; if (v >= 100) { clearInterval(t); h.done('自检完成,一切正常'); } else h.set(v, `检查模块 ${v}%`); }, 260); } }, '进度'))),
+      row('弹框分级', '一级:不影响任何操作;二级:锁定本应用所有窗口,其他照常;三级:整个系统锁定直至关闭',
+        el('div', { class: 'row', style: { flexWrap: 'wrap', justifyContent: 'flex-end' } },
+          el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 1, owner: 'settings', title: '一级弹框 · 非模态', message: '我不影响任何操作。', detail: '可以照常操作其他窗口、任务栏,甚至本窗口,我只是浮在这里。' }) }, '一级'),
+          el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 2, owner: 'settings', title: '二级弹框 · 应用模态', message: '系统设置的所有窗口已被我锁定。', detail: '其他应用、任务栏、桌面照常可用——去开个计算器试试。' }) }, '二级'),
+          el('button', { class: 'btn', onClick: () => dialogs.confirm({ level: 3, title: '三级弹框 · 系统模态', message: '整个系统都已锁定。', detail: '处理完这个弹框之前,哪儿也去不了。' }) }, '三级'))),
       row('重置系统', '清空浏览器中保存的全部系统数据(不可恢复)',
         el('button', {
           class: 'btn danger',
@@ -323,15 +354,7 @@ function fsStats() {
 }
 
 register({
-  id: 'settings',
-  neon: { a: '#8b5cf6', b: '#c084fc' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '系统设置',
-  icon: 'settings',
-  color: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
-  width: 860, height: 600,
-  min: { w: 640, h: 420 },
-  singleton: true,
-  order: 5,
+  ...manifest,
   mount({ root, bus, params }) {
     let current = params.section || 'appearance';
     const navBox = el('div', { class: 'app-side' });
@@ -365,7 +388,7 @@ register({
     });
     // 壁纸外部变化时刷新预览选中态
     const off2 = subscribe('sys:settings-changed', (p) => {
-      if (p?.changed?.includes('wallpaper') || p?.changed?.includes('wallpaperUrl')) renderSection(content, current, bus);
+      if (p?.changed?.some(k => ['wallpaperType', 'wallpaperStatic', 'wallpaperDynamic', 'wallpaperUrl'].includes(k))) renderSection(content, current, bus);
     });
 
     return {

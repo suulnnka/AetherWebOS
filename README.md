@@ -1,8 +1,8 @@
 # WebOS —— 纯前端网页操作系统
 
-一个类群晖 DSM / Windows 11 风格的网页操作系统。**零后端、零外部资源**:
-所有数据(设置、文件、图标位置)保存在浏览器 `localStorage` 中;唯一的运行时
-依赖 three.js 经 npm 安装并由 Vite 一并打包,不引用任何外部 CDN,构建产物
+一个类群晖 DSM / Windows 11 风格的网页操作系统。**纯前端、无后端**:
+所有数据(设置、文件、图标位置)保存在浏览器 `localStorage` 中;运行时用到的
+第三方库经 npm 安装并由 Vite 一并打包进产物(当前含 three.js),构建产物
 放在任意静态服务器上即可运行。
 
 > 灵感与架构参考:[win11React](https://github.com/blueedgetechno/win11React)、
@@ -66,7 +66,7 @@ webos/
 │  │  ├─ icons.js        内联 SVG 图标库
 │  │  ├─ crypto.js       文件加密(AES-GCM + PBKDF2)
 │  │  ├─ weather.js      模拟气象引擎(确定性,历史可回溯)
-│  │  └─ zip.js          ZIP 压缩包(零依赖,STORE+DEFLATE 双向)
+│  │  └─ zip.js          ZIP 压缩包(自研读写,STORE+DEFLATE 双向)
 │  │  ├─ menu.js         全局右键菜单
 │  │  ├─ ui.js           应用内模态框(confirm/prompt)
 │  │  ├─ audio.js        WebAudio 引擎(音量跟随系统)
@@ -79,16 +79,30 @@ webos/
 │  │  ├─ startmenu.js    开始菜单
 │  │  ├─ tray.js         系统托盘(音量/日历/通知/开关机)
 │  │  ├─ shortcuts.js    布局按钮 + 全局快捷键
-│  │  └─ appstyles.js    应用样式加载器(ES import 各 js/apps/<id>/<id>.css)
-│  └─ apps/              应用(每个应用一个目录)
-│     └─ <id>/index.js   应用代码(mount + 逻辑)
+│  └─ apps/              应用(每个应用一个目录,按需独立加载)
+│     ├─ index.js        装配表:注册各应用清单 + 动态 import 加载器
+│     └─ <id>/
+│        ├─ manifest.js  应用清单(纯数据,启动时即注册)
+│        ├─ index.js     应用代码(mount + 逻辑,首次打开才加载)
+│        └─ <id>.css     可选:应用专属样式(随应用 chunk 按需加载)
 ├─ js/game/index.js      内置游戏内容(示例谜题链)
 └─ README.md
 ```
 
-**新增应用**:在 `js/apps/<id>/index.js` 实现 mount 并 register,在
-`js/main.js` 加一行 import;若有专属样式,放 `js/apps/<id>/<id>.css` 并在
-`js/system/appstyles.js` 里加一行 import 即可。
+**应用按需加载**:启动时只注册各应用的清单元数据(体积极小),应用代码与
+样式由 Vite 拆成独立 chunk(`assets/app-<id>-[hash].js/.css`),首次打开
+窗口时才拉取(wm.open → registry.ensureLoaded)。
+
+**打包与缓存**:共享内核(含各应用清单)独立为 `core-[hash].js`,应用
+chunk 只依赖 core、不依赖主包 —— 改某个应用的代码只会改名该应用与主包,
+其余应用与内核的文件名不变,浏览器缓存照常命中。改 js/core 会改名全部
+chunk(内核被所有人引用,属预期)。为保证这一性质,应用只能 import
+`js/core/*` 与自身目录文件。
+
+**新增应用**:在 `js/apps/<id>/` 建目录:`manifest.js` 放清单字段,
+`index.js` 里 `import manifest from './manifest.js'` 并
+`register({ ...manifest, mount })`,有专属样式就在 index.js 顶部
+`import './<id>.css'`;最后在 `js/apps/index.js` 的 APPS 表补一行即可。
 
 ## 一、窗口系统
 
@@ -378,7 +392,7 @@ npm run e2e -- --clean             # 清空测试 profile,全新 localStorage �
   多层嵌套极易出错,本项目曾有脚本把字面 NUL 与断行写进文件,
   反复排查数轮;
 - **多进程并行开发时,先认领文件再动手**:一次 Vite 迁移与账号系统
-  并行进行,双方都改 `e2e.mjs`/`appstyles.js`,导致"修复没生效"、
+  并行进行,双方都改 `e2e.mjs`/应用装配表,导致"修复没生效"、
   断言漂移、互相覆盖,排查成本远超功能本身;
 - **全量回归只在收尾跑一次**,开发中用针对性冒烟(单应用/单功能)
   验证——190+ 用例每轮 3 分钟,反复全跑是最直接的时间黑洞;
@@ -482,7 +496,7 @@ WebOS.__errs                         // 运行期错误
   (AES-GCM,锁标+模糊预览,密码解锁查看,忘记密码不可找回)
 - **压缩包**:文件管家支持 `.zip` —— 右键解压到同名文件夹(保留包内
   目录结构)、选中文件/文件夹一键压缩为 ZIP(目录递归)、双击浏览包内
-  条目(DEFLATE/STORE 标识);引擎为零依赖自研 ZIP 读写
+  条目(DEFLATE/STORE 标识);ZIP 读写为自研实现
   (`core/zip.js`,经 Compression Streams 压缩,UTF-8 文件名)
 - **天气**:8 城市实况(体感/湿度/风速/气压/日出日落)+ 12 小时逐时 +
   7 日预报 + **历史天气查询**(任意日期回溯、趋势条形图);数据由

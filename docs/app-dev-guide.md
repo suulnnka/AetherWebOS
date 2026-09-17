@@ -5,31 +5,38 @@
 
 ## 1. 一个应用是什么
 
-一个应用 = 一个目录 + 一份清单:
+一个应用 = 一个目录 + 一份清单。应用代码**按需加载**:启动时系统只读入
+清单(纯数据),应用本体在首次打开窗口时才以独立 chunk 拉取。
 
 ```
 js/apps/<id>/
-├── index.js     # 必须:register({...}) + mount(ctx)
-└── <id>.css     # 可选:应用专属样式(需在 js/system/appstyles.js 补一行 import)
+├── manifest.js  # 必须:清单纯数据(export default {...},不 import 任何东西)
+├── index.js     # 必须:register({ ...manifest, mount(ctx) }) + 逻辑
+└── <id>.css     # 可选:应用专属样式(在 index.js 顶部 import,随应用 chunk 加载)
 ```
 
 接入系统只需三步:
 
-1. 在 `js/apps/<id>/index.js` 里 `register({...})`;
-2. 在 `js/main.js` 里 `import './apps/<id>/index.js';`
-3. 有样式表的话,在 `js/system/appstyles.js` 里补一行 `import '../apps/<id>/<id>.css';`
+1. 在 `js/apps/<id>/manifest.js` 写清单字段,`index.js` 里
+   `register({ ...manifest, mount })`;
+2. 在 `js/apps/index.js` 的 `APPS` 表补一行
+   `[hello, () => import('./hello/index.js')]`(顶部同步 import 清单);
+3. 有样式表的话,在 `index.js` 顶部 `import './hello.css';`
 
 注册后应用自动出现在开始菜单与桌面(可用 `desktop: false` 关闭),
 并获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
 
+> **⚠️ import 边界**:应用只能 import `js/core/*` 与自身目录的文件,
+> **不要 import `js/system/*` 或其他应用**。打包时 core 是独立稳定 chunk,
+> 应用若引用了主包里的模块,该应用 chunk 就会跟着主包改名,破坏
+> "改一个应用、其余应用缓存不失效"的性质(确需引用 system 模块时,
+> 把该模块加入 vite.config.js 的 manualChunks 稳定区,像 session.js 一样)。
+
 ## 2. 最小可运行应用
 
 ```js
-/* js/apps/hello/index.js */
-import { el } from '../../core/utils.js';
-import { register } from '../../core/registry.js';
-
-register({
+/* js/apps/hello/manifest.js —— 清单(纯数据,启动时即注册) */
+export default {
   id: 'hello',
   name: '你好',
   icon: 'info',                                   // js/core/icons.js 里的图标名
@@ -37,6 +44,18 @@ register({
   width: 360, height: 240,
   singleton: true,
   order: 99,
+};
+```
+
+```js
+/* js/apps/hello/index.js —— 实现(首次打开窗口时才加载) */
+import { el } from '../../core/utils.js';
+import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './hello.css';                              // 可选
+
+register({
+  ...manifest,
   mount({ root, setTitle }) {
     setTitle('你好 WebOS');
     let n = 0;
@@ -152,6 +171,30 @@ dialogs.error({ title, message, detail })
 const h = dialogs.progress({ title, determinate: true })     // h.set(pct, msg) / h.done(msg) / h.promise
 ```
 
+**弹框分级** —— 所有方法都支持 `level`:
+
+| 级别 | 语义 |
+| --- | --- |
+| `level: 1` | 非模态:不影响任何界面,其他窗口/任务栏/桌面照常可操作 |
+| `level: 2` | 应用模态:锁定 `owner` 应用打开的所有窗口,其余系统照常 |
+| `level: 3` | 系统模态:全屏锁定,关闭弹框前整个系统不可操作(默认) |
+
+```js
+dialogs.confirm({ level: 1, title: '随手记' })                      // 浮窗,不打断任何操作
+dialogs.confirm({ level: 2, owner: 'notes', title: '未保存' })      // 只锁 notes 的窗口
+dialogs.confirm({ level: 3, title: '系统更新' })                    // 全系统锁定
+```
+
+应用内推荐直接用 mount ctx 里的 `ctx.dialogs`——owner 自动绑定本应用、
+**默认就是二级**,传 `{ level }` 可覆盖:
+
+```js
+export function mount({ dialogs }) {
+  dialogs.confirm({ message: '删除这只影响本应用的其他窗口' });   // 二级
+  dialogs.confirm({ level: 1, message: '浮窗提示' });             // 一级
+}
+```
+
 ### 跨应用打开窗口
 
 ```js
@@ -207,8 +250,8 @@ await copyText(text);   // Clipboard API + execCommand 回退
 
 ## 7. 样式
 
-- 专属样式写 `js/apps/<id>/<id>.css`,在 `js/system/appstyles.js` 补 import,
-  Vite 会自动注入/打包;
+- 专属样式写 `js/apps/<id>/<id>.css`,在应用 `index.js` 顶部 `import './<id>.css'`,
+  样式随应用 chunk 按需加载/注入;
 - **只用系统的 CSS 变量,不要写死颜色**,亮暗主题与 8 套皮肤才能全部生效:
 
 | 变量 | 含义 |
@@ -245,9 +288,9 @@ await copyText(text);   // Clipboard API + execCommand 回退
 
 ## 10. 接入清单
 
-- [ ] `js/apps/<id>/index.js`:`register` + `mount`
-- [ ] `js/main.js`:加一行 import
-- [ ] 样式表(可选):`<id>.css` + `appstyles.js` 加一行,颜色只用 CSS 变量
+- [ ] `js/apps/<id>/manifest.js` + `index.js`(`register({ ...manifest, mount })`)
+- [ ] `js/apps/index.js` 的 APPS 表补一行
+- [ ] 样式表(可选):`<id>.css`,在 `index.js` 顶部 import,颜色只用 CSS 变量
 - [ ] 需要登录:`requireLogin` + `accounts.userKey()` 命名空间存储
 - [ ] 右键:`ctx.onContextMenu`;资源回收:`onClose`
 - [ ] e2e:新增用例组,`npm run e2e -- T<新组号>` 单跑通过后跑全量

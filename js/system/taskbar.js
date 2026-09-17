@@ -1,5 +1,5 @@
 import { $, el } from '../core/utils.js';
-import { icon } from '../core/icons.js';
+import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { list as listApps } from '../core/registry.js';
@@ -19,6 +19,8 @@ export function togglePin(id) {
 }
 subscribe('sys:settings-changed', (p) => {
   if (p?.changed?.includes('pinnedApps')) renderPinned();
+  // 风格切换会更换图标家族(如 Win98 走像素图标),按钮需要重绘
+  if (p?.changed?.includes('style')) { renderPinned(); renderTasks(); }
 });
 
 export function renderPinned() {
@@ -46,7 +48,7 @@ export function renderPinned() {
           { label: '从任务栏取消固定', icon: 'close', danger: true, fn: () => togglePin(app.id) },
         ]);
       },
-    }, (() => { const t = el('span', { class: 't-ico' }); t.style.background = app.color; t.append(icon(app.icon, 14)); return t; })());
+    }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, app); t.append(icon(app.icon, 14)); return t; })());
     // 应用专属霓虹色(任务栏芯片灯条消费)
     if (app.neon?.a) b.style.setProperty('--neon-a', app.neon.a);
     if (app.neon?.b) b.style.setProperty('--neon-b', app.neon.b);
@@ -78,7 +80,7 @@ export function renderTasks() {
           { label: '关闭窗口', icon: 'close', danger: true, fn: () => wm.close(w.id) },
         ]);
       },
-    }, (() => { const t = el('span', { class: 't-ico' }); t.style.background = w.color || 'var(--accent)'; t.append(icon(w.icon || 'file', 14)); return t; })(),
+    }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, w); t.append(icon(w.icon || 'file', 14)); return t; })(),
       el('span', { class: 't-title' }, w.title));
     if (w.neon?.a) b.style.setProperty('--neon-a', w.neon.a);
     if (w.neon?.b) b.style.setProperty('--neon-b', w.neon.b);

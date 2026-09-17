@@ -1,5 +1,5 @@
 import { $, el, clamp } from '../core/utils.js';
-import { icon } from '../core/icons.js';
+import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings, wallpaperCss, wallpaperMotion } from '../core/store.js';
 import fs from '../core/fs.js';
@@ -21,7 +21,7 @@ export function applyWallpaper() {
   wp.style.backgroundPosition = motion === 'flow' ? '50% 50%' : '';
 }
 subscribe('sys:settings-changed', (p) => {
-  if (p?.changed?.some(k => ['wallpaper', 'wallpaperUrl'].includes(k))) applyWallpaper();
+  if (p?.changed?.some(k => ['wallpaperType', 'wallpaperStatic', 'wallpaperDynamic', 'wallpaperUrl'].includes(k))) applyWallpaper();
   // 风格皮肤切换会改变任务栏高度等布局度量,需重排
   if (p?.changed?.includes('style')) { wm.relayout(); renderDesktopIcons(); }
 });
@@ -107,7 +107,7 @@ export function renderDesktopIcons() {
     const pos = iconPos[item.key] || def;
 
     const tile = el('div', { class: 'tile' });
-    tile.style.background = item.color;
+    paintTile(tile, item);
     tile.append(icon(item.icon, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile') || 48) * 0.52) || 24));
 
     const node = el('button', {

@@ -7,7 +7,9 @@
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
-import { open } from '../../core/wm.js';
+import manifest from './manifest.js';
+import './mail.css';
+import { open, reopen } from '../../core/wm.js';
 import mail from '../../core/mail.js';
 import { settings } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
@@ -36,15 +38,7 @@ function openAttachment(att) {
 const isDirish = (p) => !/\.[a-z0-9]{1,6}$/i.test(p);
 
 register({
-  id: 'mail',
-  name: '邮件',
-  icon: 'mail',
-  color: 'linear-gradient(135deg,#0891b2,#2563eb)',
-  neon: { a: '#22d3ee', b: '#60a5fa' },
-  width: 980, height: 620,
-  min: { w: 640, h: 400 },
-  singleton: true,
-  order: 1.7,
+  ...manifest,
   mount({ root, setTitle, bus, accounts: _a }) {
     // ---- 账号门 ----
     if (requireLogin(root, '邮件', () => { root.innerHTML = ''; appRemount(); })) return;
@@ -236,7 +230,6 @@ register({
 
 
 /** 重新挂载当前应用(登录状态变化后调用) */
-async function appRemount() {
-  const { reopen } = await import('../../core/wm.js');
+function appRemount() {
   reopen('mail');
 }

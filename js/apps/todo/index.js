@@ -10,11 +10,14 @@
 import { el, escapeHtml, fmtDate } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './todo.css';
 import { dialogs } from '../../core/dialogs.js';
 import { subscribe, publish } from '../../core/bus.js';
 import fs from '../../core/fs.js';
 import sms from '../../core/sms.js';
 import { accounts } from '../../core/accounts.js';
+import { reopen } from '../../core/wm.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 
 const KEY = 'webos.todo.v1';
@@ -61,15 +64,7 @@ const dueMeta = (t) => {
 };
 
 register({
-  id: 'todo',
-  name: '任务',
-  icon: 'check',
-  color: 'linear-gradient(135deg,#10b981,#0d9488)',
-  neon: { a: '#34d399', b: '#2dd4bf' },
-  width: 760, height: 560,
-  min: { w: 520, h: 380 },
-  singleton: true,
-  order: 2.5,
+  ...manifest,
   mount({ root, setTitle, bus, onContextMenu }) {
     // ---- 账号门:未登录先渲染登录面板 ----
     if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
@@ -376,5 +371,5 @@ register({
 
 /** 重新挂载当前应用(登录状态变化后调用) */
 function appRemount() {
-  import('../../core/wm.js').then(({ reopen }) => reopen && reopen('todo'));
+  reopen('todo');
 }

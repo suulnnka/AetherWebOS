@@ -2,19 +2,13 @@
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './notes.css';
 import fs from '../../core/fs.js';
 import { modal } from '../../core/ui.js';
 
 register({
-  id: 'notes',
-  neon: { a: '#00e08f', b: '#19d3ff' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '记事本',
-  icon: 'fileText',
-  color: 'linear-gradient(135deg,#10b981,#059669)',
-  width: 720, height: 520,
-  min: { w: 420, h: 300 },
-  singleton: false,
-  order: 2,
+  ...manifest,
   mount({ root, bus, params, setTitle }) {
     let path = params.path || null;   // null = 未保存的新文档
     let dirty = false;

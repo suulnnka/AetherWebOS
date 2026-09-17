@@ -1,5 +1,7 @@
 /* ============ 内联 SVG 图标库(线性风格) ============ */
 
+import { settings } from './store.js';
+
 const I = {
   // 系统与通用
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/>',
@@ -73,8 +75,434 @@ const I = {
   textCursor: '<path d="M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 0-4-4H7"/><path d="M7 22h1a4 4 0 0 0 4-4v-1"/>',
 };
 
-/** 生成内联 SVG 字符串 */
+/* ============ 像素图标(Win31/98 复古皮肤专用) ============ */
+/* 手绘 16×16 像素画:黑描边 + 经典配色,shape-rendering 保证硬边。
+ * 字符画一行一个 16 像素,'.' 为透明,其他字母查 PAL 调色板。 */
+
+const PAL = {
+  K: '#000000', W: '#ffffff', S: '#c0c0c0', G: '#808080', D: '#404040',
+  Y: '#ffdf6e', y: '#c69a2e', B: '#2f6fe0', b: '#8fbaff', n: '#123c8c',
+  E: '#3fae5a', e: '#9ce8af', R: '#e04848', r: '#ff9a9a', O: '#f09a38',
+  o: '#c26a18', T: '#00a894', P: '#9a5cd8', p: '#d0a8f0', N: '#102a4e', C: '#58c8e8',
+};
+
+/** 字符画 → 合并横排 run 后的 <rect> 串 */
+function pix(rows) {
+  const out = [];
+  rows.forEach((row, y) => {
+    let x = 0;
+    while (x < Math.min(row.length, 16)) {
+      const ch = row[x];
+      if (ch === '.' || !PAL[ch]) { x++; continue; }
+      let run = 1;
+      while (x + run < row.length && row[x + run] === ch) run++;
+      out.push(`<rect x="${x}" y="${y}" width="${run}" height="1" fill="${PAL[ch]}"/>`);
+      x += run;
+    }
+  });
+  return out.join('');
+}
+
+const PIX = {
+  folder: pix([
+    '..KKKKK.........',
+    '.KyyyyyK........',
+    '.KyYYYyKKKKKKK..',
+    '.KYWWYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KYWYYYYYYYYYK..',
+    '.KyyYYYYYYYYYK..',
+    '.KyyyYYYYYYYYK..',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  folderOpen: pix([
+    '..KKKKK.........',
+    '.KyyyyyK........',
+    '.KyYYYyKKKKKK...',
+    '.KyYYYYYYYYYK...',
+    '.KyKWWWWWWWWK...',
+    '.KyKWWWWWWWWKK..',
+    '.KyKWWWWWWWWWK..',
+    '.KyKWWWWWWWWKK..',
+    '.KyKWWWWWWWWK...',
+    '.KyKKKKKKKKKK...',
+    '.KyYYYYYYYYYK...',
+    '.KKKKKKKKKKK....',
+  ]),
+  file: pix([
+    '.KKKKKKKKK......',
+    '.KWWWWWWWKK.....',
+    '.KWWWWWWWKWK....',
+    '.KWWWWWWWKKKK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KKKKKKKKKKKK...',
+  ]),
+  fileText: pix([
+    '.KKKKKKKKK......',
+    '.KWWWWWWWKK.....',
+    '.KWWWWWWWKWK....',
+    '.KWWWWWWWKKKK...',
+    '.KWWWWWWWWWWK...',
+    '.KWGGGGGGWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWGGGGGWWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWGGGGGGWWWK...',
+    '.KWWWWWWWWWWK...',
+    '.KWGGGWWWWWWK...',
+    '.KKKKKKKKKKKK...',
+  ]),
+  globe: pix([
+    '...KKKKKKKKKK...',
+    '..KbbBBBBBBBBK..',
+    '.KbBBBbbbBBBBBK.',
+    '.KBBBBBBBBBbBBK.',
+    'KBBBbBBBBBBBBBBK',
+    'KBBBBBBBbbbBBBBK',
+    'KBbbbBBBBBBBBBBK',
+    'KBBBBBBBbBBBBBBK',
+    'KBBBbbbBBBBBbBBK',
+    '.KBBBBBBBBBBBBK.',
+    '.KBbBBBBBbbbBBK.',
+    '..KBBBBBBBBBBK..',
+    '...KKKKKKKKKK...',
+  ]),
+  image: pix([
+    '.KKKKKKKKKKKKK.',
+    '.KWWWWWWWWWWWK.',
+    '.KWBBBBBBBBBWK.',
+    '.KWBBBYYYBBBWK.',
+    '.KWBBBBBBBBBWK.',
+    '.KWEEEEEBBBBWK.',
+    '.KWEEEEEeBBBWK.',
+    '.KWEEEEEEEBBWK.',
+    '.KWEEEEEEEEEWK.',
+    '.KWEEEEEEEEEWK.',
+    '.KKKKKKKKKKKKK.',
+  ]),
+  mail: pix([
+    '.KKKKKKKKKKKKK.',
+    '.KSSSSSSSSSSSK.',
+    '.KSKSSSSSSSKSK.',
+    '.KSSKSSSSSKSSK.',
+    '.KSSSKSSSKSSSK.',
+    '.KSSSSKSKSSSSK.',
+    '.KSSSSSSSSSSSK.',
+    '.KSSSSSSSSSSSK.',
+    '.KKKKKKKKKKKKK.',
+  ]),
+  message: pix([
+    '..KKKKKKKKKK...',
+    '.KWWWWWWWWWWK..',
+    '.KWWWWWWWWWWK..',
+    '.KWWWWWWWWWWK..',
+    '.KWWWWWWWWWWK..',
+    '.KWWWWWWWWWWK..',
+    '.KKKKKKKKKKKK..',
+    '.KKK...........',
+    '..K............',
+  ]),
+  music: pix([
+    '.........KKKK...',
+    '.........KBK....',
+    '.........KBK....',
+    '.........KBK....',
+    '.........KBK....',
+    '.........KBK....',
+    '.........KBK....',
+    '.....KKKKBK.....',
+    '....KBBBKK......',
+    '...KBBBBK.......',
+    '...KKKKK........',
+  ]),
+  sun: pix([
+    '.......KK.......',
+    '.......KK.......',
+    '.KK...KKKK...KK.',
+    '..KK.KYYYYK.KK..',
+    '...KKYYYYYYKK...',
+    '.KKKYYWYYYYKKK..',
+    'KKKYYYYYYYYYKKK.',
+    '.KKYYYYYYYYYKK..',
+    '...KKYYYYYYKK...',
+    '..KK.KYYYYK.KK..',
+    '.KK...KKKK...KK.',
+    '.......KK.......',
+    '.......KK.......',
+  ]),
+  settings: pix([
+    '...KK....KK.....',
+    '..KSSKKKKSSK....',
+    '.KSSSSSSSSSSK...',
+    '.KSSWSSSSSSSK...',
+    'KSSSKKKKSSSSSK..',
+    'KSSKKKKKKKSSSK..',
+    'KSSKKKKKKKSSSK..',
+    'KSSSKKKKSSSSSK..',
+    '.KSSSSSSSSSSK...',
+    '.KSSSSSSSSSSK...',
+    '..KSSKKKKSSK....',
+    '...KK....KK.....',
+  ]),
+  terminal: pix([
+    '.KKKKKKKKKKKKK..',
+    '.KNNNNNNNNNNNK..',
+    '.KNNWNNNNNNNNK..',
+    '.KNNNWNNNNNNNK..',
+    '.KNNWWWWWWWNNK..',
+    '.KNNNWNNNNNNNK..',
+    '.KNNWNNNWNNNNK..',
+    '.KNNNNWWWWNNNK..',
+    '.KNNNNNNNNNNNK..',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  calc: pix([
+    '.KKKKKKKKKKKK...',
+    '.KSSSSSSSSSSK...',
+    '.KSWWWWWWWWSK...',
+    '.KSWWWWWWWWSK...',
+    '.KSSSSSSSSSSK...',
+    '.KSKSKSKSKSSK...',
+    '.KSSSSSSSSSSK...',
+    '.KSKSKSKSKSSK...',
+    '.KSSSSSSSSSSK...',
+    '.KSKSKSKSKSSK...',
+    '.KSSSSSSSSSSK...',
+    '.KKKKKKKKKKKK...',
+  ]),
+  alertTriangle: pix([
+    '.......KK.......',
+    '.......KK.......',
+    '......KYYK......',
+    '......KYYK......',
+    '.....KYYYYK.....',
+    '.....KYKKYK.....',
+    '....KYYKKYYK....',
+    '....KYYKKYYK....',
+    '...KYYYYYYYYK...',
+    '...KYYKKKKYYK...',
+    '..KYYYKKKKYYYK..',
+    '.KYYYYYYYYYYYYK.',
+    '.KKKKKKKKKKKKKK.',
+  ]),
+  star: pix([
+    '.......KK.......',
+    '......KYYK......',
+    '......KYYK......',
+    '.....KYYYYK.....',
+    '....KYYYYYYK....',
+    'KKKKYYYYYYYYKKK.',
+    '.KYYYYYYYYYYYYK.',
+    '..KYYYYYYYYYYK..',
+    '...KYYYYYYYYK...',
+    '...KYYYYYYYYK...',
+    '..KYYYY..KYYYK..',
+    '.KYYYYK...KYYK..',
+    '.KKKK.......KK..',
+  ]),
+  grid: pix([
+    '.KKKKK.KKKKK....',
+    '.KRRRK.KEEEK....',
+    '.KRRRK.KEEEK....',
+    '.KRRRK.KEEEK....',
+    '.KKKKK.KKKKK....',
+    '................',
+    '.KKKKK.KKKKK....',
+    '.KBBBK.KYYYK....',
+    '.KBBBK.KYYYK....',
+    '.KBBBK.KYYYK....',
+    '.KKKKK.KKKKK....',
+  ]),
+  circle: pix([
+    '...KKKKKKKKKK...',
+    '..KWWWWWWWWDDK..',
+    '.KWWWWWWWWWWDDK.',
+    '.KWWWWWWWWWWDDK.',
+    'KWWWWWWWWWWWWDDK',
+    'KWWWWWWWWWWWWDDK',
+    'KWWWWWWWWWWWWDDK',
+    'KWWWWWWWWWWWWDDK',
+    '.KWWWWWWWWWWDDK.',
+    '.KWWWWWWWWWWDDK.',
+    '..KWWWWWWWWDDK..',
+    '...KKKKKKKKKK...',
+  ]),
+  check: pix([
+    '...........KKK..',
+    '..........KEEEK.',
+    '.........KEEEK..',
+    '........KEEEK...',
+    '.......KEEEK....',
+    'K.....KEEEK.....',
+    'KK...KEEEK......',
+    '.KKKEEEK........',
+    '..KKEEEK........',
+    '....KKKK........',
+  ]),
+  activity: pix([
+    '..........KK....',
+    '.........KRRK...',
+    '........KRRK....',
+    '.......KRRK.....',
+    '......KRRK......',
+    '.....KRRK.......',
+    '....KRRK........',
+    '...KRRK...KK....',
+    '.KKRRRRKKKRRKKK.',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  hardDrive: pix([
+    '.KKKKKKKKKKKKK.',
+    '.KSSSSSSSSSSSK.',
+    '.KSSWWWWWWSSSK.',
+    '.KSSSSSSSSSSSK.',
+    '.KKKKKKKKKKKKK.',
+    '.KSSSSSSSSSSSK.',
+    '.KSGGGGGGGEBSK.',
+    '.KKKKKKKKKKKKK.',
+  ]),
+  film: pix([
+    '.KKKKKKKKKKKKK..',
+    '.KDKDKDKDKDKDK..',
+    '.KKKKKKKKKKKKK..',
+    '.KWWWWWWWWWWWK..',
+    '.KWWWWWWWWWWWK..',
+    '.KKKKKKKKKKKKK..',
+    '.KDKDKDKDKDKDK..',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  download: pix([
+    '.......KK.......',
+    '.......KBK......',
+    '.......KBK......',
+    '.......KBK......',
+    '......KBBBK.....',
+    '.....KBBBBBK....',
+    '....KBBBBBBBK...',
+    '.......KBK......',
+    '.KKKKKKKKKKKKK..',
+    '.KSSSSSSSSSSSK..',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  lock: pix([
+    '.....KKKKK......',
+    '....KSSSSSK.....',
+    '....KSKKSSK.....',
+    '....KSSSSSK.....',
+    '.KKKKKKKKKKKK...',
+    '.KGGGGGGGGGGK...',
+    '.KGGGGYYGGGGK...',
+    '.KGGGGYYGGGGK...',
+    '.KGGGGGGGGGGK...',
+    '.KKKKKKKKKKKK...',
+  ]),
+  bell: pix([
+    '.......KK.......',
+    '......KYYK......',
+    '......KYYK......',
+    '.....KYYYYK.....',
+    '....KYYYYYYK....',
+    '....KYYYYYYK....',
+    '...KYYYYYYYYK...',
+    '...KYYYYYYYYK...',
+    '..KYYYYYYYYYYK..',
+    '..KKKKKKKKKKKK..',
+    '.....KYYYYK.....',
+    '......KKKK......',
+  ]),
+  volume: pix([
+    '.........CC.....',
+    '....KK.CCCC.....',
+    '...KWK.CC.CC....',
+    '...KWK.C..CC....',
+    '.KKWK.C...CC....',
+    'KWWK.C....CC....',
+    'KWWSK.....CC....',
+    '.KWSK....CC.....',
+    '..KKK...CC......',
+  ]),
+  volume1: null, volume2: null,   // 复用 volume(在下方统一指向)
+  volumeX: pix([
+    '....KK..........',
+    '...KWK.KK.......',
+    '.KKWK.KKKK......',
+    'KWWK.KK.KK......',
+    'KWWSK..KKKK.....',
+    'KWWSK.KK.KK.....',
+    '.KWSK.KKKKKK....',
+    '..KKK...KK......',
+  ]),
+  search: pix([
+    '...KKKK.........',
+    '..KSSSSK........',
+    '.KSWWSSSK.......',
+    '.KSWWSSSK.......',
+    '.KSSSSSSK...KK..',
+    '..KSSSSK...KK...',
+    '...KKKK...KK....',
+    '..........KK....',
+  ]),
+  user: pix([
+    '.....KKKKK......',
+    '....KSSSSSK.....',
+    '....KSSSSSK.....',
+    '....KSSSSSK.....',
+    '.....KKKKK......',
+    '..KKKSSSSSKKK...',
+    '.KSSSSSSSSSSSK..',
+    '.KSSSSSSSSSSSK..',
+    '.KKKKKKKKKKKKK..',
+  ]),
+  trash: pix([
+    '.....KKKKKK.....',
+    '..KKKKKKKKKKK...',
+    '..KSSSSSSSSSK...',
+    '..KSKSKSKSKSK...',
+    '..KSKSKSKSKSK...',
+    '...KSKSKSKSK....',
+    '...KSKSKSKSK....',
+    '...KKKKKKKKK....',
+  ]),
+  home: pix([
+    '.......KK.......',
+    '......KRRK......',
+    '.....KRRRRK.....',
+    '....KRRRRRRK....',
+    '...KRRRRRRRRK...',
+    '..KKKKKKKKKKKK..',
+    '..KSSSSSSSSSK...',
+    '..KSSKKKKSSSK...',
+    '..KSSKKKKSSSK...',
+    '..KSSSKKSSSSK...',
+    '..KKKKKKKKKKK...',
+  ]),
+};
+PIX.volume1 = PIX.volume;
+PIX.volume2 = PIX.volume;
+
+/** 当前风格是否使用像素图标 */
+export function pixelMode() {
+  return ['win31', 'win98'].includes(settings.get('style'));
+}
+
+function pixelSvg(name, size) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" shape-rendering="crispEdges">${PIX[name]}</svg>`;
+}
+
+/** 生成内联 SVG 字符串(复古皮肤下有像素版图标则优先使用) */
 export function svg(name, size = 18, sw = 2) {
+  if (pixelMode() && PIX[name]) return pixelSvg(name, size);
   const body = I[name] || I.file;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 }
@@ -90,9 +518,31 @@ export function icon(name, size = 18, sw = 2) {
 export function appTile(manifest, size = 48, iconSize) {
   const tile = document.createElement('div');
   tile.className = 'tile';
-  tile.style.background = manifest.color || 'linear-gradient(135deg,#64748b,#475569)';
+  paintTile(tile, manifest, 'linear-gradient(135deg,#64748b,#475569)');
   tile.style.width = tile.style.height = size + 'px';
   tile.style.borderRadius = Math.round(size * 0.24) + 'px';
   tile.append(icon(manifest.icon || 'file', iconSize || Math.round(size * 0.52), 2));
   return tile;
+}
+
+/** 给磁贴上色:写成 CSS 变量而不是直接设 background,
+ *  让各风格皮肤可以重绘图标(如 Win31/98 用 --tile-flat 单色扁平方块) */
+export function paintTile(el, manifest, fallback = 'var(--accent)') {
+  const bg = manifest?.color || fallback;
+  el.style.setProperty('--tile-bg', bg);
+  const first = /#[0-9a-f]{3,8}/i.exec(bg);
+  const flat = first ? first[0] : bg;
+  el.style.setProperty('--tile-flat', flat);
+  // 浅色块配深色图形(复古扁平方块时的可读性),深色块维持白色
+  el.style.setProperty('--tile-fg', luminance(flat) > 0.5 ? '#10131a' : '#fff');
+}
+
+/** 相对亮度(仅处理 6 位 hex;其余返回 0 走白图形) */
+function luminance(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return 0;
+  const [r, g, b] = [1, 3, 5].map(i => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }

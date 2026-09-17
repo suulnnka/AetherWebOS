@@ -9,6 +9,8 @@ import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { dialogs } from '../../core/dialogs.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './sokoban.css';
 
 /* 关卡(经典微型关卡集,由易到难) */
 const LEVELS = [
@@ -97,15 +99,7 @@ function parseLevel(lv) {
 }
 
 register({
-  id: 'sokoban',
-  name: '推箱子',
-  icon: 'hardDrive',
-  color: 'linear-gradient(135deg,#b45309,#78350f)',
-  neon: { a: '#fbbf24', b: '#f59e0b' },
-  width: 560, height: 660,
-  min: { w: 420, h: 480 },
-  singleton: true,
-  order: 9.6,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let levelIdx = 0;
     let level = null;

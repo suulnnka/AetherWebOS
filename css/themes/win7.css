@@ -112,3 +112,15 @@ html[data-style="win7"] .cal-now .n-date { color: rgba(220, 232, 255, 0.6); }
 html[data-style="win7"] .noti-item { background: rgba(255, 255, 255, 0.07); border-color: rgba(130, 178, 255, 0.25); }
 html[data-style="win7"] .pn-empty, html[data-style="win7"] .ni-time { color: rgba(220, 232, 255, 0.55); }
 html[data-style="win7"] .dicon .tile { border-radius: 22%; }
+/* 图标 gloss:Aero 玻璃高光(比 XP 更克制) */
+html[data-style="win7"] .dicon .tile,
+html[data-style="win7"] .sm-item .tile,
+html[data-style="win7"] .tbtn .t-ico { position: relative; overflow: hidden; }
+html[data-style="win7"] .dicon .tile::after,
+html[data-style="win7"] .sm-item .tile::after,
+html[data-style="win7"] .tbtn .t-ico::after {
+  content: ""; position: absolute; left: 7%; right: 7%; top: 4%; height: 40%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.03));
+  border-radius: 46% 46% 42% 42% / 78% 78% 24% 24%;
+  pointer-events: none;
+}

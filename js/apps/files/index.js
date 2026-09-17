@@ -2,6 +2,8 @@
 import { el, fmtDate, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './files.css';
 import fs from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
@@ -41,15 +43,7 @@ function fmtTime(ts) {
 }
 
 register({
-  id: 'files',
-  neon: { a: '#ffb400', b: '#ff5e00' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '文件管家',
-  icon: 'folder',
-  color: 'linear-gradient(135deg,#f59e0b,#f97316)',
-  width: 880, height: 560,
-  min: { w: 560, h: 360 },
-  singleton: true,
-  order: 1,
+  ...manifest,
   mount({ root, bus, params, setTitle }) {
     let cwd = params.path && fs.isDir(params.path) ? fs.normPath(params.path) : '/home';
     let selected = null;

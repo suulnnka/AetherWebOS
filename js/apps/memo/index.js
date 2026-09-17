@@ -11,6 +11,8 @@
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './memo.css';
 import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { accounts } from '../../core/accounts.js';
@@ -47,15 +49,7 @@ const persist = () => {
 const COLORS = ['#fef3c7', '#bbf7d0', '#bfdbfe', '#fbcfe8', '#e9d5ff', '#e2e8f0'];
 
 register({
-  id: 'memo',
-  name: '备忘录',
-  icon: 'fileText',
-  color: 'linear-gradient(135deg,#fbbf24,#d97706)',
-  neon: { a: '#fbbf24', b: '#f97316' },
-  width: 860, height: 560,
-  min: { w: 520, h: 380 },
-  singleton: true,
-  order: 2.6,
+  ...manifest,
   mount({ root, setTitle, bus, onContextMenu }) {
     if (requireLogin(root, '备忘录', () => { root.innerHTML = ''; appRemount(); })) return;
     state = load();

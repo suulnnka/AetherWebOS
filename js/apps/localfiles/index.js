@@ -12,6 +12,9 @@
 import { el, formatBytes } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './localfiles.css';
+import '../files/files.css';
 import { open } from '../../core/wm.js';
 
 function extIcon(name, isDir) {
@@ -26,15 +29,7 @@ function extIcon(name, isDir) {
 }
 
 register({
-  id: 'localfiles',
-  name: '本地资源',
-  icon: 'hardDrive',
-  color: 'linear-gradient(135deg,#64748b,#334155)',
-  neon: { a: '#60a5fa', b: '#93c5fd' },
-  width: 880, height: 560,
-  min: { w: 560, h: 360 },
-  singleton: true,
-  order: 1.5,
+  ...manifest,
   mount({ root, setTitle }) {
     /** mode: 'fsaccess' | 'list' | null */
     let mode = null;

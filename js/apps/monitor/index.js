@@ -2,21 +2,15 @@
 import { el, formatBytes, fmtTime } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './monitor.css';
 import { subscribe, msgLog } from '../../core/bus.js';
 import fs from '../../core/fs.js';
 import * as wm from '../../core/wm.js';
 import { WebOS } from '../../core/exports.js';
 
 register({
-  id: 'monitor',
-  neon: { a: '#ff3860', b: '#ff2ad4' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '系统监视器',
-  icon: 'activity',
-  color: 'linear-gradient(135deg,#ec4899,#f43f5e)',
-  width: 820, height: 560,
-  min: { w: 560, h: 380 },
-  singleton: true,
-  order: 6,
+  ...manifest,
   mount({ root, bus }) {
     let tab = 'overview';
     let filter = '';

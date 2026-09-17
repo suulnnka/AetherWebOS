@@ -1,5 +1,5 @@
 import { $, el } from '../core/utils.js';
-import { icon, svg } from '../core/icons.js';
+import { icon, svg, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
@@ -23,7 +23,7 @@ export function renderStartMenu() {
   if (!apps.length) return;
   for (const app of apps) {
     const tile = el('div', { class: 'tile' });
-    tile.style.background = app.color || 'var(--accent)';
+    paintTile(tile, app);
     tile.append(icon(app.icon, 21));
     const item = el('button', {
       class: 'sm-item', 'data-search': (app.name + ' ' + app.id).toLowerCase(),
@@ -91,6 +91,9 @@ export function renderStartUser() {
   $('#sm-user').title = user ? `已登录:${user}` : '未登录 — 点击管理用户';
 }
 subscribe('accounts:changed', renderStartUser);
+subscribe('sys:settings-changed', (p) => {
+  if (p?.changed?.includes('style')) renderStartMenu();
+});
 $('#sm-user').addEventListener('click', () => {
   toggleStartMenu(false);
   wm.open('settings', { params: { section: 'user' } });

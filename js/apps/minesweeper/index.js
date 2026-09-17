@@ -5,6 +5,8 @@
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './minesweeper.css';
 import { dialogs } from '../../core/dialogs.js';
 
 const LEVELS = {
@@ -15,15 +17,7 @@ const LEVELS = {
 const NUM_COLORS = ['', '#2563eb', '#15803d', '#dc2626', '#6d28d9', '#b45309', '#0e7490', '#334155', '#7f1d1d'];
 
 register({
-  id: 'minesweeper',
-  name: '扫雷',
-  icon: 'alertTriangle',
-  color: 'linear-gradient(135deg,#334155,#0f172a)',
-  neon: { a: '#94a3b8', b: '#f43f5e' },
-  width: 560, height: 620,
-  min: { w: 420, h: 420 },
-  singleton: true,
-  order: 9,
+  ...manifest,
   mount({ root, setTitle }) {
     let level = 'easy';
     let grid, mines, revealed, flagged, started, dead, won;

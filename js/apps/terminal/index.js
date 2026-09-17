@@ -1,8 +1,10 @@
 /* ============ 应用:终端 —— 展示 IPC 与系统能力的入口 ============ */
 import { el, fmtDate, fmtTime } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './terminal.css';
 import fs from '../../core/fs.js';
-import { settings, WALLPAPERS } from '../../core/store.js';
+import { settings, WALLPAPERS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper } from '../../core/store.js';
 import { list as listApps } from '../../core/registry.js';
 import { open } from '../../core/wm.js';
 import { publish } from '../../core/bus.js';
@@ -11,15 +13,7 @@ import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 
 register({
-  id: 'terminal',
-  neon: { a: '#00ff9d', b: '#00c3ff' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '终端',
-  icon: 'terminal',
-  color: 'linear-gradient(135deg,#334155,#0f172a)',
-  width: 700, height: 440,
-  min: { w: 420, h: 260 },
-  singleton: false,
-  order: 3,
+  ...manifest,
   mount({ root, bus }) {
     let cwd = '/home';
     const history = [];
@@ -152,10 +146,15 @@ register({
         print(`主题已切换为 ${arg}`, 't-ok');
       },
       wallpaper(arg) {
-        if (!arg) return print('可用壁纸: ' + WALLPAPERS.map(w => w.id).join(', ') + ' 或图片 URL', 't-dim');
-        if (/^https?:|^data:/.test(arg)) settings.set({ wallpaper: 'custom', wallpaperUrl: arg });
-        else if (WALLPAPERS.some(w => w.id === arg)) settings.set({ wallpaper: arg });
-        else return print(`wallpaper: 未知壁纸 "${arg}"`, 't-err');
+        if (!arg) return print(
+          '静态: ' + STATIC_WALLPAPERS.map(w => w.id).join(', ') +
+          '\n动态: ' + DYNAMIC_WALLPAPERS.map(w => w.id).join(', ') +
+          '\n或直接给图片 URL(静态)', 't-dim');
+        if (/^https?:|^data:/.test(arg)) {
+          settings.set({ wallpaperType: 'static', wallpaperStatic: 'custom', wallpaperUrl: arg });
+        } else if (WALLPAPERS.some(w => w.id === arg)) {
+          pickWallpaper(arg);
+        } else return print(`wallpaper: 未知壁纸 "${arg}"`, 't-err');
         print('壁纸已更换', 't-ok');
       },
       async sysinfo() {

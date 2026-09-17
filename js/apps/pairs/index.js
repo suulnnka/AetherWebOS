@@ -6,6 +6,8 @@
 import { el, E2E } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './pairs.css';
 import { dialogs } from '../../core/dialogs.js';
 
 const SUITS = ['♠', '♥', '♦', '♣'];
@@ -13,15 +15,7 @@ const RANKS = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2']
 const RED = new Set(['♥', '♦']);
 
 register({
-  id: 'pairs',
-  name: '记忆翻牌',
-  icon: 'grid',
-  color: 'linear-gradient(135deg,#7c3aed,#4c1d95)',
-  neon: { a: '#a78bfa', b: '#22d3ee' },
-  width: 620, height: 640,
-  min: { w: 460, h: 460 },
-  singleton: true,
-  order: 9.4,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let size = 4;            // 4 = 4x4(8 对), 6 = 6x6(18 对)
     let deck = [];           // { suit, rank, matched, id }

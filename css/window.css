@@ -36,7 +36,8 @@
 .win:not(.focused) .win-head { opacity: 0.75; }
 .win-head .win-ico {
   width: 21px; height: 21px; border-radius: 6px;
-  display: grid; place-items: center; color: #fff; flex: none;
+  display: grid; place-items: center; color: var(--tile-fg, #fff); flex: none;
+  background: var(--tile-bg, var(--accent));
 }
 .win-head .win-title {
   flex: 1; font-size: 13px; color: var(--text);
@@ -79,6 +80,17 @@
 .rz-se { bottom: -3px; right: -3px; width: 13px; height: 13px; cursor: nwse-resize; }
 .rz-sw { bottom: -3px; left: -3px; width: 13px; height: 13px; cursor: nesw-resize; }
 .win.max .rz { display: none; }
+
+/* 应用模态(二级弹框):锁定窗口的遮罩,盖住标题栏 + 内容 + 缩放手柄 */
+.app-shade {
+  position: absolute; inset: 0; z-index: 9;
+  border-radius: inherit;
+  background: rgba(5, 9, 20, 0.38);
+  backdrop-filter: grayscale(0.4) blur(1.5px);
+  -webkit-backdrop-filter: grayscale(0.4) blur(1.5px);
+  cursor: not-allowed;
+  animation: fadeIn 0.15s ease-out;
+}
 
 /* 单活动窗口模式:非活动窗口内容变暗下沉 */
 body.single-active .win:not(.focused) .win-body { opacity: 0.62; filter: saturate(0.75); }

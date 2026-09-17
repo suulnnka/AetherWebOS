@@ -142,6 +142,10 @@ setInterval(tickClock, 1000);
 const notifications = [];
 let unread = 0;
 
+subscribe('sys:settings-changed', (p) => {
+  if (p?.changed?.includes('style')) { paintVolIcon(); paintBell(); }
+});
+
 export function paintBell() {
   // 重建时连带 badge(innerHTML 会覆盖旧 badge)
   $('#tray-bell').innerHTML =

@@ -1,6 +1,8 @@
 /* ============ 应用:计算器(手写表达式解析,无 eval) ============ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './calc.css';
 
 /** 词法分析 */
 function tokenize(src) {
@@ -77,15 +79,7 @@ function evalRPN(rpn) {
 const evaluate = (src) => evalRPN(toRPN(tokenize(src)));
 
 register({
-  id: 'calc',
-  neon: { a: '#38bdf8', b: '#818cf8' },  // 霓虹灯条双色(霓虹未来皮肤)
-  name: '计算器',
-  icon: 'calc',
-  color: 'linear-gradient(135deg,#0ea5e9,#2563eb)',
-  width: 320, height: 460,
-  min: { w: 260, h: 380 },
-  singleton: true,
-  order: 4,
+  ...manifest,
   mount({ root }) {
     let expr = '';      // 当前表达式
     let result = '0';   // 当前结果

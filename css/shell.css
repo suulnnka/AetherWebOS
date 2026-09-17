@@ -5,9 +5,11 @@
   position: absolute; inset: 0;
   background: #232a45;
   transition: background 0.4s ease;
-  /* 动态壁纸基础层:缓慢推移/呼吸缩放(纯 transform 合成器动画,不触发重绘)。
-     放大留出的边距(≥6%)始终大于位移幅度(≤1.2%),任意时刻都铺满视口 */
-  animation: wpPan 44s ease-in-out infinite alternate;
+}
+/* 动态壁纸(data-motion="flow"):缓慢推移(纯 transform 合成器动画)+ 光斑画布流动。
+   推移放大的边距(≥6%)始终大于位移幅度(≤1.2%),任意时刻都铺满视口 */
+#wallpaper[data-motion="flow"] {
+  animation: wpPan 44s ease-in-out infinite alternate, wpFlow 22s ease-in-out infinite alternate;
   will-change: transform;
 }
 @keyframes wpPan {
@@ -16,14 +18,11 @@
   66%  { transform: scale(1.14) translate(1%, -1.2%); }
   100% { transform: scale(1.2) translate(-0.6%, 1%); }
 }
-/* 流动型动态壁纸:在推移之上叠加光斑画布流动(background-position) */
-#wallpaper[data-motion="flow"] {
-  animation: wpPan 44s ease-in-out infinite alternate, wpFlow 22s ease-in-out infinite alternate;
-}
+/* 光斑流动:在推移之上叠加 background-position 位移 */
 @keyframes wpFlow {
   0%   { background-position: 50% 50%; }
-  50%  { background-position: 64% 36%; }
-  100% { background-position: 38% 64%; }
+  50%  { background-position: 68% 32%; }
+  100% { background-position: 32% 68%; }
 }
 #wallpaper::after {
   content: ""; position: absolute; inset: 0;
@@ -50,7 +49,8 @@
   width: var(--tile); height: var(--tile);
   border-radius: calc(var(--tile) * 0.24);
   display: grid; place-items: center;
-  color: #fff;
+  color: var(--tile-fg, #fff);
+  background: var(--tile-bg, var(--accent));
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 .dicon .label {
@@ -101,7 +101,8 @@
 .tbtn:hover { background: var(--hover); }
 .tbtn .t-ico {
   width: 26px; height: 26px; border-radius: 7px;
-  display: grid; place-items: center; color: #fff; flex: none;
+  display: grid; place-items: center; color: var(--tile-fg, #fff); flex: none;
+  background: var(--tile-bg, var(--accent));
 }
 .tbtn .t-title {
   font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -171,7 +172,8 @@
 .sm-item:hover { background: var(--hover); }
 .sm-item .tile {
   width: 42px; height: 42px; border-radius: 11px;
-  display: grid; place-items: center; color: #fff;
+  display: grid; place-items: center; color: var(--tile-fg, #fff);
+  background: var(--tile-bg, var(--accent));
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .sm-item .name { font-size: 12px; text-align: center; line-height: 1.25; }

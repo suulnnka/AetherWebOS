@@ -6,6 +6,8 @@
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './weather.css';
 import weather from '../../core/weather.js';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -27,15 +29,7 @@ function tempChart(rows, key = 'temp') {
 }
 
 register({
-  id: 'weather',
-  name: '天气',
-  icon: 'sun',
-  color: 'linear-gradient(135deg,#38bdf8,#f59e0b)',
-  neon: { a: '#38bdf8', b: '#fbbf24' },
-  width: 820, height: 600,
-  min: { w: 560, h: 420 },
-  singleton: true,
-  order: 2.8,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let cityId = 'shanghai';
     let tab = 'now';        // now | days | history

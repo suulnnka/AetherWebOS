@@ -8,6 +8,8 @@
 import { el, escapeHtml, fmtTime } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './qq.css';
 import { accounts } from '../../core/accounts.js';
 
 const KEY = 'webos.qq.v1';
@@ -36,15 +38,7 @@ const loadState = () => {
 };
 
 register({
-  id: 'qq',
-  name: 'QQ',
-  icon: 'message',
-  color: 'linear-gradient(135deg,#3b82f6,#1d4ed8)',
-  neon: { a: '#60a5fa', b: '#22d3ee' },
-  width: 620, height: 500,
-  min: { w: 480, h: 380 },
-  singleton: true,
-  order: 2.9,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     root.classList.add('qq-app');
     let saved = loadState();

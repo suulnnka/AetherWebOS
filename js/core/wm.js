@@ -8,22 +8,51 @@
  * ============================================================ */
 
 import { el, clamp } from './utils.js';
-import { icon } from './icons.js';
+import { icon, paintTile } from './icons.js';
 import { publish } from './bus.js';
-import { get as getApp } from './registry.js';
+import { ensureLoaded } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
 import fs from './fs.js';
 import { showMenu, copyText, selectionAt } from './menu.js';
+import { forApp as dialogHelpers } from './dialogs.js';
 
 const wins = new Map();   // winId -> win 对象
 let zTop = 20;
 let seq = 0;
 let cascadeSeq = 0;
 
-/* 模态对话框支持:dialog 窗口打开时显示遮罩,期间其他窗口不可激活 */
+/* ============================================================
+ * 模态分级:0 = 非模态(一级,不影响任何界面)
+ *           2 = 应用模态(二级,锁定弹出者应用的所有窗口)
+ *           3 = 系统模态(三级,锁定整个桌面,仅对话框可操作)
+ * dialog 窗口默认级别 3;普通窗口默认 0。
+ * ============================================================ */
 let shadeEl = null;
-const modalWins = new Set();
+const modalWins = new Set();     // 系统模态(三级)对话框
+const appModalWins = new Set();  // 应用模态(二级)对话框
+
+/** 应用模态:窗口 w 是否被其应用的二级弹框锁定 */
+function isAppLocked(w) {
+  for (const d of appModalWins) {
+    if (d.ownerApp === w.appId && d !== w) return true;
+  }
+  return false;
+}
+
+/** 为所有被二级弹框锁定的窗口同步遮罩层(标题栏 + 内容整体不可操作) */
+function syncAppShades() {
+  for (const w of wins.values()) {
+    const locked = isAppLocked(w);
+    if (locked && !w.shadeEl) {
+      w.shadeEl = el('div', { class: 'app-shade' });
+      w.el.append(w.shadeEl);
+    } else if (!locked && w.shadeEl) {
+      w.shadeEl.remove();
+      w.shadeEl = null;
+    }
+  }
+}
 
 function raiseShade() {
   if (!modalWins.size) { shadeEl?.remove(); shadeEl = null; return; }
@@ -67,8 +96,10 @@ const emit = (type, payload) =>
   publish(`sys:win-${type}`, { from: 'wm', type: `win-${type}`, payload });
 
 /* ---------------- 打开窗口 ---------------- */
-export function open(appId, { params } = {}) {
-  const app = getApp(appId);
+/* 异步:惰性应用需先拉取其代码 chunk(本地毫秒级,重复打开走模块缓存) */
+/* level: 0 非模态 / 2 应用模态 / 3 系统模态;缺省时 dialog 窗口为 3,普通窗口为 0 */
+export async function open(appId, { params, level, owner } = {}) {
+  const app = await ensureLoaded(appId);
   if (!app) { console.warn('[wm] 应用不存在:', appId); return null; }
 
   // 单实例:聚焦已有窗口并转发参数
@@ -82,6 +113,11 @@ export function open(appId, { params } = {}) {
     }
   }
 
+  return spawnWindow(app, { params, level, owner, mount: (ctx) => app.mount(ctx) });
+}
+
+/* ---------------- 窗口构建(应用窗口与通用弹窗共用) ---------------- */
+function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
   const id = 'w' + (++seq);
   const a = area();
   const width = Math.min(app.width, a.width - 12);
@@ -98,7 +134,7 @@ export function open(appId, { params } = {}) {
   const titleEl = el('span', { class: 'win-title' }, app.name);
   const icoEl = el('span', { class: 'win-ico' },
     icon(app.icon, 13));
-  icoEl.style.background = app.color || 'var(--accent)';
+  paintTile(icoEl, app);
 
   const btnMin = el('button', { class: 'wbtn mn', title: '最小化' }, icon('minus', 14));
   const btnMax = el('button', { class: 'wbtn mx', title: '最大化 / 还原' },
@@ -114,7 +150,7 @@ export function open(appId, { params } = {}) {
   const body = el('div', { class: 'win-body' });
   const root = el('section', {
     class: 'win opening',
-    dataset: { app: appId, id },
+    dataset: { app: app.id, id },
     style: { left: x + 'px', top: y + 'px', width: width + 'px', height: height + 'px', zIndex: ++zTop },
   }, head, body,
     ...['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => el('div', { class: `rz rz-${d}`, dataset: { dir: d } })));
@@ -124,17 +160,20 @@ export function open(appId, { params } = {}) {
   if (app.neon?.b) root.style.setProperty('--neon-b', app.neon.b);
 
   const w = {
-    id, appId, app, el: root, body, titleEl,
+    id, appId: app.id, app, el: root, body, titleEl,
     state: 'normal',            // normal | min | max
     prevState: 'normal',
     restoreRect: null,
     hooks: {},
     bus: null,
+    modalLevel: level ?? (app.dialog ? 3 : 0),
+    ownerApp: owner || null,    // 二级弹框:锁定的目标应用
+    shadeEl: null,
   };
 
   const win = {
     get id() { return id; },
-    get appId() { return appId; },
+    get appId() { return app.id; },
   };
 
   if (!app.dialog) {
@@ -153,13 +192,13 @@ export function open(appId, { params } = {}) {
     }
   }, true);
 
-  // 挂载应用
-  w.bus = createAppBus(appId);
+  // 挂载内容
+  w.bus = createAppBus(app.id);
   const ctx = {
     root: body,
     win,
     bus: w.bus,
-    params: params || {},
+    params,
     fs,
     settings,
     /** 应用自定义右键:fn({ x, y, target }) 返回菜单项数组(可含 {sep:true});
@@ -167,19 +206,24 @@ export function open(appId, { params } = {}) {
     onContextMenu: (fn) => { w.ctxMenu = fn; },
     setTitle: (t) => {
       titleEl.textContent = t ?? app.name;
-      emit('title', { id, appId, title: titleEl.textContent });
+      emit('title', { id, appId: app.id, title: titleEl.textContent });
     },
     close: () => close(id),
     focus: () => focus(id),
     /** 程序化调整窗口尺寸(对话框自适应内容高度等) */
     setSize: (nw, nh) => applyRect(w, { x: w.el.offsetLeft, y: w.el.offsetTop, w: nw, h: nh }, false),
+    /** 应用绑定弹框:owner 自动为本应用,默认二级(应用模态);
+        { level: 1 } 非模态 / { level: 3 } 系统模态 可覆盖 */
+    dialogs: dialogHelpers(app.id),
+    /** 应用绑定通用弹窗(同 ctx.dialogs 的绑定规则),见 popup() */
+    popup: (opts = {}) => popup({ owner: app.id, ...opts }),
   };
 
   try {
-    const hooks = app.mount(ctx);
+    const hooks = mount(ctx);
     if (hooks && typeof hooks === 'object') w.hooks = hooks;
   } catch (err) {
-    console.error(`[wm] 应用 "${appId}" 挂载失败:`, err);
+    console.error(`[wm] 窗口 "${app.id}" 挂载失败:`, err);
     body.append(el('div', { class: 'win-error' },
       el('b', {}, '应用启动失败'),
       el('div', { class: 'mono' }, String(err?.message || err))));
@@ -192,11 +236,67 @@ export function open(appId, { params } = {}) {
   setTimeout(() => root.classList.remove('opening'), 240);
 
   wins.set(id, w);
+  // 模态登记:三级进系统模态(全屏遮罩+焦点锁);二级锁定 owner 应用的所有窗口;
+  // 二级未指明 owner 时无法表达"锁谁",退化为系统模态
+  if (w.modalLevel === 2 && !w.ownerApp) { w.modalLevel = 3; }
+  if (w.modalLevel >= 3) modalWins.add(w);
+  if (w.modalLevel === 2) appModalWins.add(w);
+  syncAppShades();
   focus(id);
-  // 模态对话框:显示遮罩并保持焦点独占
-  if (app.dialog) { modalWins.add(w); raiseShade(); }
-  emit('open', { id, appId, title: titleEl.textContent });
+  if (w.modalLevel >= 3) raiseShade();
+  emit('open', { id, appId: app.id, title: titleEl.textContent });
   return w;
+}
+
+/* ---------------- 通用弹窗(任意内容的三级模态窗口) ----------------
+ * 弹窗不等于消息框:内容可以是复杂配置页、画布渲染的游戏等任意界面。
+ *
+ *   const h = wm.popup({
+ *     title: '高级设置', width: 720, height: 520,
+ *     level: 2,                 // 1 非模态 / 2 应用模态 / 3 系统模态
+ *     chrome: 'dialog',         // 仅关闭钮 + 居中;'full' = 完整窗口件
+ *     mount({ root, close, setSize, bus }) { root.append(...); },
+ *   });
+ *   h.promise.then(v => ...);   // close(value) 的 value 在此兑现
+ *   h.close('ok');
+ *
+ * 返回 { id, win, promise, close(value) }。 */
+export function popup({
+  title = '弹窗', icon: ic = 'sliders',
+  width = 560, height = 420, min,
+  resizable = true,
+  chrome = 'dialog',
+  level = 2, owner,
+  mount, params,
+} = {}) {
+  let resolveClosed;
+  const promise = new Promise((res) => { resolveClosed = res; });
+  const app = {
+    id: 'popup', name: title, icon: ic,
+    dialog: chrome !== 'full',
+    width, height, min, resizable,
+    singleton: false, desktop: false,
+  };
+  let w;
+  w = spawnWindow(app, {
+    params,
+    level,
+    owner,
+    mount: (ctx) => {
+      // close(value):关闭弹窗并让 promise 以 value 兑现
+      ctx.close = (value) => { w._popupValue = value; close(w.id); };
+      const hooks = mount?.(ctx) || {};
+      const userOnClose = hooks.onClose;
+      hooks.onClose = () => {
+        // 返回 false 可拦截关闭(如游戏中误触);拦截时不兑现 promise
+        if (typeof userOnClose === 'function' && userOnClose() === false) return false;
+        resolveClosed(w._popupValue);
+        return true;
+      };
+      return hooks;
+    },
+  });
+  return { id: w.id, win: w, promise, close: (value) => { w._popupValue = value; close(w.id); } };
 }
 
 /* ---------------- 关闭 ---------------- */
@@ -206,7 +306,8 @@ export function close(id) {
   if (w.hooks.onClose && w.hooks.onClose() === false) return; // 应用可拦截
   w.bus.dispose();
   wins.delete(id);
-  if (w.app.dialog) { modalWins.delete(w); raiseShade(); }
+  if (w.modalLevel >= 3) { modalWins.delete(w); raiseShade(); }
+  if (w.modalLevel === 2) { appModalWins.delete(w); syncAppShades(); }
   emit('close', { id, appId: w.appId });
   w.el.classList.add('closing');
   setTimeout(() => w.el.remove(), 170);
@@ -216,13 +317,15 @@ export function close(id) {
 export function focus(id) {
   const w = wins.get(id);
   if (!w) return;
-  // 模态期:只有对话框可激活(严格单活动窗口)
-  if (modalWins.size && !w.app.dialog) return;
+  // 系统模态期:只有对话框可激活(严格单活动窗口)
+  if (modalWins.size && w.modalLevel !== 3) return;
+  // 应用模态期:被二级弹框锁定的窗口不可激活
+  if (isAppLocked(w)) return;
   if (w.state === 'min') restoreWin(id);
   if (w.el.style.zIndex != zTop) {
     w.el.style.zIndex = ++zTop;
     if (zTop > 900) renormalizeZ();
-    if (w.app.dialog) raiseShade();
+    if (w.modalLevel >= 3) raiseShade();
   }
   for (const o of wins.values()) o.el.classList.toggle('focused', o === w);
   emit('focus', { id, appId: w.appId });
@@ -475,9 +578,10 @@ export function cascade() {
   return true;
 }
 
-/** 切换活动窗口(Alt+Q):按最近使用顺序循环;模态期只在对话框之间切换 */
+/** 切换活动窗口(Alt+Q):按最近使用顺序循环;
+ *  系统模态期只在对话框之间切换,应用模态期跳过被锁定的窗口 */
 export function focusCycle() {
-  const pool = (modalWins.size ? [...modalWins] : visible())
+  const pool = (modalWins.size ? [...modalWins] : visible().filter(w => !isAppLocked(w)))
     .sort((x, y) => (+y.el.style.zIndex) - (+x.el.style.zIndex));
   if (pool.length < 2) return;
   const cur = pool.findIndex(w => w.el.classList.contains('focused'));

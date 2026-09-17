@@ -6,6 +6,8 @@
 import { el, escapeHtml, fmtTime, fmtDate } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
+import manifest from './manifest.js';
+import './sms.css';
 import sms from '../../core/sms.js';
 import { settings } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
@@ -15,15 +17,7 @@ const CODE_RX = /\b([A-Z0-9]{4,8})\b/;
 const extractCode = (t) => { const m = CODE_RX.exec(t.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248))); return m ? m[1] : null; };
 
 register({
-  id: 'sms',
-  name: '短信',
-  icon: 'message',
-  color: 'linear-gradient(135deg,#22c55e,#16a34a)',
-  neon: { a: '#4ade80', b: '#22d3ee' },
-  width: 860, height: 560,
-  min: { w: 560, h: 380 },
-  singleton: true,
-  order: 1.8,
+  ...manifest,
   mount({ root, setTitle, bus }) {
     let selAddr = null;
 
