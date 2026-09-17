@@ -203,6 +203,13 @@ void main() { gl_FragColor = vec4(uColor, uOpacity); }
 
 const rgb = (hex) => new Vec3(((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255);
 
+/* 棋子整体缩放系数(1 = 底座直径 0.88,几乎填满 1.0 的格子) */
+const PIECE_SCALE = 0.8;
+/* 拾取用的包围圆柱 [半径, 高]:棋子是回转体,射线打圆柱足够准也比逐三角形求交快得多。
+ * 半径放宽 1.15 倍让点击更好命中,但仍小于半格(0.5)不会误伤邻格。
+ * 若改动棋子剖面高度,这里要同步。 */
+const HIT_CYL = { p: [0.44, 0.79], r: [0.44, 0.96], n: [0.45, 1.09], b: [0.44, 1.25], q: [0.44, 1.46], k: [0.45, 1.69] };
+
 /* ============ 注册应用 ============ */
 register({
   ...manifest,
@@ -379,50 +386,55 @@ register({
         });
       });
 
-      /* 剖面统一按「上小下大」处理:底座半径 0.40–0.43(格宽 1.0,相邻棋子不打架),
-       * 向上逐级收细到 0.15–0.30,重心压低、轮廓稳。
-       * 高度梯队按 Staunton 标准:兵 0.71 < 马/车 0.88 < 象 1.00 < 后 1.14 < 王 1.42。
-       * 王与后的区分是关键:后是「开口冠 + 一圈大宝珠 + 中心大珠」,
-       * 王是「收缩成圆顶的冠盖 + 高十字」,且王整体比后高出 25%,一眼可辨。 */
+      /* 造型参考了外部一份 three.js 棋子模型(两级台阶底座 / 椭球主教冠 / 圆柱王冠),
+       * 但那份代码用的是 three 的 API,本项目已换 ogl,故只在 lathe 剖面上复刻其造型语言。
+       * 它的高度梯队有硬伤(兵 2.55 高于车 2.3、马最矮、象高于后),没有照搬;
+       * 这里按 Staunton 实物的相对比例重排:兵 0.79 < 车 0.96 < 马 1.09 < 象 1.25 < 后 1.46 < 王 1.69。
+       * 各件底座统一两级台阶、最大半径 0.44–0.45(格宽 1.0,相邻棋子不打架),向上逐级收细。 */
 
-      // 兵:宽底座 → 细腰 → 颈环 → 圆球头
-      const P_PAWN = [[0, 0], [0.40, 0], [0.435, 0.05], [0.40, 0.10], [0.31, 0.15],
-        [0.235, 0.21], [0.185, 0.28], [0.17, 0.32],
-        [0.235, 0.36], [0.24, 0.385], [0.175, 0.415],
-        [0.205, 0.47], [0.195, 0.56], [0.15, 0.64], [0.08, 0.69], [0, 0.71]];
-      // 车:宽底座 → 收腰塔身 → 顶部外张边沿(顶面留给 6 个城垛)
-      const P_ROOK = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.345, 0.16],
-        [0.30, 0.24], [0.275, 0.42], [0.265, 0.55],
-        [0.30, 0.60], [0.335, 0.65], [0.345, 0.71], [0.345, 0.75], [0, 0.75]];
-      // 象:底座 → 长细腰 → 颈环 → 主教冠顶尖(顶上加小球)
-      const P_BISHOP = [[0, 0], [0.40, 0], [0.435, 0.05], [0.40, 0.10], [0.31, 0.155],
-        [0.235, 0.23], [0.20, 0.33], [0.255, 0.385], [0.26, 0.415], [0.205, 0.45],
-        [0.215, 0.53], [0.195, 0.64], [0.16, 0.74], [0.145, 0.81],
-        [0.175, 0.855], [0.155, 0.92], [0.09, 0.965], [0.05, 0.99], [0, 1.00]];
+      // 兵:两级底座 → 细腰 → 颈环 → 圆球头
+      const P_PAWN = [[0, 0], [0.44, 0], [0.44, 0.025], [0.41, 0.06], [0.39, 0.11], [0.335, 0.20],
+        [0.26, 0.28], [0.19, 0.38], [0.165, 0.44],
+        [0.235, 0.475], [0.24, 0.50], [0.165, 0.525],
+        [0.19, 0.575], [0.185, 0.665], [0.135, 0.735], [0.07, 0.775], [0, 0.785]];
+      // 车:两级底座 → 收腰塔身 → 顶部外张边沿(顶面留给 6 个城垛)
+      const P_ROOK = [[0, 0], [0.44, 0], [0.44, 0.025], [0.41, 0.06], [0.39, 0.11], [0.335, 0.20],
+        [0.30, 0.30], [0.275, 0.50], [0.265, 0.62],
+        [0.305, 0.68], [0.35, 0.74], [0.355, 0.80], [0, 0.80]];
+      // 象:两级底座 → 长细腰 → 颈环 → 椭球主教冠(顶上加小球)
+      const P_BISHOP = [[0, 0], [0.44, 0], [0.44, 0.025], [0.41, 0.06], [0.39, 0.11], [0.335, 0.20],
+        [0.265, 0.32], [0.215, 0.50], [0.19, 0.62],
+        [0.25, 0.665], [0.255, 0.69], [0.195, 0.715],
+        [0.215, 0.76], [0.212, 0.86], [0.19, 1.00], [0.145, 1.09], [0.08, 1.16], [0, 1.18]];
       // 后:修长身形 → 外张的开口冠(冠沿一圈大宝珠 + 正中一颗)
-      const P_QUEEN = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.335, 0.16],
-        [0.255, 0.26], [0.215, 0.40], [0.275, 0.47], [0.28, 0.50], [0.22, 0.535],
-        [0.235, 0.63], [0.26, 0.75], [0.30, 0.845], [0.355, 0.925], [0.395, 0.975],
-        [0.375, 1.01], [0.29, 1.01], [0, 1.01]];
-      // 王:更高更壮 → 冠口外张后向上收成圆顶(与后的开口碗完全不同)→ 顶上立十字
-      const P_KING = [[0, 0], [0.43, 0], [0.465, 0.05], [0.43, 0.105], [0.345, 0.165],
-        [0.27, 0.28], [0.225, 0.44], [0.29, 0.515], [0.295, 0.545], [0.235, 0.585],
-        [0.25, 0.70], [0.275, 0.82], [0.315, 0.92], [0.365, 1.015], [0.405, 1.075],
-        [0.375, 1.115], [0.26, 1.16], [0.12, 1.19], [0, 1.20]];
+      const P_QUEEN = [[0, 0], [0.44, 0], [0.44, 0.025], [0.41, 0.06], [0.39, 0.11], [0.335, 0.20],
+        [0.27, 0.34], [0.225, 0.58], [0.20, 0.76],
+        [0.27, 0.81], [0.275, 0.835], [0.205, 0.86],
+        [0.235, 0.96], [0.275, 1.08], [0.325, 1.18], [0.375, 1.235], [0.40, 1.275],
+        [0.375, 1.31], [0.285, 1.31], [0, 1.31]];
+      // 王:最高最壮 → 冠口外张后收成圆柱冠盖(与后的开口碗截然不同)→ 顶上立十字
+      const P_KING = [[0, 0], [0.45, 0], [0.45, 0.025], [0.42, 0.06], [0.40, 0.11], [0.34, 0.20],
+        [0.28, 0.36], [0.235, 0.62], [0.21, 0.82],
+        [0.285, 0.875], [0.29, 0.90], [0.215, 0.925],
+        [0.25, 1.03], [0.29, 1.16], [0.34, 1.26], [0.40, 1.315], [0.395, 1.35],
+        [0.30, 1.35], [0.295, 1.42], [0.29, 1.44], [0, 1.45]];
       // 马:回转底座 + 挤出的马头侧影(面朝 +x)
-      const P_KNIGHT_BASE = [[0, 0], [0.42, 0], [0.455, 0.05], [0.42, 0.105], [0.345, 0.16],
-        [0.30, 0.24], [0.255, 0.34], [0.235, 0.42], [0, 0.44]];
+      const P_KNIGHT_BASE = [[0, 0], [0.44, 0], [0.44, 0.025], [0.41, 0.06], [0.39, 0.11], [0.335, 0.20],
+        [0.285, 0.30], [0.25, 0.40], [0.235, 0.46], [0, 0.48]];
       /* 马头侧影。必须逆时针排列 —— extrudeGeo 的外法线按 (dy, -dx) 算,
        * 顺时针轮廓算出来是内法线,光照会整个反掉(OpenGL 默认 CCW 为正面)。 */
-      const O_KNIGHT_HEAD = [[0.10, 0.34], [0.20, 0.40], [0.26, 0.47], [0.30, 0.53],
-        [0.285, 0.60], [0.235, 0.645], [0.20, 0.72], [0.165, 0.79],
-        [0.155, 0.87], [0.115, 0.83], [0.09, 0.88], [0.045, 0.79],
-        [-0.02, 0.68], [-0.09, 0.56], [-0.14, 0.44], [-0.155, 0.36]];
+      const O_KNIGHT_HEAD = [[0.115, 0.38], [0.23, 0.459], [0.30, 0.551], [0.345, 0.630],
+        [0.328, 0.722], [0.270, 0.781], [0.23, 0.880], [0.190, 0.972],
+        [0.178, 1.077], [0.132, 1.024], [0.104, 1.090], [0.052, 0.972],
+        [-0.023, 0.827], [-0.104, 0.669], [-0.161, 0.512], [-0.178, 0.406]];
 
       const whiteV = rgb(0xf5f0e6), blackV = rgb(0x4a5266);   // 黑棋带蓝灰,暗背景下也能看清造型
       pieceMesh = (t, color) => {
         const cv = color === 'w' ? whiteV : blackV;
         const g = new Transform();
+        // 整体缩放:0.8 让棋子留出格间空隙(底座直径 0.88→0.70),画面不再挤满格子。
+        // 缩放在 group 上做,所有剖面比例/高度梯队保持不动,需要调松紧只改这一个数。
+        g.scale.set(PIECE_SCALE, PIECE_SCALE, PIECE_SCALE);
         const add = (geometry, x, y, z, ry = 0) => {
           const m = makeMesh(geometry, cv);
           m.position.set(x, y, z);
@@ -438,28 +450,28 @@ register({
           // 城垛:顶部沿圆周摆 6 个小方块,略内缩形成垛口
           for (let k = 0; k < 6; k++) {
             const a = (k / 6) * Math.PI * 2;
-            add(boxGeo(0.10, 0.145, 0.088), Math.cos(a) * 0.275, 0.822, Math.sin(a) * 0.275, -a);
+            add(boxGeo(0.105, 0.155, 0.09), Math.cos(a) * 0.285, 0.877, Math.sin(a) * 0.285, -a);
           }
         } else if (t === 'n') {
           add(latheGeo('knightBase', P_KNIGHT_BASE), 0, 0, 0);
           // 白马朝 -z(对手方向),黑马朝 +z
-          add(extrudeGeo('knightHead', O_KNIGHT_HEAD, 0.24), 0, 0, 0,
+          add(extrudeGeo('knightHead', O_KNIGHT_HEAD, 0.26), 0, 0, 0,
             color === 'w' ? Math.PI / 2 : -Math.PI / 2);
         } else if (t === 'b') {
           add(latheGeo('bishop', P_BISHOP), 0, 0, 0);
-          add(sphGeo(0.055), 0, 1.005, 0);                     // 冠顶小球
+          add(sphGeo(0.058), 0, 1.19, 0);                      // 冠顶小球
         } else if (t === 'q') {
           add(latheGeo('queen', P_QUEEN), 0, 0, 0);
           // 后冠:冠沿一圈大宝珠 + 正中一颗更大的
           for (let k = 0; k < 8; k++) {
             const a = (k / 8) * Math.PI * 2;
-            add(sphGeo(0.062), Math.cos(a) * 0.365, 1.035, Math.sin(a) * 0.365);
+            add(sphGeo(0.062), Math.cos(a) * 0.375, 1.335, Math.sin(a) * 0.375);
           }
-          add(sphGeo(0.085), 0, 1.06, 0);
+          add(sphGeo(0.088), 0, 1.37, 0);
         } else {
           add(latheGeo('king', P_KING), 0, 0, 0);
-          add(boxGeo(0.055, 0.30, 0.055), 0, 1.35, 0);         // 十字:竖
-          add(boxGeo(0.21, 0.058, 0.058), 0, 1.295, 0);        // 十字:横
+          add(boxGeo(0.062, 0.32, 0.062), 0, 1.53, 0);         // 十字:竖
+          add(boxGeo(0.235, 0.062, 0.062), 0, 1.46, 0);        // 十字:横
         }
         return g;
       };
@@ -551,6 +563,7 @@ register({
     }
 
     let dragging = false, lx = 0, ly = 0;
+    let downX = 0, downY = 0, dragged = false;   // 拖视角后松手会补发 click,超过阈值就判为拖拽
     const pointers = new Map();   // 多指:pointerId -> {x, y}
     let pinch = null;             // 双指基线 {dist, ang},为空表示当前不是双指手势
     let suppressClick = false;    // 双指手势结束后浏览器会补发一次 click,要吃掉避免误走子
@@ -577,6 +590,7 @@ register({
       }
       if (!dragging) return;
       tween = null;
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) dragged = true;
       theta += (e.clientX - lx) * 0.008;
       phi = clamp(phi + (e.clientY - ly) * 0.006, 0.35, 1.45);
       lx = e.clientX; ly = e.clientY;
@@ -584,6 +598,7 @@ register({
     };
     const endPointer = (e) => {
       pointers.delete(e.pointerId);
+      if (pointers.size === 0 && dragged) suppressClick = true;   // 拖过视角,别当走子
       if (pointers.size < 2) pinch = null;
       if (pointers.size === 1) {                      // 松开一指,剩下那指接管拖拽(不跳变)
         const [p] = [...pointers.values()];
@@ -609,7 +624,10 @@ register({
       canvas.addEventListener('pointerdown', (e) => {
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (pointers.size >= 2) { pinch = twoFinger(); dragging = false; suppressClick = true; }
-        else if (pointers.size === 1) { dragging = true; lx = e.clientX; ly = e.clientY; }
+        else if (pointers.size === 1) {
+          dragging = true; lx = e.clientX; ly = e.clientY;
+          downX = e.clientX; downY = e.clientY; dragged = false;
+        }
       });
       canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -634,12 +652,36 @@ register({
       canvas.addEventListener('gestureend', gesture(() => { gs = null; }));
     }
 
-    /* 点击走子:射线与棋盘平面求交,再换算成格子坐标。
-     * 不用 ogl 的 Raycast.intersectBounds —— 它按包围球求交,
-     * 对扁平的方格会互相重叠,直接算平面交点更准也更省。 */
+    /* 点击走子 —— 两段式拾取:
+     * ① 先拿射线打棋子的包围圆柱。只算平面交点是不行的:棋子高 1 格以上,
+     *    点棋子时射线穿过去落在 y=0 的交点会跑到它后面的格子,表现为"点不中棋子"。
+     * ② 没打中任何棋子,再退回棋盘平面求交 → 点格子同样有效(空格、走子落点)。
+     * 不用 ogl 的 Raycast.intersectMeshes:它按包围球粗筛,扁平方格会互相重叠。 */
     const ray = new Raycast();
+    function pickPiece(o, d) {
+      let hit = null, bestT = Infinity;
+      for (const it of pieceMeshes) {
+        const [br, bh] = HIT_CYL[board[it.r][it.c].t];
+        const R = br * PIECE_SCALE * 1.15, H = bh * PIECE_SCALE;
+        const ox = o.x - (it.c - 3.5) * square, oz = o.z - (it.r - 3.5) * square;
+        const a = d.x * d.x + d.z * d.z;
+        if (a < 1e-9) continue;                       // 视线垂直,与圆柱轴平行
+        const b = 2 * (ox * d.x + oz * d.z);
+        const cc = ox * ox + oz * oz - R * R;
+        const disc = b * b - 4 * a * cc;
+        if (disc < 0) continue;
+        const sq = Math.sqrt(disc);
+        for (const t of [(-b - sq) / (2 * a), (-b + sq) / (2 * a)]) {
+          if (t <= 0 || t >= bestT) continue;
+          const y = o.y + d.y * t;
+          if (y < 0 || y > H) continue;               // 交点必须在棋子高度范围内
+          bestT = t; hit = [it.r, it.c];
+        }
+      }
+      return hit;
+    }
     function onClick(e) {
-      if (suppressClick) { suppressClick = false; return; }   // 刚结束双指手势,别当走子
+      if (suppressClick) { suppressClick = false; return; }   // 手势/拖拽刚结束,别当走子
       if (!camera || gameOver || (vsAI && turn === 'b')) return;
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -647,6 +689,8 @@ register({
       const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       ray.castMouse(camera, [mx, my]);
       const { origin, direction } = ray;
+      const piece = pickPiece(origin, direction);
+      if (piece) { handleSquare(piece[0], piece[1]); return; }
       if (Math.abs(direction.y) < 1e-6) return;
       const t = -origin.y / direction.y;
       if (t <= 0) return;
@@ -807,7 +851,17 @@ register({
       click: (r, c) => handleSquare(r, c),
       turn: () => turn,
       board: () => board,
+      sel: () => sel,
+      legal: () => legal,
       goHome, flyHome: goHome,
+      /** e2e 用:某格(可指定高度 y)中心的屏幕坐标,便于发真实鼠标事件 */
+      screen: (r, c, y = 0) => {
+        if (!camera || !canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const v = new Vec3((c - 3.5) * square, y, (r - 3.5) * square);
+        v.applyMatrix4(camera.projectionViewMatrix);
+        return [rect.left + (v.x * 0.5 + 0.5) * rect.width, rect.top + (0.5 - v.y * 0.5) * rect.height];
+      },
       home: () => ({ theta, phi, radius,俯角: Math.round((90 - phi * 180 / Math.PI) * 10) / 10 }),
       /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧 */
       stats: () => renderer ? { alive: true, frames, size: [vw, vh], lib: 'ogl' } : { alive: false },
