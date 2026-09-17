@@ -1,4 +1,5 @@
 .shots/
 *.log
 node_modules/
+dist/
 .diag*.mjs

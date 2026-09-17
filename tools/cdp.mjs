@@ -3,30 +3,42 @@
  * 用系统 Chrome 无头实例驱动 WebOS,做交互与截图验证。
  * 用法见 tools/e2e.mjs
  * ============================================================ */
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawn, execSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 export const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PORT = 9333;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-export async function launch(url = 'http://localhost:8080/') {
+export async function launch(url = 'http://localhost:8080/', { profile = '' } = {}) {
+  // profile 用于并行时隔离实例:独立调试端口 + 独立 localStorage
+  const dataDir = process.env.TEMP + '/webos-cdp-profile' + (profile ? '-' + profile : '');
   const proc = spawn(CHROME, [
     '--headless=new',
-    `--remote-debugging-port=${PORT}`,
+    '--remote-debugging-port=0',   // 系统分配空闲端口,并行互不冲突
     '--no-first-run', '--no-default-browser-check',
-    '--user-data-dir=' + process.env.TEMP + '/webos-cdp-profile',
+    '--user-data-dir=' + dataDir,
     '--window-size=1440,900',
     'about:blank',
   ], { stdio: 'ignore' });
-  await sleep(1200);
+
+  // 清掉上次运行遗留的端口文件(否则会读到已死实例的端口),再轮询新文件
+  try { rmSync(dataDir + '/DevToolsActivePort', { force: true }); } catch {}
+  let port = 0;
+  for (let i = 0; i < 60; i++) {
+    try {
+      const first = readFileSync(dataDir + '/DevToolsActivePort', 'utf8').split('\n')[0].trim();
+      if (first) { port = Number(first); break; }
+    } catch { /* Chrome 尚未就绪 */ }
+    await sleep(200);
+  }
+  if (!port) throw new Error('Chrome DevTools 端口未就绪');
 
   // 找到页面 target
   let target;
   for (let i = 0; i < 20; i++) {
     try {
-      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
       target = list.find(t => t.type === 'page');
       if (target) break;
     } catch { /* retry */ }
@@ -52,6 +64,15 @@ export async function launch(url = 'http://localhost:8080/') {
     pending.set(id, { resolve, reject });
     ws.send(JSON.stringify({ id, method, params }));
   });
+  // 等待一次 CDP 事件(如 Page.loadEventFired),超时返回 null
+  const waitEvent = (method, timeoutMs = 15000) => new Promise((resolve) => {
+    const h = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.method === method) { ws.removeEventListener('message', h); clearTimeout(timer); resolve(m.params); }
+    };
+    const timer = setTimeout(() => { ws.removeEventListener('message', h); resolve(null); }, timeoutMs);
+    ws.addEventListener('message', h);
+  });
 
   const client = {
     send, proc, ws,
@@ -61,12 +82,20 @@ export async function launch(url = 'http://localhost:8080/') {
       const r = await send('Runtime.evaluate', {
         expression: wrapped, awaitPromise: true, returnByValue: true,
       });
-      if (r.exceptionDetails) throw new Error('页面执行异常: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+      if (r.exceptionDetails) {
+        const line = r.exceptionDetails.lineNumber != null ? r.exceptionDetails.lineNumber + 1 : '?';
+        const col = r.exceptionDetails.columnNumber != null ? r.exceptionDetails.columnNumber + 1 : '?';
+        const snippet = String(expr).split('\n').slice(Math.max(0, line - 3), line + 1).join('\n');
+        throw new Error('页面执行异常(line ' + line + ':' + col + '): ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + '\n--- 附近代码 ---\n' + snippet);
+      }
       return r.result?.value;
     },
     async goto(url) {
+      // 等新文档 load 完成(而非旧文档),再留首帧渲染余量
+      const loaded = waitEvent('Page.loadEventFired', 20000);
       await send('Page.navigate', { url });
-      await sleep(1800);
+      await loaded;
+      await sleep(200);
     },
     async shot(name) {
       mkdirSync('.shots', { recursive: true });
@@ -76,7 +105,10 @@ export async function launch(url = 'http://localhost:8080/') {
     },
     async close() {
       try { ws.close(); } catch {}
-      try { proc.kill(); } catch {}
+      // Windows 上 proc.kill() 只杀主进程,渲染进程会残留并锁住 profile,
+      // 导致下次同 profile 启动失败 —— 必须杀整棵进程树
+      try { execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' }); }
+      catch { try { proc.kill(); } catch {} }
       await sleep(300);
     },
   };

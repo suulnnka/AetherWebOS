@@ -2,10 +2,20 @@
   "name": "webos",
   "version": "1.0.0",
   "private": true,
-  "description": "纯前端网页操作系统(类群晖 DSM),零依赖零构建零后端",
+  "type": "module",
+  "description": "纯前端网页操作系统(类群晖 DSM),Vite 构建,无后端、无外部 CDN 资源",
   "scripts": {
-    "start": "npx -y serve . -l 8080",
-    "start:py": "python -m http.server 8080"
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "e2e": "node tools/e2e.mjs"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0"
   },
   "license": "MIT"
 }

@@ -4,7 +4,7 @@
  * - 完整走子规则:各兵种 + 王车易位 + 吃过路兵 + 兵升变(自动升后)
  * - 将军 / 将死 / 逼和判定;简单 AI(一层贪心 + 子力价值)
  * ============================================================ */
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import * as THREE from 'three';
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
