@@ -1,5 +1,5 @@
 /* ⚠️ 本文件是 js/apps/reversi/index.js 引擎段的【快照】,不会自动跟随上游改动。
- *    当前快照 = 已落地「提前收尾 + 跳过空方向」的生产版(index.js 747 行)。
+ *    当前快照 = 已落地「提前收尾 + 跳过空方向 + 残局奇偶排序 + 前沿子估值」的生产版(index.js 811 行)。
  *    若 index.js 的引擎段有变更,需要重建本文件。
  *    背景、实测数据与验收方法见 docs/reversi-ai-optimization.md。
  *    用法:node tools/<本文件> <micro|bench|stats|idstats|nps|endgame|selfplay|moves|endmoves>
@@ -201,6 +201,62 @@ function moveFlips(mlo, mhi, olo, ohi) {
   _lo = fl; _hi = fh;
 }
 
+/** 前沿子(潜在行动力):|本方棋子相邻的空位|,衡量"暴露程度" ——
+ *  贴空位的子越多越危险,所以己方该值越小越好。8 次走一格 + popcount,
+ *  比完整着法生成便宜约 5 倍(实测单次约 25ns)。 */
+function potMob(lo, hi, olo, ohi) {
+  const elo = ~(lo | olo) | 0, ehi = ~(hi | ohi) | 0;
+  let t = 0, th = 0, l, h;
+  t |= (lo & NH) << 1; th |= (hi & NH) << 1;
+  t |= (lo & NA) >>> 1; th |= (hi & NA) >>> 1;
+  t |= lo << 8; th |= (hi << 8) | (lo >>> 24);
+  t |= (lo >>> 8) | (hi << 24); th |= hi >>> 8;
+  l = lo & NA; h = hi & NA; t |= l << 7; th |= (h << 7) | (l >>> 25);
+  l = lo & NH; h = hi & NH; t |= (l >>> 7) | (h << 25); th |= h >>> 7;
+  l = lo & NH; h = hi & NH; t |= l << 9; th |= (h << 9) | (l >>> 23);
+  l = lo & NA; h = hi & NA; t |= (l >>> 9) | (h << 23); th |= h >>> 9;
+  return popcnt(t & elo) + popcnt(th & ehi);
+}
+/* ---- 残局奇偶(parity):把空格按 8 连通切成区域,奇数大小的区域优先 ----
+ *  终局本质是"谁在一个连通的空格区域里走最后一步"的争夺,而区域大小决定
+ *  最后一步归谁。先走奇区域能显著压低搜索树。纯排序,不影响任何一手的值。
+ *  实测(5 种子合并,完全求解节点数):13 空 -36% · 14 空 -48% · 15 空 -36%。 */
+let _xlo = 0, _xhi = 0;
+/** 8 连通膨胀(含源自身)→ _xlo/_xhi */
+function expand8(lo, hi) {
+  let t = lo, th = hi, l, h;
+  t |= (lo & NH) << 1; th |= (hi & NH) << 1;
+  t |= (lo & NA) >>> 1; th |= (hi & NA) >>> 1;
+  t |= lo << 8; th |= (hi << 8) | (lo >>> 24);
+  t |= (lo >>> 8) | (hi << 24); th |= hi >>> 8;
+  l = lo & NA; h = hi & NA; t |= l << 7; th |= (h << 7) | (l >>> 25);
+  l = lo & NH; h = hi & NH; t |= (l >>> 7) | (h << 25); th |= h >>> 7;
+  l = lo & NH; h = hi & NH; t |= l << 9; th |= (h << 9) | (l >>> 23);
+  l = lo & NA; h = hi & NA; t |= (l >>> 9) | (h << 23); th |= h >>> 9;
+  _xlo = t; _xhi = th;
+}
+
+let _parLo = 0, _parHi = 0;
+/** 奇数大小空格区域的位掩码 → _parLo/_parHi(对空格做连通分量 + 取奇体积) */
+function parityMask(elo, ehi) {
+  let rlo = 0, rhi = 0, rest = elo, restH = ehi;
+  while (rest | restH) {
+    let b, sq;
+    if (rest) { b = rest & -rest; rest ^= b; sq = 31 - Math.clz32(b); }
+    else { b = restH & -restH; restH ^= b; sq = 63 - Math.clz32(b); }
+    let clo = sq < 32 ? b : 0, chi = sq < 32 ? 0 : b;
+    for (;;) {
+      expand8(clo, chi);
+      const nlo = _xlo & elo, nhi = _xhi & ehi;
+      if (nlo === clo && nhi === chi) break;
+      clo = nlo; chi = nhi;
+    }
+    rest &= ~clo; restH &= ~chi;
+    if ((popcnt(clo) + popcnt(chi)) & 1) { rlo |= clo; rhi |= chi; }
+  }
+  _parLo = rlo; _parHi = rhi;
+}
+
 /** 终局点差 ×100(行棋方视角) */
 function terminalDiff() {
   return (popcnt(PLO) + popcnt(PHI) - popcnt(OLO) - popcnt(OHI)) * 100;
@@ -217,7 +273,10 @@ function evaluate() {
   const mobP = popcnt(MLO) + popcnt(MHI);
   genMoves(OLO, OHI, PLO, PHI);
   const mobO = popcnt(MLO) + popcnt(MHI);
-  return s + (mobP - mobO) * 8;
+  /* 加入前沿子项:己方贴空位的子越少越好 */
+  const frP = potMob(PLO, PHI, OLO, OHI);
+  const frO = potMob(OLO, OHI, PLO, PHI);
+  return s + (mobP - mobO) * 8 + (frO - frP) * 3;
 }
 
 /* 每层搜索的暂存:着法/排序分/翻子掩码/进位前的 4 字局面 */
@@ -294,6 +353,9 @@ function search(depth, alpha, beta, player, ply, exact) {
   /* 遍历合法着,计算翻子;静态排序分 = 位置权重 + 翻子数 ×2 */
   const moves = plyMoves[ply], scores = plyScores[ply];
   const fll = plyFlipLo[ply], flh = plyFlipHi[ply];
+  /* 完全求解:先算一次"奇数空格区域",给落在其中的着法加权 */
+  let pLo = 0, pHi = 0;
+  if (exact) { parityMask(~(PLO | OLO) | 0, ~(PHI | OHI) | 0); pLo = _parLo; pHi = _parHi; }
   let n = 0;
   while (mlo | mhi) {
     let b, sq;
@@ -301,7 +363,9 @@ function search(depth, alpha, beta, player, ply, exact) {
     else { b = mhi & -mhi; mhi ^= b; sq = 63 - Math.clz32(b); }
     moveFlips(sq < 32 ? b : 0, sq < 32 ? 0 : b, OLO, OHI);
     const fc = popcnt(_lo) + popcnt(_hi);
-    moves[n] = sq; scores[n] = W64[sq] + fc * 2; fll[n] = _lo; flh[n] = _hi;
+    /* 完全求解时:奇区域 > 偶区域;同区域内翻子少的优先(减少对手行动力) */
+    const par = exact ? ((sq < 32 ? (pLo >>> sq) : (pHi >>> (sq - 32))) & 1) : 0;
+    moves[n] = sq; scores[n] = W64[sq] + (exact ? -fc : fc) * 2 + par * 1000; fll[n] = _lo; flh[n] = _hi;
     n++;
   }
   /* 插入排序(降序),置换表最优着法提到队首(四个平行数组同步移动) */
@@ -605,7 +669,7 @@ function rootSearch(board, aiColor, depth, exactMode) {
 }
 
 /** 从起始局面确定性地走出 plies 手,得到测试局面(用固定种子伪随机) */
-function randomPosition(plies) {
+function randomPosition(plies, seedIn = 12345) {
   let b = parseBoard(`
     ........
     ........
@@ -615,7 +679,7 @@ function randomPosition(plies) {
     ........
     ........
     ........`);
-  let seed = 12345;
+  let seed = seedIn;
   const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
   let turn = 'b';
   for (let k = 0; k < plies; k++) {
@@ -902,10 +966,12 @@ if (MODE === 'endnodes') {
   /* 残局完全求解的节点数。局面由固定种子生成 ⇒ 节点数完全可复现,
      是"纯加速/纯排序"类改动最干净的度量(不受机器噪声影响)。 */
   const bs = [];
-  for (let plies = 40; plies <= 56; plies++) {
-    const b = randomPosition(plies);
-    const e = emptiesOf(b);
-    if (e >= 8 && e <= 22) bs.push({ b, e, plies });
+  for (const seed of [1, 2, 3, 4, 5]) {
+    for (let plies = 40; plies <= 56; plies++) {
+      const b = randomPosition(plies, seed * 7919);
+      const e = emptiesOf(b);
+      if (e >= 8 && e <= 15) bs.push({ b, e, plies, seed });
+    }
   }
   const byE = {};
   for (const x of bs) (byE[x.e] = byE[x.e] || []).push(x);
