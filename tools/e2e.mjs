@@ -2274,7 +2274,8 @@ group('T37', 'QQ 聊天', async () => {
   /* ---- T37 QQ 聊天 ---- */
   await fresh();
   for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
-  await ev(`localStorage.removeItem('webos.qq.v1')`);   // 清档:测试登录流程
+  // 清档:测试登录流程(QQ 按用户分键存储,基础键与 ::qq-* 会话键都要清)
+  await ev(`Object.keys(localStorage).filter(k => k === 'webos.qq.v1' || k.startsWith('webos.qq.v1::')).forEach(k => localStorage.removeItem(k))`);
   await ev(`WebOS.wm.close(document.querySelector('.win[data-app=qq]')?.dataset.id || '')`);
   await ev(`WebOS.wm.open('qq')`);
   await sleep(700);

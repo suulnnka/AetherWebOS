@@ -14,7 +14,7 @@ const OWNER = 'settings';   // 二级弹框:锁定的目标应用
 export function openConfigPopup() {
   const state = { quality: 'high', shadow: true, fov: 75, budget: 40 };
 
-  return popup({
+  const h = popup({
     title: '渲染高级设置', icon: 'sliders',
     width: 620, height: 460, resizable: true,
     level: 2, owner: OWNER,
@@ -53,13 +53,14 @@ export function openConfigPopup() {
           el('button', { class: 'btn primary', onClick: () => close({ ...state }) }, '保存配置'))));
     },
   });
+  return h.promise;
 }
 
 /** 游戏弹窗(三级 · 系统模态 · canvas 渲染)。
  *  「弹球接环」:方向键/鼠标移动挡板,接满 5 颗通关,漏 3 颗失败。
  *  Promise 兑现:true 通关 / false 失败退出 / undefined 直接关闭。 */
 export function openGamePopup() {
-  return popup({
+  const h = popup({
     title: '弹球接环 · 系统锁定中', icon: 'activity',
     width: 460, height: 420, resizable: false,
     level: 3,
@@ -131,7 +132,13 @@ export function openGamePopup() {
         S.raf = requestAnimationFrame(loop);
       };
 
-      const retry = el('button', { class: 'btn', onClick: () => { close(false); openGamePopup(); } }, '再来一局');
+      const retry = el('button', { class: 'btn', onClick: () => {
+        // 原地重开:不关闭弹窗,只重置状态并重启渲染循环
+        Object.assign(S, { paddle: W / 2, orbs: [], score: 0, lives: 3, over: false, t: 0 });
+        cancelAnimationFrame(S.raf);
+        drawHud();
+        S.raf = requestAnimationFrame(loop);
+      } }, '再来一局');
       const giveup = el('button', { class: 'btn', onClick: () => close(false) }, '放弃并退出');
       root.append(el('div', { class: 'app', style: { padding: '12px 14px', gap: '8px' } },
         hud, cv,
@@ -150,4 +157,5 @@ export function openGamePopup() {
       };
     },
   });
+  return h.promise;
 }
