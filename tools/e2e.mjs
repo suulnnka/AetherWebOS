@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ---------- CLI ---------- */
 const argv = process.argv.slice(2);
-let parallel = 1, wantList = false, workerMode = false, clean = false;
+let parallel = 6, wantList = false, workerMode = false, clean = false;   // 默认 6 个浏览器并行
 const selectors = [];
 let workerIds = null, workerOut = null, workerProfile = '';
 for (let i = 0; i < argv.length; i++) {
@@ -46,7 +46,7 @@ function printHelp() {
   console.log(`用法: node tools/e2e.mjs [选择器...] [选项]
   选择器: 组号(T22 或 22)、区间(T1-T5)、标题关键词(邮件);逗号分隔可混写
   --list        列出全部用例组
-  --parallel N  用 N 个浏览器实例并行跑(默认 1)
+  --parallel N  用 N 个浏览器实例并行跑(默认 6;调试可 --parallel 1 串行)
   --clean       运行前清空测试用浏览器 profile(全新 localStorage 状态)`);
 }
 
