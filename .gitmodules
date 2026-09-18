@@ -1,8 +1,8 @@
 [submodule "vendor/AetherOthello"]
 	path = vendor/AetherOthello
-	url = git@github.com:suulnnka/AetherOthello.git
+	url = https://github.com/suulnnka/AetherOthello.git
 [submodule "vendor/AetherChess"]
 	path = vendor/AetherChess
-	url = git@github.com:suulnnka/AetherChess.git
+	url = https://github.com/suulnnka/AetherChess.git
 	# 本地调参数据(tuner/data/,gitignore)会让子模块显得 dirty,忽略未跟踪项
 	ignore = untracked

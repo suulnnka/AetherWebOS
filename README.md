@@ -41,7 +41,7 @@ git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`
 
 ```bash
 # 首次克隆:--recurse-submodules 一并拉齐引擎子模块
-git clone --recurse-submodules git@github.com:suulnnka/AetherWebOS.git
+git clone --recurse-submodules https://github.com/suulnnka/AetherWebOS.git
 
 # 已经普通 clone 了?进入仓库补一句即可:
 git submodule update --init
