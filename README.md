@@ -8,6 +8,9 @@
 > 灵感与架构参考:[win11React](https://github.com/blueedgetechno/win11React)、
 > [OS.js](https://github.com/os-js/OS.js)、[Puter](https://github.com/HeyPuter/puter)。
 
+**在线演示:<https://suulnnka.github.io/AetherWebOS/>**(每次推送 master 由
+GitHub Actions 自动构建部署,黑白棋与 3D 国际象棋用的就是下面的引擎子项目)
+
 ## 功能一览
 
 | 模块 | 说明 |
@@ -28,7 +31,23 @@
 
 ## 快速开始
 
-需要 Node.js 20.19+ 或 22.12+:
+需要 Node.js 20.19+ 或 22.12+。
+
+**克隆时必须带上子模块**:黑白棋与国际象棋的引擎在两个独立仓库里,以
+git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`
+(即 [AetherOthello](https://github.com/suulnnka/AetherOthello) 与
+[AetherChess](https://github.com/suulnnka/AetherChess))。不检出子模块,
+`npm run build` / `npm run dev` 会因找不到引擎文件直接失败:
+
+```bash
+# 首次克隆:--recurse-submodules 一并拉齐引擎子模块
+git clone --recurse-submodules git@github.com:suulnnka/AetherWebOS.git
+
+# 已经普通 clone 了?进入仓库补一句即可:
+git submodule update --init
+```
+
+构建与运行:
 
 ```bash
 npm install        # 首次运行安装依赖(vite + ogl)

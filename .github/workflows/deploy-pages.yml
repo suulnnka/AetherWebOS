@@ -20,7 +20,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # .gitmodules 里两个引擎子仓库(vendor/AetherChess、vendor/AetherOthello)
+      # 记的是 SSH 地址,Actions 运行器没有私钥;两仓库均公开,重写成匿名
+      # HTTPS 即可检出。必须在 checkout 之前配置。
+      - name: 子模块地址重写(SSH → 匿名 HTTPS)
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
       - uses: actions/checkout@v4
+        with:
+          # 引擎源码在 submodule 里,不检出则 vite build 直接失败
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
