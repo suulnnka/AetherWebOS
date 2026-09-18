@@ -1,4 +1,8 @@
 /* 黑白棋专属样式 */
+/* 难度下拉(样式对齐 chess):与 .btn 同高(30px),给足宽度免得中文选项被裁 */
+.rv-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.rv-level { min-width: 84px; cursor: pointer; }
+.rv-level option { background: var(--panel-solid); color: var(--text); }
 .rv-board {
   display: grid; grid-template-columns: repeat(8, 56px); grid-template-rows: repeat(8, 56px);
   gap: 3px; background: #1c6b3c; padding: 8px; border-radius: 8px;
@@ -35,14 +39,3 @@
 }
 .rv-count.black { background: #22262e; color: #fff; }
 .rv-count.white { background: #e8e8e8; color: #22262e; }
-/* AI 搜索信息行(深度/最佳步/评分/节点/耗时) */
-.rv-search {
-  flex: none; height: 24px;
-  display: flex; align-items: center;
-  padding: 0 12px;
-  border-top: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text-2); font-size: 11.5px;
-  font-family: ui-monospace, Consolas, "Courier New", monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}

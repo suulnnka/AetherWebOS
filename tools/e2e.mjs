@@ -2035,8 +2035,8 @@ group('T32', '笔记(含加密)', async () => {
   await c.shot('t32-memo');
 });
 
-group('T33', '扫雷 + 3D 国际象棋', async () => {
-  /* ---- T33 扫雷 + 3D 国际象棋 ---- */
+group('T33', '扫雷 + 国际象棋', async () => {
+  /* ---- T33 扫雷 + 国际象棋 ---- */
   await fresh();
 
   // 扫雷:棋盘规模 / 首击安全 / 右键插旗
@@ -2134,6 +2134,43 @@ group('T34', '黑白棋', async () => {
   t('T34.3 子数统计一致', rv3.sum >= 4 && rv3.sum <= 64, JSON.stringify(rv3));
   await c.shot('t34-reversi');
 
+  // 工具栏按钮按文字查找(新对局/换边/悔棋)
+  const rvBtn = (label) => ev(`[...document.querySelectorAll('.win[data-app=reversi] .app-toolbar .btn')]
+    .find(b => b.textContent.includes('${label}'))?.click()`);
+
+  // 悔棋:人机模式连 AI 应手一起撤 → 回到初始 4 子,轮到玩家
+  await rvBtn('悔棋');
+  await sleep(300);
+  const rv4 = await ev(`(() => ({
+    pieces: document.querySelectorAll('.rv-piece').length,
+    status: document.querySelector('.win[data-app=reversi] .app-status span').textContent,
+  }))()`);
+  t('T34.5 悔棋撤两手回初始局面', rv4.pieces === 4 && rv4.status.includes('黑方行棋'), JSON.stringify(rv4));
+
+  // 换边:玩家改执白,AI 执黑先行落子;搜索信息改写在状态栏右侧(infoL)
+  await rvBtn('换边');
+  await sleep(2500);
+  const rv5 = await ev(`(() => {
+    const spans = document.querySelectorAll('.win[data-app=reversi] .app-status span');
+    return {
+      pieces: document.querySelectorAll('.rv-piece').length,
+      status: spans[0].textContent,
+      info: spans[spans.length - 1].textContent,
+    };
+  })()`);
+  t('T34.6 换边后 AI 执黑先行', rv5.pieces >= 5 && rv5.status.includes('白方行棋') && rv5.info.length > 0,
+    JSON.stringify(rv5));
+
+  // 新对局保持执白偏好:仍是 AI(黑)先行;悔棋可复活终局就不在此展开了
+  const rv6 = await ev(`[...document.querySelectorAll('.win[data-app=reversi] .app-toolbar .btn')]
+    .find(b => b.textContent.includes('新对局'))?.click()`);
+  await sleep(2000);
+  const rv7 = await ev(`(() => ({
+    pieces: document.querySelectorAll('.rv-piece').length,
+    status: document.querySelector('.win[data-app=reversi] .app-status span').textContent,
+  }))()`);
+  t('T34.7 新对局执白时 AI 先行', rv6 === undefined || rv6 === true ? rv7.pieces >= 5 && rv7.status.includes('白方行棋') : false,
+    JSON.stringify(rv7));
 
   const errs4 = await ev(`window.__errs.length`);
   t('T34.4 全程无错误', errs4 === 0, `errs=${errs4}`);
