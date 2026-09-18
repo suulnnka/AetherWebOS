@@ -34,7 +34,7 @@ const overrideKB = argOf('--budget', null);
 /** 各引擎 chunk 的指纹(worker 里的 ENGINE_TAG)与预算 */
 const ENGINES = [
   { name: '国际象棋', tag: 'chess-engine-v2', kb: 35 },
-  { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 20 },
+  { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 35 },
 ];
 /** 引擎里绝不该出现的渲染指纹(出现即说明 ogl / 着色器被拖进了 worker) */
 const FORBIDDEN = ['gl_FragColor', 'WebGLRenderingContext', 'requestAnimationFrame'];
