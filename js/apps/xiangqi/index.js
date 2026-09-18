@@ -183,7 +183,7 @@ register({
       abortEngine();
       const who = sideName(winner) + (vsAI && winner === aiSide() ? '(AI)' : '');
       const title = byMate ? '将死' : '困毙';
-      const line = `${title} — ${who}胜`;
+      const line = `${title} — ${sideName(winner)}胜`;   // 状态行不标 (AI),只说哪方胜
       dialogs.info({ title, message: `${who}获胜!` });
       statusL.textContent = line;
       setTitle('中国象棋 — 终局');
