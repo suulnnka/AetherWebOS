@@ -1,6 +1,6 @@
 /* ============================================================
  * 应用:中国象棋(Xiangqi)
- * 10 行 × 9 列棋盘;玩家执红先行,AI 执黑。完整规则:马蹩腿、象塞眼、
+ * 10 行 × 9 列棋盘;玩家执红先行(可换边),AI 执黑。完整规则:马蹩腿、象塞眼、
  * 炮翻山、九宫限制、兵过河可横走、将帅对脸判非法;无棋可走(将死/困毙)判负。
  *
  * AI 引擎在独立子项目 vendor/AetherXiangqi(github.com/suulnnka/AetherXiangqi):
@@ -9,12 +9,16 @@
  *
  * 走法编码只有一套:from<<7 | to。UI 把**走法序列**发给 Worker,
  * Worker 自己从初始局面重演 —— 结构化克隆最省,也不存在两份规则实现。
+ *
+ * 顶栏/底栏沿用国际象棋应用的做法:顶栏一组带图标的对局级按钮,
+ * 底栏**只有一条** —— 左边行棋状态、右边等宽字体的引擎搜索信息。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './xiangqi.css';
 import { dialogs } from '../../core/dialogs.js';
+import { icon } from '../../core/icons.js';
 import {
   RED, BLACK, K, LEVELS, DEFAULT_LEVEL,
   newBoard, genLegal, hasMove, make, unmake, mkMove, mFrom, mTo, inCheck, moveToText,
@@ -28,13 +32,17 @@ const BW = 9 * CS, BH = 10 * CS;
 
 const GLYPH_R = ['', '帅', '仕', '相', '马', '车', '炮', '兵'];
 const GLYPH_B = ['', '将', '士', '象', '马', '车', '炮', '卒'];
+const sideName = (s) => (s === RED ? '红方' : '黑方');
 
-const fmtN = (n) => (n >= 10000 ? (n / 10000).toFixed(1) + '万' : String(n));
-/** 搜索分是「AI(黑)视角」:正 = 黑优 */
-const fmtScore = (s) => (s >= 0 ? `黑 +${s}` : `红 +${-s}`);
+/** 引擎评分(厘兵,行棋方视角)→ 给人看的字符串。±20000 以上是将杀分,只标 M */
+const fmtScore = (s) => {
+  if (Math.abs(s) >= 20000) return s > 0 ? '+M' : '-M';
+  return (s >= 0 ? '+' : '') + (s / 100).toFixed(2);
+};
 
-/** 棋盘线(SVG):横线 10 条、竖线外侧贯通内侧断在河界、九宫斜线、炮兵位十字标 */
-function boardSvg() {
+/** 棋盘线(SVG):横线 10 条、竖线外侧贯通内侧断在河界、九宫斜线、炮兵位十字标。
+ *  整幅线是 180° 旋转对称的,所以换边(翻盘)时只需把「楚河/漢界」对调。 */
+function boardSvg(flip) {
   const d = [];
   for (let r = 0; r < 10; r++) d.push(`M${X(0)} ${Y(r)}H${X(8)}`);
   for (let c = 0; c < 9; c++) {
@@ -58,11 +66,12 @@ function boardSvg() {
     }
   }
   const midY = (Y(4) + Y(5)) / 2 + 9;
+  const chu = X(flip ? 6 : 2), han = X(flip ? 2 : 6);
   return `<svg class="xq-lines" viewBox="0 0 ${BW} ${BH}" aria-hidden="true">`
     + `<path class="xq-line" d="${d.join(' ')}"/>`
     + `<path class="xq-mark" d="${mk.join(' ')}"/>`
-    + `<text class="xq-river" x="${X(2)}" y="${midY}">楚河</text>`
-    + `<text class="xq-river" x="${X(6)}" y="${midY}">漢界</text>`
+    + `<text class="xq-river" x="${chu}" y="${midY}">楚河</text>`
+    + `<text class="xq-river" x="${han}" y="${midY}">漢界</text>`
     + `</svg>`;
 }
 
@@ -70,7 +79,8 @@ register({
   ...manifest,
   mount({ root, setTitle, bus }) {
     let bd = newBoard();
-    let turn = RED;            // 红先;玩家执红
+    let turn = RED;            // 红先
+    let humanSide = RED;       // 玩家执子方(换边可改)
     let hist = [];             // { mv, cap, text } —— 走法序列,也给 Worker 重演用
     let sel = -1;              // 选中的格子
     let tgts = new Map();      // 选中子能去的格子 → 是否吃子
@@ -80,19 +90,20 @@ register({
     let levelIdx = DEFAULT_LEVEL;
     let searching = false;
 
-    const statusL = el('span', {}, '');
-    const layerEl = el('div', { class: 'xq-layer', html: boardSvg() });
-    const boardEl = el('div', { class: 'xq-board' }, layerEl);
-    const searchLine = el('div', { class: 'xq-search' }, levelHint());
+    const aiSide = () => humanSide ^ 1;
+    const flipped = () => humanSide === BLACK;    // 玩家执黑就把整盘翻过来
 
-    function levelHint() {
-      const lv = LEVELS[levelIdx];
-      return `AI 待命(难度:${lv.name}) · ${lv.desc}`;
-    }
+    const statusL = el('span', {}, '红方行棋');
+    const infoL = el('span', {
+      class: 'mono', style: { fontSize: '11px' },
+      title: '引擎搜索信息(评分是 AI 视角,单位兵;+M / -M 表示算到将杀)',
+    }, '');
+    const layerEl = el('div', { class: 'xq-layer' });
+    const boardEl = el('div', { class: 'xq-board' }, layerEl);
 
     /* ---------- 渲染 ---------- */
     function render() {
-      layerEl.querySelectorAll('.xq-pt').forEach((n) => n.remove());
+      layerEl.innerHTML = boardSvg(flipped());    // 换边后河界文字要跟着对调
       tgts = new Map();
       if (sel >= 0) {
         for (const mv of genLegal(bd, turn)) {
@@ -102,13 +113,14 @@ register({
       for (let r = 0; r < 10; r++) {
         for (let c = 0; c < 9; c++) {
           const i = r * 9 + c, p = bd[i];
+          const dr = flipped() ? 9 - r : r, dc = flipped() ? 8 - c : c;   // 显示坐标
           const cls = ['xq-pt'];
           if (i === sel) cls.push('sel');
           if (tgts.has(i)) cls.push(tgts.get(i) ? 'cap' : 'mv');
           if (lastMove && (mFrom(lastMove) === i || mTo(lastMove) === i)) cls.push('last');
           const btn = el('button', {
             class: cls.join(' '),
-            style: { left: X(c) + 'px', top: Y(r) + 'px' },
+            style: { left: X(dc) + 'px', top: Y(dr) + 'px' },
             dataset: { i: String(i) },
             onClick: () => onPoint(i),
           });
@@ -124,28 +136,21 @@ register({
           layerEl.append(btn);
         }
       }
-      updateStatus();
     }
 
-    function updateStatus(msg) {
-      if (msg) statusL.textContent = msg;
-      else if (gameOver) statusL.textContent = '终局';
-      else {
-        const chk = inCheck(bd, turn);
-        const who = turn === RED ? (vsAI ? '红方(你)' : '红方') : (vsAI ? '黑方(AI)' : '黑方');
-        statusL.textContent =
-          `${Math.floor(hist.length / 2) + 1} 回合 · ${who}行棋` +
-          (chk ? ' · 将军!' : '') +
-          (hist.length ? ` · 上一手 ${hist[hist.length - 1].text}` : '');
-      }
-      const whose = turn === RED ? (vsAI ? '你的回合' : '红方回合') : (vsAI ? 'AI 回合' : '黑方回合');
-      setTitle(`中国象棋 ${Math.floor(hist.length / 2) + 1} 回合 — ${gameOver ? '终局' : whose}`);
+    function updateStatus() {
+      if (gameOver) return;
+      const inC = inCheck(bd, turn);
+      statusL.textContent = sideName(turn) + (vsAI && turn === aiSide() ? '(AI)' : '')
+        + '行棋' + (inC ? ' — 将军!⚠' : '');
+      const last = hist.length ? ` · 上一手 ${hist[hist.length - 1].text}` : '';
+      setTitle(`中国象棋 — ${sideName(turn)}行棋${inC ? '(将军)' : ''}${last}`);
     }
 
     /* ---------- 走子 ---------- */
     function onPoint(i) {
       if (gameOver) return;
-      if (vsAI && turn !== RED) return;           // AI 回合/思考中不响应点击
+      if (vsAI && turn !== humanSide) return;     // AI 回合/思考中不响应点击
       if (sel >= 0 && tgts.has(i)) { doMove(mkMove(sel, i)); return; }
       const p = bd[i];
       sel = (p && (p >> 3) === turn) ? i : -1;
@@ -163,29 +168,32 @@ register({
     /** 走子后的公共收尾:判将军、判终局、轮到 AI 就调度 */
     function afterMove() {
       render();
-      const chk = inCheck(bd, turn);
+      const inC = inCheck(bd, turn);
       if (!hasMove(bd, turn)) {                   // 将死或困毙,象棋里都算负
-        endGame(turn ^ 1, chk);
+        endGame(turn ^ 1, inC);
         return;
       }
-      if (chk) bus.notify('中国象棋', `${turn === RED ? '红方' : '黑方'}被将军`);
-      if (vsAI && turn === BLACK && !gameOver) setTimeout(thinkAI, 260);
+      if (inC) bus.notify('中国象棋', `${sideName(turn)}被将军`);
+      if (!gameOver && vsAI && turn === aiSide()) setTimeout(thinkAI, 260);
+      else updateStatus();
     }
 
     function endGame(winner, byMate) {
       gameOver = true;
-      const who = winner === RED ? '红方' : '黑方';
-      const title = winner === RED ? '🎉 你赢了!' : 'AI 获胜';
-      const msg = byMate ? `${who}将死对方` : `${who}胜(对方困毙,无棋可走)`;
-      dialogs.info({ title, message: msg });
-      updateStatus(`${title}(${msg})`);
-      bus.notify('中国象棋', `${title} ${msg}`);
+      abortEngine();
+      const who = sideName(winner) + (vsAI && winner === aiSide() ? '(AI)' : '');
+      const title = byMate ? '将死' : '困毙';
+      const line = `${title} — ${who}胜`;
+      dialogs.info({ title, message: `${who}获胜!` });
+      statusL.textContent = line;
+      setTitle('中国象棋 — 终局');
+      bus.notify('中国象棋', line);
     }
 
     /* ---------- AI:搜索跑在 Worker 里 ----------
      * 传走法序列而不是棋盘(结构化克隆最省,且两边共用同一份规则)。
-     * Worker 里搜索是同步的,新消息只会排队 —— 换难度/新对局时直接
-     * terminate 再造一个(见 abortEngine)。 */
+     * Worker 里搜索是同步的,新消息只会排队 —— 需要立刻刹车(新对局 / 换难度 /
+     * 关窗)时直接 terminate 再造一个。 */
     let worker = null, reqSeq = 0;
 
     function killWorker() {
@@ -195,7 +203,9 @@ register({
        * 新对局/换档后它要是被当成当前结果应用,就会把旧局面的着法落到新局面上 */
       reqSeq++;
     }
-    function abortEngine() { killWorker(); }
+
+    /** 作废在途请求(局面已变 / 窗口关闭),免得过期着法落到新对局上 */
+    function abortEngine() { killWorker(); infoL.textContent = ''; }
 
     function ensureWorker() {
       if (worker) return worker;
@@ -204,119 +214,145 @@ register({
       } catch (err) {
         console.error('[xiangqi] 无法创建 AI Worker:', err);
         worker = null; searching = false;
-        searchLine.textContent = 'AI 不可用(Worker 创建失败)';
+        statusL.textContent = 'AI 不可用(Worker 创建失败)';
         return null;
       }
       worker.onmessage = onEngineMsg;
       worker.onerror = (ev) => {
         console.warn('[xiangqi] AI Worker 异常:', ev.message || ev);
         killWorker();
+        statusL.textContent = 'AI 出错,已跳过本步';
       };
       return worker;
     }
 
     function thinkAI() {
-      if (gameOver || !vsAI || turn !== BLACK) return;
+      if (gameOver || searching) return;
+      const cfg = LEVELS[levelIdx];
+      searching = true;
+      sel = -1;
+      render();
+      statusL.textContent = `${sideName(aiSide())}(AI)思考中…(${cfg.name})`;
+      setTitle(`中国象棋 — AI 思考中(${cfg.name})`);
+      infoL.textContent = '';
       if (typeof Worker === 'undefined') {
-        searchLine.textContent = '当前环境不支持 Web Worker,AI 不可用';
+        searching = false;
+        statusL.textContent = '当前环境不支持 Web Worker,AI 不可用';
         return;
       }
-      if (searching) killWorker();                // 上一轮还没回来:直接重启
       if (!ensureWorker()) return;
-      searching = true;
-      const lv = LEVELS[levelIdx];
-      searchLine.textContent = `AI 思考中…(${lv.name} · ${lv.desc})`;
       worker.postMessage({
         id: ++reqSeq,
         moves: hist.map((h) => h.mv),
-        nodes: lv.nodes, ms: lv.ms, depth: lv.depth, jitter: lv.jitter,
+        nodes: cfg.nodes, ms: cfg.ms, depth: cfg.depth, jitter: cfg.jitter,
       });
-    }
-
-    function showSearch(d, doneText) {
-      const mvText = doneText ?? (d.move ? moveToText(bd, d.move) : '—');
-      searchLine.textContent =
-        `${doneText ? '' : '搜索中… '}深度 ${d.depth} · 最佳 ${mvText} · 评估 ${fmtScore(d.score)}` +
-        ` · 节点 ${fmtN(d.nodes)} · ${d.ms}ms`;
     }
 
     function onEngineMsg(e) {
       const d = e.data;
       if (!d || d.id !== reqSeq) return;          // 过期结果(换难度/新对局)直接丢
-      if (d.type === 'progress') { showSearch(d); return; }
+      if (d.type === 'progress') { showInfo(d); return; }
       searching = false;
-      if (d.error) { searchLine.textContent = '引擎异常:' + d.error; return; }
-      if (!d.move) { endGame(RED, true); return; } // AI 无棋可走 = 红方将死它
+      if (d.error) { statusL.textContent = '引擎异常:' + d.error; return; }
+      if (!d.move) { endGame(humanSide, true); return; }  // AI 无棋可走 = 玩家将死它
       const text = moveToText(bd, d.move);
-      showSearch(d, text);
       const cap = make(bd, d.move);
       hist.push({ mv: d.move, cap, text });
-      lastMove = d.move; turn = RED;
+      lastMove = d.move; turn = humanSide;
+      showInfo(d);
       afterMove();
     }
 
-    /* ---------- 工具栏 ---------- */
-    function newGame() {
-      killWorker();
-      bd = newBoard(); turn = RED; hist = []; sel = -1; lastMove = null;
-      gameOver = false;
-      searchLine.textContent = levelHint();
-      render();
+    /** 底栏右侧的引擎信息行(等宽字体,与国际象棋应用同一套写法) */
+    function showInfo(d) {
+      infoL.textContent = `${LEVELS[levelIdx].name} · 深度 ${d.depth} · `
+        + `${Math.round(d.nodes / 1000)}k 节点 · ${d.ms}ms · ${fmtScore(d.score)}`;
     }
 
-    function undo() {
+    /* ---------- 工具栏动作 ---------- */
+    function resetGame() {
+      abortEngine();
+      bd = newBoard(); turn = RED; hist = []; sel = -1; lastMove = null;
+      gameOver = false;
+      render();
+      if (vsAI && turn === aiSide()) thinkAI();   // 玩家执黑时 AI 执红先行
+      else updateStatus();
+    }
+
+    /** 悔棋:撤到「轮到玩家重新决策」为止。人机撤两手(AI 应手 + 自己那手),
+     *  人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。 */
+    function doUndo() {
       if (!hist.length) return;
-      killWorker();
-      /* 人机模式下回到「自己还能走」的状态:红方回合时撤 2 步(AI + 自己),
-       * AI 还在思考时只撤 1 步(那一步就是自己刚走的) */
-      const n = (vsAI && turn === RED && hist.length >= 2) ? 2 : 1;
-      for (let k = 0; k < n; k++) {
+      abortEngine();
+      let n = 1;
+      if (vsAI && turn === humanSide && hist.length >= 2) n = 2;
+      while (n-- > 0 && hist.length) {
         const h = hist.pop();
         unmake(bd, h.mv, h.cap);
         turn ^= 1;
       }
       gameOver = false; sel = -1;
       lastMove = hist.length ? hist[hist.length - 1].mv : null;
-      searchLine.textContent = levelHint();
       render();
+      if (vsAI && turn === aiSide()) thinkAI();   // 撤完轮到 AI(玩家执黑的起点)就让它重想
+      else updateStatus();
     }
 
-    const newBtn = el('button', { class: 'btn primary', onClick: newGame }, '新对局');
-    const undoBtn = el('button', { class: 'btn', onClick: undo }, '悔棋');
-    const aiBtn = el('button', {
-      class: 'btn',
-      onClick: (e) => {
-        killWorker();
-        vsAI = !vsAI;
-        e.currentTarget.textContent = vsAI ? '人机:开' : '双人';
-        searchLine.textContent = vsAI ? levelHint() : '双人模式 · 无 AI 搜索';
-        if (vsAI && turn === BLACK && !gameOver) setTimeout(thinkAI, 200);
-        updateStatus();
-      },
-    }, '人机:开');
+    /** 换边:与 AI 互换执子方,棋盘随之翻转。中途换边作废在途搜索并立即接手。 */
+    function switchSide() {
+      abortEngine();
+      humanSide ^= 1;
+      sel = -1;
+      render();
+      if (!gameOver && vsAI && turn === aiSide()) thinkAI();
+      else if (!gameOver) updateStatus();
+    }
+
+    /* ---------- 界面 ---------- */
+    const newBtn = el('button', { class: 'btn primary', onClick: resetGame }, icon('refresh', 13), '新对局');
+    /* 难度档:原生 <select>(比循环按钮少点几下、状态一眼可见)。
+     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效,
+     * 用户会以为下拉没反应。 */
     const levelSel = el('select', {
       class: 'select xq-level',
+      title: 'AI 难度:初级 / 中级 / 高级 / 大师',
+      'aria-label': 'AI 难度',
       onChange: (e) => {
-        levelIdx = Number(e.currentTarget.value);
-        killWorker();                              // 旧档位的搜索结果不要了
-        searchLine.textContent = levelHint();
-        if (vsAI && turn === BLACK && !gameOver) setTimeout(thinkAI, 120);
+        levelIdx = Number(e.currentTarget.value) || 0;
+        if (searching) { abortEngine(); thinkAI(); }
       },
     }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-    /* 下拉初值必须跟 levelIdx 对齐:否则界面显示「初级」而引擎实际在「高级」档,
-     * 用户以为换过档了 —— 这种「显示与状态脱节」比功能缺失更难被发现 */
-    levelSel.value = String(levelIdx);
+    levelSel.value = String(levelIdx);            // 默认「高级」
+    const aiBtn = el('button', {
+      class: 'btn', title: '切换人机 / 双人对战',
+      onClick: (e) => {
+        vsAI = !vsAI;
+        e.currentTarget.textContent = vsAI ? '人机' : '双人';
+        sideBtn.disabled = !vsAI;                                 // 换边只对人机模式有意义
+        if (!vsAI) { abortEngine(); updateStatus(); }             // 关掉 AI 要把在途搜索停掉
+        else if (!gameOver && turn === aiSide()) thinkAI();       // 轮到 AI 就立刻接手
+        else updateStatus();
+      },
+    }, '人机');
+    const sideBtn = el('button', {
+      class: 'btn', title: '换边:与 AI 互换执子方,棋盘随之翻转',
+      onClick: switchSide,
+    }, '换边');
+    const undoBtn = el('button', {
+      class: 'btn', title: '悔棋:人机模式连 AI 的应手一起撤,人人模式撤一手',
+      onClick: doUndo,
+    }, icon('reply', 13), '悔棋');
 
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
-        newBtn, undoBtn, aiBtn, levelSel,
-        el('span', { class: 'grow' }),
-        el('span', { class: 'dim' }, '你执红先行')),
+        newBtn,
+        el('label', { class: 'xq-level-wrap', title: 'AI 难度' },
+          el('span', { class: 'dim', style: { fontSize: '12px' } }, '难度'), levelSel),
+        aiBtn, sideBtn, undoBtn),
       el('div', { class: 'app-body', style: { display: 'grid', placeItems: 'center' } }, boardEl),
-      searchLine,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        el('span', {}, '点自己的子看可走位置'))));
+        infoL)));
 
     /* 供探针/排障:确认窗口活着、引擎档位与对局进度 */
     window.__xiangqi = {
@@ -326,11 +362,15 @@ register({
         levelSel.value = String(i);
         levelSel.dispatchEvent(new Event('change', { bubbles: true }));
       },
-      stats: () => ({ level: LEVELS[levelIdx].id, vsAI, searching, plies: hist.length, turn, gameOver }),
+      stats: () => ({
+        level: LEVELS[levelIdx].id, vsAI, searching, plies: hist.length,
+        turn, human: humanSide, gameOver,
+      }),
       lastText: () => (hist.length ? hist[hist.length - 1].text : ''),
     };
 
     render();
+    updateStatus();
 
     return {
       onClose() {

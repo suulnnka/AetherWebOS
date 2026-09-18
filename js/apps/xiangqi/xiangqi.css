@@ -86,17 +86,8 @@
   50% { box-shadow: 0 2px 5px rgba(0, 0, 0, 0.38), 0 0 0 6px rgba(220, 38, 38, 0.15); }
 }
 
-/* AI 搜索信息行 */
-.xq-search {
-  flex: none; height: 24px;
-  display: flex; align-items: center;
-  padding: 0 12px;
-  border-top: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text-2); font-size: 11.5px;
-  font-family: ui-monospace, Consolas, "Courier New", monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* 难度下拉:与 .btn 同高,给足宽度免得中文被裁 */
-.xq-level { min-width: 76px; cursor: pointer; }
+/* 难度下拉(与国际象棋应用 .chess3d-level 同款):与 .btn 同高(30px),
+ * 给足宽度免得中文选项被裁;搜索信息行在底栏右侧,用内核的 .mono */
+.xq-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.xq-level { min-width: 84px; cursor: pointer; }
 .xq-level option { background: var(--panel-solid); color: var(--text); }
