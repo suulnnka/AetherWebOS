@@ -2,7 +2,7 @@
 /* ============================================================
  * 引擎 worker 冒烟测试(针对 dist 里的真实产物,不是源码)
  *
- * tools/chess-engine-test.mjs 跑的是 js/apps/chess3d/*.js 源文件,
+ * 源码级测试在引擎子项目 vendor/AetherChess 里跑(test/engine-test.mjs),
  * 验证的是「逻辑对不对」。这个脚本验证的是另一件事:
  * 打包 + 压缩之后,那个真正的 worker chunk 还能不能
  *   ① 重演一条走法序列(→ replayMoves 与两套走法编码在产物里没坏)

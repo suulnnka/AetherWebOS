@@ -7,9 +7,10 @@
  * 渲染原用 three.js(压缩后 116 KB),已换成 ogl(约 15 KB):
  * ogl 不带光照材质系统,这里的 Lambert 光照与阴影采样由下方自写 GLSL 承担。
  *
- * 本文件只负责「渲染 + 交互 + 难度档 UI」;棋规、搜索、评估一律走引擎模块,
- * 引擎模块不 import ogl 也不碰 DOM,所以 Node 里能直接跑 perft 与战术测试
- * (见 tools/chess-engine-test.mjs)。将来要换 WASM 实现,只需替换这一段调用。
+ * 本文件只负责「渲染 + 交互 + 难度档 UI」;棋规、搜索、评估一律走引擎模块 ——
+ * 引擎在独立子项目 vendor/AetherChess(github.com/suulnnka/AetherChess),
+ * 不 import ogl 也不碰 DOM,Node 里能直接跑 perft 与战术测试(见该仓库 test/)。
+ * 将来要换 WASM 实现,只需替换这一段调用。
  * ============================================================ */
 import { Renderer, Camera, Transform, Box, Cylinder, Sphere, Geometry, Program, Mesh, Vec3, Raycast, Shadow, RenderTarget } from 'ogl';
 import { el } from '../../core/utils.js';
@@ -23,8 +24,8 @@ import {
   mFrom, mTo, mFlag, mCap, mPromo, mkMove,
   newPos, make, genMoves, genLegal, hasLegalMove, isLegal,
   inCheck, isThreefold, insufficientMaterial,
-} from './rules.js';
-import { LEVELS, DEFAULT_LEVEL } from './ai.js';
+} from '../../../vendor/AetherChess/src/rules.js';
+import { LEVELS, DEFAULT_LEVEL } from '../../../vendor/AetherChess/src/ai.js';
 
 /* ============ 引擎侧的薄适配层 ============
  * 渲染/高亮沿用 8x8 的 {t,c} 对象数组与 [r,c] 坐标(绘制代码一行不动),
@@ -769,7 +770,7 @@ register({
       }
       if (!worker) {
         try {
-          worker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+          worker = new Worker(new URL('../../../vendor/AetherChess/src/worker.js', import.meta.url), { type: 'module' });
           worker.onmessage = onEngineMsg;
           worker.onerror = (ev) => {
             console.warn('[chess3d] AI Worker 异常:', ev.message || ev);

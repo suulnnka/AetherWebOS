@@ -1,0 +1,6 @@
+[submodule "vendor/AetherOthello"]
+	path = vendor/AetherOthello
+	url = git@github.com:suulnnka/AetherOthello.git
+[submodule "vendor/AetherChess"]
+	path = vendor/AetherChess
+	url = git@github.com:suulnnka/AetherChess.git
