@@ -1,0 +1,97 @@
+/* 围棋专属样式
+ * --cs(格距)与 index.js 里的 CS 常量必须一致:棋盘线是 SVG 画的,
+ * 棋子/点击热区按 JS 算出的像素定位,两边不同步就会错位。 */
+.go-board {
+  --cs: 52px;
+  --pad: 26px;
+  position: relative;
+  flex: none;
+  width: calc(var(--cs) * 8 + var(--pad) * 2);
+  height: calc(var(--cs) * 8 + var(--pad) * 2);
+  border-radius: 10px;
+  background: linear-gradient(160deg, #f6e3bd, #e2c288 60%, #d7b478);
+  box-shadow: inset 0 0 26px rgba(120, 80, 20, 0.35), 0 12px 34px rgba(0, 0, 0, 0.5);
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* 棋盘线层:与 SVG viewBox 同尺寸,棋子与热区都挂在它里面 */
+.go-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+}
+.go-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+.go-line { stroke: #7c5220; stroke-width: 1.3; fill: none; }
+/* 星位(9 路五个) */
+.go-star { fill: #7c5220; }
+/* 边缘坐标:列 A~J(跳过 I)、行 1~9,给「上一手 D4」一个参照 */
+.go-coord {
+  fill: #7c5220; opacity: 0.55; font-size: 11px;
+  font-family: var(--mono, monospace);
+  text-anchor: middle; dominant-baseline: middle;
+}
+
+/* 交叉点热区:比棋子略大,手指点得到 */
+.go-pt {
+  position: absolute;
+  width: var(--cs); height: var(--cs);
+  transform: translate(-50%, -50%);
+  display: grid; place-items: center;
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; line-height: 1;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+.go-pt.can { cursor: pointer; }
+.go-pt:focus-visible { outline: 2px solid #22d3ee; outline-offset: -3px; z-index: 2; }
+
+/* 悬停虚影:轮到谁走,空点上就浮出半透明的那色子(仅玩家可落子时) */
+.go-board.turn-b .go-pt.can:hover .go-ghost,
+.go-board.turn-w .go-pt.can:hover .go-ghost { opacity: 0.45; }
+.go-ghost {
+  position: absolute; inset: 7%;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+.go-board.turn-b .go-ghost {
+  background: radial-gradient(circle at 34% 28%, #6b7280, #111827 65%);
+}
+.go-board.turn-w .go-ghost {
+  background: radial-gradient(circle at 34% 28%, #ffffff, #cbd5e1 70%);
+}
+
+/* 棋子:黑曜石 / 白玉,带一点高光 */
+.go-stone {
+  position: absolute; inset: 7%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.go-stone.black {
+  background: radial-gradient(circle at 34% 28%, #5b6472, #1f2937 55%, #030712 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45), inset 0 2px 3px rgba(255, 255, 255, 0.18);
+}
+.go-stone.white {
+  background: radial-gradient(circle at 34% 28%, #ffffff, #e8edf3 60%, #c3ccd8 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), inset 0 -2px 4px rgba(100, 116, 139, 0.25);
+}
+/* 上一手:棋子上的小圆点标记(黑白取反色) */
+.go-stone.last::after {
+  content: ''; position: absolute; inset: 0; margin: auto;
+  width: 26%; height: 26%;
+  border-radius: 50%;
+  background: #facc15;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.go-stone.white.last::after { background: #f59e0b; }
+/* 刚落下的子闪一下 */
+.go-stone.drop { animation: goDrop 0.25s ease-out; }
+@keyframes goDrop {
+  from { transform: scale(1.25); }
+  to { transform: scale(1); }
+}
+
+/* 难度下拉(与象棋应用同款):与 .btn 同高,给足宽度 */
+.go-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.go-level { min-width: 84px; cursor: pointer; }
+.go-level option { background: var(--panel-solid); color: var(--text); }

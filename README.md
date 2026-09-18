@@ -9,7 +9,7 @@
 > [OS.js](https://github.com/os-js/OS.js)、[Puter](https://github.com/HeyPuter/puter)。
 
 **在线演示:<https://suulnnka.github.io/AetherWebOS/>**(每次推送 master 由
-GitHub Actions 自动构建部署,黑白棋与国际象棋用的就是下面的引擎子项目)
+GitHub Actions 自动构建部署,棋类应用用的就是下面的引擎子项目)
 
 ## 功能一览
 
@@ -33,11 +33,12 @@ GitHub Actions 自动构建部署,黑白棋与国际象棋用的就是下面的�
 
 需要 Node.js 20.19+ 或 22.12+。
 
-**克隆时必须带上子模块**:三个棋类的引擎在各自独立的仓库里,以
+**克隆时必须带上子模块**:四个棋类的引擎在各自独立的仓库里,以
 git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`、`vendor/AetherXiangqi`
-(即 [AetherOthello](https://github.com/suulnnka/AetherOthello)、
-[AetherChess](https://github.com/suulnnka/AetherChess) 与
-[AetherXiangqi](https://github.com/suulnnka/AetherXiangqi))。不检出子模块,
+与 `vendor/AetherGo`(即 [AetherOthello](https://github.com/suulnnka/AetherOthello)、
+[AetherChess](https://github.com/suulnnka/AetherChess)、
+[AetherXiangqi](https://github.com/suulnnka/AetherXiangqi) 与
+[AetherGo](https://github.com/suulnnka/AetherGo))。不检出子模块,
 `npm run build` / `npm run dev` 会因找不到引擎文件直接失败:
 
 ```bash
@@ -109,7 +110,8 @@ webos/
 ├─ vendor/               git submodule:独立引擎子项目
 │  ├─ AetherOthello/     黑白棋引擎(github.com/suulnnka/AetherOthello)
 │  ├─ AetherChess/       国际象棋引擎(github.com/suulnnka/AetherChess)
-│  └─ AetherXiangqi/     中国象棋引擎(github.com/suulnnka/AetherXiangqi)
+│  ├─ AetherXiangqi/     中国象棋引擎(github.com/suulnnka/AetherXiangqi)
+│  └─ AetherGo/          9×9 围棋引擎(github.com/suulnnka/AetherGo)
 └─ README.md
 ```
 
@@ -121,8 +123,8 @@ webos/
 chunk 只依赖 core、不依赖主包 —— 改某个应用的代码只会改名该应用与主包,
 其余应用与内核的文件名不变,浏览器缓存照常命中。改 js/core 会改名全部
 chunk(内核被所有人引用,属预期)。为保证这一性质,应用只能 import
-`js/core/*` 与自身目录文件(唯一例外:reversi / chess3d 引用 `vendor/` 下的
-引擎子项目 —— 引擎只被单个应用 import,不会引入共享级联)。
+`js/core/*` 与自身目录文件(唯一例外:reversi / chess3d / xiangqi / go 引用
+`vendor/` 下的引擎子项目 —— 引擎只被单个应用 import,不会引入共享级联)。
 
 **新增应用**:在 `js/apps/<id>/` 建目录:`manifest.js` 放清单字段,
 `index.js` 里 `import manifest from './manifest.js'` 并
@@ -521,6 +523,12 @@ WebOS.__errs                         // 运行期错误
   吃子静态搜索,perft 对齐公认计数,四档难度),Worker 后台思考逐层回报,
   底栏实时显示档位/深度/节点数/耗时/评分;支持悔棋、双人对弈与换边
   (与 AI 互换执子方,棋盘随之翻转)
+- **围棋**:9×9 棋盘(SVG 画线:五颗星位、A~J/1~9 边缘坐标)—— 完整规则
+  (气尽提子、禁自杀、单劫禁回提、双停终局),悬停虚影预览落子、提子实时计数;
+  引擎为独立子项目 vendor/AetherGo(MCTS/UCT + 中国规则数子,黑贴 5.5 目,
+  四档难度按演棋局数分档),Worker 后台思考逐层回报,底栏实时显示
+  档位/演棋数/耗时/胜率;支持停一手、悔棋、双人对弈与换边(棋盘不翻转,
+  坐标恒定),双停后自动数子判胜负
 - **扫雷**:初级/中级/高级三难度,首击安全、右键插旗、双击快开(chord)、
   LED 计时器与计雷器,胜利/失败判定
 - **国际象棋**:2D / 3D 双视图一键切换 —— 3D 为 ogl(经 npm 打包,无 CDN)渲染的

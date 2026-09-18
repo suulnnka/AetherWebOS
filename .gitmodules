@@ -9,3 +9,6 @@
 [submodule "vendor/AetherXiangqi"]
 	path = vendor/AetherXiangqi
 	url = https://github.com/suulnnka/AetherXiangqi.git
+[submodule "vendor/AetherGo"]
+	path = vendor/AetherGo
+	url = https://github.com/suulnnka/AetherGo.git
