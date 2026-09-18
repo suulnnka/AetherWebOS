@@ -1,6 +1,17 @@
-/* 街景寻踪专属样式 */
-.tx-stage { position: relative; overflow: hidden; background: var(--hover); }
-.tx-pano { position: absolute; inset: 0; background: #0b0e14; }
+/* 图寻专属样式 */
+.tx-stage { position: relative; overflow: hidden; background: #10141d; }
+
+/* 照片展示区 */
+.tx-photo {
+  position: absolute; inset: 0;
+  display: grid; place-items: center; padding: 18px;
+}
+.tx-photo-img {
+  max-width: 100%; max-height: 100%;
+  border-radius: var(--radius); box-shadow: 0 10px 36px rgba(0, 0, 0, 0.45);
+  border: 1px solid color-mix(in srgb, #fff 14%, transparent);
+  background: #fff;
+}
 
 /* 右下角猜测小地图卡片 */
 .tx-gm {
@@ -17,20 +28,6 @@
 .tx-gm-head .grow { flex: 1; }
 .tx-gm-canvas { flex: 1; min-height: 0; border-radius: var(--radius-s); overflow: hidden; background: var(--hover); }
 .tx-submit { width: 100%; }
-
-/* 街景上的浮层与提示 */
-.tx-loading {
-  position: absolute; top: 12px; left: 12px; z-index: 25;
-  display: flex; align-items: center; gap: 8px; padding: 6px 14px;
-  border-radius: 999px; background: var(--panel); border: 1px solid var(--border);
-  font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-}
-.tx-spin {
-  width: 14px; height: 14px; border-radius: 50%; flex: none;
-  border: 2px solid var(--border); border-top-color: var(--accent);
-  animation: tx-rotate 0.9s linear infinite;
-}
-@keyframes tx-rotate { to { transform: rotate(360deg); } }
 
 .tx-reopen { position: absolute; left: 12px; bottom: 12px; z-index: 30; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
 

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ec9ef"/><stop offset="1" stop-color="#e8f4fc"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="400" fill="url(#sky)"/>
+  <rect y="252" width="640" height="86" fill="#a8342a"/>
+  <rect y="252" width="640" height="8" fill="#8c2a22"/>
+  <path d="M258 252 v-26 q0-14 14-14 h96 q14 0 14 14 v26 z" fill="#a8342a"/>
+  <path d="M240 212 h160 l14 18 h-188 z" fill="#d9a02b"/>
+  <path d="M232 212 q-10-4-16-12 l10-2 q6 6 12 8 z" fill="#d9a02b"/>
+  <path d="M408 212 q10-4 16-12 l-10-2 q-6 6-12 8 z" fill="#d9a02b"/>
+  <rect x="252" y="188" width="136" height="24" fill="#a8342a"/>
+  <path d="M238 188 h164 l16 20 h-196 z" fill="#e3ae3d"/>
+  <path d="M228 188 q-12-4-18-13 l11-2 q7 7 13 9 z" fill="#e3ae3d"/>
+  <path d="M412 188 q12-4 18-13 l-11-2 q-7 7-13 9 z" fill="#e3ae3d"/>
+  <rect x="292" y="300" width="56" height="38" rx="27" fill="#5c1712"/>
+  <rect x="212" y="300" width="40" height="38" rx="20" fill="#5c1712"/>
+  <rect x="388" y="300" width="40" height="38" rx="20" fill="#5c1712"/>
+  <rect y="338" width="640" height="14" fill="#ddd8c8"/>
+  <rect y="352" width="640" height="48" fill="#9aa39b"/>
+  <g>
+    <rect x="70" y="180" width="4" height="158" fill="#c8332b"/>
+    <path d="M74 184 q30 6 44 2 l-4 22 q-22 4-40-4 z" fill="#e8433a"/>
+    <rect x="566" y="180" width="4" height="158" fill="#c8332b"/>
+    <path d="M570 184 q30 6 44 2 l-4 22 q-22 4-40-4 z" fill="#e8433a"/>
+  </g>
+  <g fill="#f4f1e6" opacity="0.9">
+    <circle cx="120" cy="60" r="2"/><circle cx="540" cy="46" r="2"/><circle cx="330" cy="36" r="1.6"/>
+  </g>
+  <g transform="translate(212,368)">
+    <rect width="216" height="24" rx="12" fill="#0f141d" opacity="0.72"/>
+    <text x="108" y="16" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#dfe7f2">示例照片 · 请替换为实拍</text>
+  </g>
+</svg>

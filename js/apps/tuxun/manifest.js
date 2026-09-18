@@ -1,7 +1,7 @@
-/* 街景寻踪 —— 应用清单(纯数据;实现在 index.js,由 js/apps/index.js 惰性加载) */
+/* 图寻(单图模式) —— 应用清单(纯数据;实现在 index.js,由 js/apps/index.js 惰性加载) */
 export default {
   id: 'tuxun',
-  name: '街景寻踪',
+  name: '图寻',
   icon: 'mapPin',
   color: 'linear-gradient(135deg,#f59e0b,#ef4444)',
   neon: { a: '#fbbf24', b: '#f87171' },

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400">
+  <defs>
+    <linearGradient id="spring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bfe0ef"/><stop offset="1" stop-color="#eef7f2"/>
+    </linearGradient>
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fb3c9"/><stop offset="1" stop-color="#4f86a3"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="400" fill="url(#spring)"/>
+  <ellipse cx="150" cy="80" rx="80" ry="24" fill="#ffffff" opacity="0.75"/>
+  <ellipse cx="470" cy="56" rx="60" ry="18" fill="#ffffff" opacity="0.6"/>
+  <path d="M0 236 q140-70 320-58 q190 12 320 40 v26 h-640 z" fill="#7fae86"/>
+  <path d="M430 236 q60-60 130-64 l80 8 v56 h-210 z" fill="#5f9670"/>
+  <g>
+    <path d="M508 232 l10-64 h6 l10 64 z" fill="#4a5f70"/>
+    <path d="M498 176 q18-10 36 0 l-4-12 q-14-6-28 0 z" fill="#3d5062"/>
+    <path d="M500 168 h32 v-8 h-32 z" fill="#3d5062"/>
+    <path d="M508 160 h16 v-6 h-16 z" fill="#3d5062"/>
+    <path d="M514 150 l2-14 2 14 z" fill="#3d5062"/>
+  </g>
+  <rect y="252" width="640" height="148" fill="url(#lake)"/>
+  <path d="M60 252 q90 34 240 30 t280-22 v-10 h-520 z" fill="#5f9670" opacity="0.7"/>
+  <g stroke="#e8f2f5" stroke-width="2" opacity="0.5">
+    <line x1="80" y1="300" x2="180" y2="300"/><line x1="380" y1="330" x2="520" y2="330"/>
+    <line x1="240" y1="356" x2="360" y2="356"/><line x1="470" y1="300" x2="560" y2="300"/>
+  </g>
+  <g>
+    <path d="M150 300 h56 l-8 10 h-40 z" fill="#8c5a3c"/>
+    <path d="M162 300 q16-22 32 0" fill="none" stroke="#8c5a3c" stroke-width="5"/>
+  </g>
+  <g>
+    <path d="M330 322 h70 l-10 14 h-50 z" fill="#5f4a3a"/>
+    <path d="M342 322 q23-30 46 0" fill="none" stroke="#5f4a3a" stroke-width="6"/>
+    <rect x="357" y="296" width="4" height="28" fill="#5f4a3a"/>
+    <path d="M361 296 q14 4 22 0 l-4 12 q-9 3-18 0 z" fill="#c8b273"/>
+  </g>
+  <g fill="#4a7d5f">
+    <path d="M30 252 q6-40 2-64 l6 2 q8 30 4 62 z"/>
+    <path d="M56 252 q10-34 30-44 l4 4 q-16 14-22 40 z"/>
+  </g>
+  <g transform="translate(212,368)">
+    <rect width="216" height="24" rx="12" fill="#0f141d" opacity="0.72"/>
+    <text x="108" y="16" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#dfe7f2">示例照片 · 请替换为实拍</text>
+  </g>
+</svg>
