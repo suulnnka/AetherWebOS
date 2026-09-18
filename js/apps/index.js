@@ -26,6 +26,7 @@ import monitor from './monitor/manifest.js';
 import music from './music/manifest.js';
 import weather from './weather/manifest.js';
 import map from './map/manifest.js';
+import tuxun from './tuxun/manifest.js';
 import memo from './memo/manifest.js';
 import diary from './diary/manifest.js';
 import minesweeper from './minesweeper/manifest.js';
@@ -52,6 +53,7 @@ const APPS = [
   [music, () => import('./music/index.js')],
   [weather, () => import('./weather/index.js')],
   [map, () => import('./map/index.js')],
+  [tuxun, () => import('./tuxun/index.js')],
   [memo, () => import('./memo/index.js')],
   [diary, () => import('./diary/index.js')],
   [minesweeper, () => import('./minesweeper/index.js')],
