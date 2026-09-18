@@ -9,7 +9,7 @@
 > [OS.js](https://github.com/os-js/OS.js)、[Puter](https://github.com/HeyPuter/puter)。
 
 **在线演示:<https://suulnnka.github.io/AetherWebOS/>**(每次推送 master 由
-GitHub Actions 自动构建部署,黑白棋与 3D 国际象棋用的就是下面的引擎子项目)
+GitHub Actions 自动构建部署,黑白棋与国际象棋用的就是下面的引擎子项目)
 
 ## 功能一览
 
@@ -33,10 +33,11 @@ GitHub Actions 自动构建部署,黑白棋与 3D 国际象棋用的就是下面
 
 需要 Node.js 20.19+ 或 22.12+。
 
-**克隆时必须带上子模块**:黑白棋与国际象棋的引擎在两个独立仓库里,以
-git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`
-(即 [AetherOthello](https://github.com/suulnnka/AetherOthello) 与
-[AetherChess](https://github.com/suulnnka/AetherChess))。不检出子模块,
+**克隆时必须带上子模块**:三个棋类的引擎在各自独立的仓库里,以
+git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`、`vendor/AetherXiangqi`
+(即 [AetherOthello](https://github.com/suulnnka/AetherOthello)、
+[AetherChess](https://github.com/suulnnka/AetherChess) 与
+[AetherXiangqi](https://github.com/suulnnka/AetherXiangqi))。不检出子模块,
 `npm run build` / `npm run dev` 会因找不到引擎文件直接失败:
 
 ```bash
@@ -107,7 +108,8 @@ webos/
 ├─ js/game/index.js      内置游戏内容(示例谜题链)
 ├─ vendor/               git submodule:独立引擎子项目
 │  ├─ AetherOthello/     黑白棋引擎(github.com/suulnnka/AetherOthello)
-│  └─ AetherChess/       国际象棋引擎(github.com/suulnnka/AetherChess)
+│  ├─ AetherChess/       国际象棋引擎(github.com/suulnnka/AetherChess)
+│  └─ AetherXiangqi/     中国象棋引擎(github.com/suulnnka/AetherXiangqi)
 └─ README.md
 ```
 
@@ -512,12 +514,21 @@ WebOS.__errs                         // 运行期错误
   填充,经典 Zobrist 双散列置换表、深度兼容校验),PVS 迭代加深 + 残局完全
   求解(≤14 空,求解前 2→4→6 中层搜索定排序),三档难度(初级贪心 /
   中级 4 层 / 高级 8 层),搜索过程实时显示在窗口内;也可双人对弈
+- **中国象棋**:10×9 传统棋盘(SVG 画线:河界、九宫斜线、炮兵位十字标)——
+  完整规则(马蹩腿、象塞眼且不过河、炮翻山、士将限九宫、兵过河可横走、
+  将帅对脸判非法),点自己的子看可走位置、可吃位置红圈提示、将军闪红;
+  引擎为独立子项目 vendor/AetherXiangqi(alpha-beta 迭代加深 + 置换表 +
+  吃子静态搜索,perft 对齐公认计数,四档难度),Worker 后台思考逐层回报,
+  底栏实时显示档位/深度/节点数/耗时/评分;支持悔棋、双人对弈与换边
+  (与 AI 互换执子方,棋盘随之翻转)
 - **扫雷**:初级/中级/高级三难度,首击安全、右键插旗、双击快开(chord)、
   LED 计时器与计雷器,胜利/失败判定
-- **3D 国际象棋**:ogl(经 npm 打包,无 CDN)渲染的可旋转 3D 棋盘 —— 拖拽旋转视角、
-  滚轮缩放;完整规则(王车易位、吃过路兵、兵升变、将军/将死/逼和),
+- **国际象棋**:2D / 3D 双视图一键切换 —— 3D 为 ogl(经 npm 打包,无 CDN)渲染的
+  可旋转棋盘(拖拽旋转视角、滚轮缩放),2D 为平面棋盘,两视图共用局面与走子;
+  完整规则(王车易位、吃过路兵、兵升变、将军/将死/逼和),
   引擎为独立子项目 vendor/AetherChess(PVS/置换表/静态搜索 + Texel 调参
-  评估,四档强度),Worker 后台思考不卡界面,也支持人人对战
+  评估,四档强度;开局库内置引擎 src/book.js,ECO 谱线来自 lichess-org/chess-openings,
+  查谱命中加权随机、谱外进搜索),Worker 后台思考不卡界面,支持换边与悔棋,也支持人人对战
 - **笔记**:卡片式笔记(置顶/颜色/搜索/分类过滤),**每条可单独加密**
   (AES-GCM,锁标+模糊预览,密码解锁查看,忘记密码不可找回)
 - **日记**:按日期记录每一天 —— 左侧月历导航(有日记的日子带圆点

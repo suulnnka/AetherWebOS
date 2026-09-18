@@ -1,8 +1,9 @@
 /* ============================================================
- * 应用:3D 国际象棋(ogl 渲染)
- * - 拖拽旋转视角 / 滚轮缩放 / 点击走子
+ * 应用:国际象棋(2D/3D 双视图,默认 ogl 渲染 3D,工具栏可切 2D 平面视图)
+ * - 3D:拖拽旋转视角 / 滚轮缩放;2D:平面棋盘;两视图共用同一局面与点击走子
  * - 走子规则在 rules.js,AI 搜索在 ai.js(经 ai-worker.js 跑在 Worker 里)
- * - 多档难度:初级 / 中级 / 高级 / 大师
+ * - 多档难度:初级 / 中级 / 高级 / 大师;支持换边(与 AI 互换执子方)与悔棋
+ * - 开局库在引擎内(vendor/AetherChess src/book.js):Worker 查谱命中直接回着,谱外才进搜索
  *
  * 渲染原用 three.js(压缩后 116 KB),已换成 ogl(约 15 KB):
  * ogl 不带光照材质系统,这里的 Lambert 光照与阴影采样由下方自写 GLSL 承担。
@@ -18,11 +19,12 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './chess3d.css';
+import { piece2d } from './pieces2d.js';
 import { dialogs } from '../../core/dialogs.js';
 import {
   WHITE, BLACK, QUEEN, CHARS, NAME, C_WK, C_WQ, C_BK, C_BQ,
   mFrom, mTo, mFlag, mCap, mPromo, mkMove,
-  newPos, make, genMoves, genLegal, hasLegalMove, isLegal,
+  newPos, make, unmake, genMoves, genLegal, hasLegalMove, isLegal,
   inCheck, isThreefold, insufficientMaterial,
 } from '../../../vendor/AetherChess/src/rules.js';
 import { LEVELS, DEFAULT_LEVEL } from '../../../vendor/AetherChess/src/ai.js';
@@ -131,24 +133,28 @@ const fmtScore = (s) => {
 
 /* 棋子整体缩放系数(1 = 底座直径 0.88,几乎填满 1.0 的格子) */
 const PIECE_SCALE = 0.8;
-/* 拾取用的包围圆柱 [半径, 高]:棋子是回转体,射线打圆柱足够准也比逐三角形求交快得多。
- * 半径放宽 1.15 倍让点击更好命中,但仍小于半格(0.5)不会误伤邻格。
- * 若改动棋子剖面高度,这里要同步。 */
-const HIT_CYL = { p: [0.44, 0.79], r: [0.44, 0.96], n: [0.45, 1.09], b: [0.44, 1.25], q: [0.44, 1.46], k: [0.45, 1.69] };
+
+/* 2D 视图的棋子:classic 赛用造型 SVG(见 pieces2d.js),
+ * 白子深描边、黑子剪影加浅色细节,不再依赖系统字体的 Unicode 字形。 */
 
 /* ============ 注册应用 ============ */
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
     let pos = newPos();          // 引擎局面(棋盘 + 走子权 + 易位权 + 吃过路兵 + 历史)
-    let moves = [];              // 走过的着法序列((from<<6)|to),Worker 用它重演局面
+    let moves = [];              // 走过的完整着法(mkMove 编码,含旗位,悔棋要靠它 unmake);
+                                 // 发给 Worker 时再压成 (from<<6|to),replayMoves 会还原旗位
     let sel = null;              // 选中格 [r, c]
     let legal = [];              // 选中格的合法落点 [[r, c], ...](已按落点去重)
     let legalRaw = [];           // 与 legal 并列的打包走法
     let gameOver = false;
     let vsAI = true;
+    let humanColor = WHITE;      // 人机模式下玩家执子方,「换边」互换;2D 棋盘朝向与 3D 视角跟它走
     let levelIdx = DEFAULT_LEVEL;
     let searching = false;
+    const aiColor = () => otherStm(humanColor);
+    const sideChar = (col) => (col === WHITE ? 'w' : 'b');
+    const sideName = (col) => (col === WHITE ? '白方' : '黑方');
 
     const statusL = el('span', {}, '白方行棋');
     const infoL = el('span', { class: 'mono', style: { fontSize: '11px' } }, '');
@@ -232,7 +238,9 @@ register({
       // 棋盘
       boardGroup = new Transform();
       boardGroup.setParent(scene);
-      const lightV = rgb(0xe8d5b0), darkV = rgb(0x6b4a2f);
+      // 浅格调深(木色 #d2aa6e):原来的 #e8d5b0 太接近白棋的象牙色,
+      // 白子落在浅格上糊成一片;2D 的 .chess2d-cell.light 与这里保持一致。
+      const lightV = rgb(0xd2aa6e), darkV = rgb(0x7a5233);
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
           const m = makeMesh(boxGeo(square, 0.15, square), (r + c) % 2 === 0 ? lightV : darkV);
@@ -407,7 +415,47 @@ register({
       };
     }
 
+    /* ---------- 2D 视图 ----------
+     * 与 3D 共用同一局面(pos/sel/legal)与 handleSquare 交互,只换渲染层:
+     * DOM 网格 + 实心棋子字符。WebGL 初始化失败时初始视图直接落在 2D,应用仍可用。
+     * 高亮配色与 3D 一致:青框=选中,绿点=可落格,红圈=可吃子。 */
+    let mode = gl ? '3d' : '2d';
+    const board2d = el('div', { class: 'chess2d-board' });
+    const wrap2d = el('div', { class: 'chess3d-view chess2d-wrap' }, board2d);
+    function render2d() {
+      board2d.innerHTML = '';
+      const target = new Map(legal.map(([r, c]) => [r * 8 + c, !!pos.b[r * 8 + c]]));
+      const flip = humanColor === BLACK;    // 执黑时棋盘转 180°,自己的子永远在近处
+      for (let dr = 0; dr < 8; dr++) for (let dc = 0; dc < 8; dc++) {
+        const r = flip ? 7 - dr : dr, c = flip ? 7 - dc : dc;
+        const s = r * 8 + c, p = pos.b[s];
+        const to = target.get(s);                     // undefined=非落点,false= quiet,true=吃子
+        const cell = el('button', {
+          class: 'chess2d-cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark')
+            + (sel && sel[0] === r && sel[1] === c ? ' sel' : '')
+            + (to === undefined ? '' : to ? ' cap' : ' mv'),
+          'aria-label': NAME(s),
+          onClick: () => handleSquare(r, c),
+        });
+        if (p) cell.append(el('span', {
+          class: 'chess2d-pc ' + ((p >> 3) === WHITE ? 'w' : 'b'),
+          html: piece2d(CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b'),
+        }));
+        else if (to === false) cell.append(el('span', { class: 'chess2d-dot' }));
+        board2d.append(cell);
+      }
+    }
+    /** 2D 棋盘取容器短边(留边距);格子尺寸写入 --cell,字号/提示点按它换算 */
+    function fit2d() {
+      const r = wrap2d.getBoundingClientRect();
+      const size = Math.floor(Math.min(r.width, r.height)) - 28;
+      if (size < 80) return;                          // 未布局 / 窗口太小,等下次
+      board2d.style.width = board2d.style.height = size + 'px';
+      board2d.style.setProperty('--cell', (size / 8) + 'px');
+    }
+
     function syncPieces() {
+      if (mode === '2d') { render2d(); return; }      // 2D:整盘重画,棋子与高亮一并刷新
       if (!gl) return;
       for (const p of pieceMeshes) p.mesh.setParent(null);
       pieceMeshes.length = 0;
@@ -426,6 +474,7 @@ register({
 
     // 高亮标记
     function showHighlights() {
+      if (mode === '2d') { render2d(); return; }
       if (!gl) return;
       for (const m of highlightMeshes) m.setParent(null);
       highlightMeshes.length = 0;
@@ -436,7 +485,11 @@ register({
           return g;
         })();
         const m = new Mesh(gl, { geometry: geo, program: flatProgram });
-        m.onBeforeRender(() => { flatProgram.uniforms.uColor.value = color; });
+        // uOpacity 也是共享 uniform(悬停片每帧写不同值),这里显式写回自己的档
+        m.onBeforeRender(() => {
+          flatProgram.uniforms.uColor.value = color;
+          flatProgram.uniforms.uOpacity.value = 0.55;
+        });
         m.position.set((c - 3.5) * square, 0.03, (r - 3.5) * square);
         m.setParent(scene);
         highlightMeshes.push(m);
@@ -491,6 +544,13 @@ register({
     function goHome() {
       const off = Math.atan2(Math.sin(theta - HOME.theta), Math.cos(theta - HOME.theta));
       flyTo({ theta: HOME.theta + (Math.abs(off) > Math.PI / 2 ? Math.PI : 0), phi: HOME.phi, radius: HOME.radius });
+    }
+    /** 转向指定一方(白 θ=0 / 黑 θ=π)的标准视角,走最短弧 —— 换边时用 */
+    function faceSide(color) {
+      const base = HOME.theta + (color === BLACK ? Math.PI : 0);
+      let d = (base - theta) % (Math.PI * 2);
+      if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2;
+      flyTo({ theta: theta + d, phi: HOME.phi, radius: HOME.radius }, 420);
     }
 
     let dragging = false, lx = 0, ly = 0;
@@ -583,57 +643,90 @@ register({
       canvas.addEventListener('gestureend', gesture(() => { gs = null; }));
     }
 
-    /* 点击走子 —— 两段式拾取:
-     * ① 先拿射线打棋子的包围圆柱。只算平面交点是不行的:棋子高 1 格以上,
-     *    点棋子时射线穿过去落在 y=0 的交点会跑到它后面的格子,表现为"点不中棋子"。
-     * ② 没打中任何棋子,再退回棋盘平面求交 → 点格子同样有效(空格、走子落点)。
-     * 不用 ogl 的 Raycast.intersectMeshes:它按包围球粗筛,扁平方格会互相重叠。 */
+    /* 点击走子 —— 纯按格子拾取:射线与棋盘平面(y=0)求交,落在哪格就算哪格。
+     * 旧实现先拿射线打棋子的包围圆柱、没打中再退回平面,但 65° 俯视下棋子互相
+     * 遮挡,放宽的圆柱经常截走本想点后排 / 邻格的点击,表现为「点不中棋子、
+     * 吃不到想吃的子」。纯格子拾取配合悬停高亮(指针在哪格哪格亮,见下)反而
+     * 可预期:点棋子底座所在格就是它本身,悬停反馈让误点在落手前就看得见。 */
     const ray = new Raycast();
-    function pickPiece(o, d) {
-      let hit = null, bestT = Infinity;
-      for (const it of pieceMeshes) {
-        const [br, bh] = HIT_CYL[CHARS[pos.b[it.r * 8 + it.c] & 7]];
-        const R = br * PIECE_SCALE * 1.15, H = bh * PIECE_SCALE;
-        const ox = o.x - (it.c - 3.5) * square, oz = o.z - (it.r - 3.5) * square;
-        const a = d.x * d.x + d.z * d.z;
-        if (a < 1e-9) continue;                       // 视线垂直,与圆柱轴平行
-        const b = 2 * (ox * d.x + oz * d.z);
-        const cc = ox * ox + oz * oz - R * R;
-        const disc = b * b - 4 * a * cc;
-        if (disc < 0) continue;
-        const sq = Math.sqrt(disc);
-        for (const t of [(-b - sq) / (2 * a), (-b + sq) / (2 * a)]) {
-          if (t <= 0 || t >= bestT) continue;
-          const y = o.y + d.y * t;
-          if (y < 0 || y > H) continue;               // 交点必须在棋子高度范围内
-          bestT = t; hit = [it.r, it.c];
-        }
-      }
-      return hit;
-    }
-    function onClick(e) {
-      if (suppressClick) { suppressClick = false; return; }   // 手势/拖拽刚结束,别当走子
-      if (!camera || gameOver || searching || (vsAI && turnChar() === 'b')) return;
+    /** 鼠标事件 → 棋盘平面射线;画布还没布局时返回 null */
+    function eventRay(e) {
+      if (!camera) return null;
       const rect = canvas.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
+      if (!rect.width || !rect.height) return null;
       const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       ray.castMouse(camera, [mx, my]);
-      const { origin, direction } = ray;
-      const piece = pickPiece(origin, direction);
-      if (piece) { handleSquare(piece[0], piece[1]); return; }
-      if (Math.abs(direction.y) < 1e-6) return;
-      const t = -origin.y / direction.y;
-      if (t <= 0) return;
-      const x = origin.x + direction.x * t;
-      const z = origin.z + direction.z * t;
+      return [ray.origin, ray.direction];
+    }
+    /** 射线 → 格子 [r, c];视线与棋盘平行或交点在板外返回 null */
+    function pickSquare(o, d) {
+      if (Math.abs(d.y) < 1e-6) return null;
+      const t = -o.y / d.y;
+      if (t <= 0) return null;                        // 交点在相机背后
+      const x = o.x + d.x * t, z = o.z + d.z * t;
       const c = Math.round(x + 3.5), r = Math.round(z + 3.5);
-      if (!inB(r, c)) return;
+      if (!inB(r, c)) return null;
       // 落点必须真的落在该格内(格边长 1,中心在 (c-3.5, r-3.5))
-      if (Math.abs(x - (c - 3.5)) > 0.5 || Math.abs(z - (r - 3.5)) > 0.5) return;
-      handleSquare(r, c);
+      if (Math.abs(x - (c - 3.5)) > 0.5 || Math.abs(z - (r - 3.5)) > 0.5) return null;
+      return [r, c];
+    }
+    /** 玩家此刻是否可落子(终局 / AI 想棋 / 轮到 AI 都锁盘) */
+    const canInput = () => !!camera && !gameOver && !searching
+      && !(vsAI && turnChar() !== sideChar(humanColor));
+    function onClick(e) {
+      if (suppressClick) { suppressClick = false; return; }   // 手势/拖拽刚结束,别当走子
+      if (!canInput()) return;
+      const rd = eventRay(e);
+      if (!rd) return;
+      const sq = pickSquare(rd[0], rd[1]);
+      if (sq) handleSquare(sq[0], sq[1]);
     }
     if (canvas) canvas.addEventListener('click', onClick);
+
+    /* 悬停指示 —— 纯格子拾取的「瞄准镜」:指针悬在哪格就垫一块浅色圆片,
+     * 可选中的己方子 / 当前选中子的合法落点再加亮并切成 pointer 光标。
+     * 高个子棋子挡住后排视线时,点下去之前就能确认这一击落在哪格。 */
+    const HOVER_COLD = rgb(0xffffff), HOVER_HOT = rgb(0xffe08a);
+    let hoverMesh = null, hoverHot = false;
+    function hideHover() {
+      if (hoverMesh) hoverMesh.setParent(null);
+      if (canvas) canvas.style.cursor = 'grab';
+    }
+    function isActionable(r, c) {
+      const p = pos.b[r * 8 + c];
+      if (p && (p >> 3) === pos.stm) return true;     // 可选中的己方子
+      return !!(sel && legal.some(([lr, lc]) => lr === r && lc === c));
+    }
+    function updateHover(e) {
+      const rd = eventRay(e);
+      if (!rd) return;
+      const sq = pickSquare(rd[0], rd[1]);
+      if (!sq) { hideHover(); return; }
+      hoverHot = isActionable(sq[0], sq[1]);
+      if (!hoverMesh) {
+        const geo = geoCache.get('hover') || (() => {
+          const g = new Cylinder(gl, { radiusTop: 0.46, radiusBottom: 0.46, height: 0.03, radialSegments: 24 });
+          geoCache.set('hover', g);
+          return g;
+        })();
+        hoverMesh = new Mesh(gl, { geometry: geo, program: flatProgram });
+        hoverMesh.onBeforeRender(() => {
+          flatProgram.uniforms.uColor.value = hoverHot ? HOVER_HOT : HOVER_COLD;
+          flatProgram.uniforms.uOpacity.value = hoverHot ? 0.5 : 0.22;
+        });
+      }
+      hoverMesh.position.set((sq[1] - 3.5) * square, 0.012, (sq[0] - 3.5) * square);
+      hoverMesh.setParent(scene);
+      canvas.style.cursor = hoverHot ? 'pointer' : 'grab';
+    }
+    if (canvas) {
+      canvas.addEventListener('pointermove', (e) => {
+        if (pointers.size > 0 || dragging) { hideHover(); return; }   // 拖视角 / 多指手势中不显示
+        updateHover(e);
+      });
+      canvas.addEventListener('pointerleave', hideHover);
+    }
 
     function handleSquare(r, c) {
       if (gameOver) return;
@@ -686,32 +779,31 @@ register({
     function doMove(m) {
       m = normalize(m);
       make(pos, m);
-      moves.push((mFrom(m) << 6) | mTo(m));
+      moves.push(m);
       sel = null; legal = []; legalRaw = []; showHighlights();
       syncPieces();
       checkEnd();
       if (gameOver) return;
-      if (vsAI && pos.stm === BLACK) thinkAI();
+      if (vsAI && pos.stm === aiColor()) thinkAI();
       else updateStatus();
     }
 
     function updateStatus() {
-      const c = turnChar();
       const inC = inCheck(pos);
-      const who = c === 'w' ? '白方' : '黑方(AI)';
+      const who = sideChar(pos.stm) === 'w' ? '白方' : '黑方';
       statusL.textContent = who + '行棋' + (inC ? ' — 将军!⚠' : '');
-      setTitle(`3D 国际象棋 — ${c === 'w' ? '白' : '黑'}方行棋${inC ? '(将军)' : ''}`);
+      setTitle('国际象棋');
     }
 
-    /* 终局判定:将死 / 逼和 / 子力不足 / 三次重复 */
+    /* 终局判定:将死 / 逼和 / 子力不足 / 三次重复。状态行只说哪方胜,不标 (AI) */
     function checkEnd() {
       const buf = new Int32Array(256);
-      const c = turnChar();
       const inC = inCheck(pos);
-      const winner = c === 'w' ? '黑方' : '白方';
+      const wcol = otherStm(pos.stm);        // 刚走子的一方获胜(若有)
+      const winner = sideName(wcol) + (vsAI && wcol === aiColor() ? '(AI)' : '');
       let title = null, msg = null, line = null;
       if (!hasLegalMove(pos, buf)) {
-        if (inC) { title = '将死'; msg = `${winner}获胜!`; line = `将死 — ${winner}胜`; }
+        if (inC) { title = '将死'; msg = `${winner}获胜!`; line = `将死 — ${sideName(wcol)}胜`; }
         else { title = '逼和'; msg = '和棋(无子可动)'; line = '逼和 — 和棋'; }
       } else if (insufficientMaterial(pos)) {
         title = '和棋'; msg = '子力不足,无法将死'; line = '子力不足 — 和棋';
@@ -723,7 +815,7 @@ register({
       abortEngine();
       dialogs.info({ title, message: msg });
       statusL.textContent = line;
-      setTitle('3D 国际象棋 — 终局');
+      setTitle('国际象棋');
     }
 
     /* ---------- AI:搜索跑在 Worker 里 ----------
@@ -737,8 +829,16 @@ register({
     function onEngineMsg(e) {
       const d = e.data;
       if (!d || d.type === 'pong' || d.id !== pendingId) return;      // 过期 / 无关消息
+      if (d.error || !d.move) { pendingId = 0; searching = false; infoL.textContent = 'AI 无可用着法'; checkEnd(); return; }
+      if (d.book) {
+        // 引擎查谱命中:短暂延时落子让节奏像"想了一下";seq 快照对照 reqSeq,
+        // 期间新对局 / 悔棋 / 关窗会作废这次落子
+        infoL.textContent = d.name ? `开局库 · ${d.name}` : '开局库';
+        const seq = reqSeq;
+        setTimeout(() => { if (seq !== reqSeq) return; searching = false; doMove(d.move); }, 350 + Math.random() * 450);
+        return;
+      }
       pendingId = 0; searching = false;
-      if (d.error || !d.move) { infoL.textContent = 'AI 无可用着法'; checkEnd(); return; }
       infoL.textContent = `${level().name} · 深度 ${d.depth} · ${Math.round(d.nodes / 1000)}k 节点 · ${d.ms}ms · ${fmtScore(d.score)}`;
       doMove(d.move);
     }
@@ -760,8 +860,8 @@ register({
       const cfg = level();
       searching = true;
       sel = null; legal = []; legalRaw = []; showHighlights();
-      statusL.textContent = `黑方(AI)思考中…(${cfg.name})`;
-      setTitle(`3D 国际象棋 — AI 思考中(${cfg.name})`);
+      statusL.textContent = `${sideName(aiColor())}思考中…`;
+      setTitle('国际象棋');
       infoL.textContent = '';
       if (typeof Worker === 'undefined') {
         searching = false;
@@ -786,7 +886,8 @@ register({
       }
       const id = ++reqSeq;
       pendingId = id;
-      worker.postMessage({ id, moves: moves.slice(), nodes: cfg.nodes, ms: cfg.ms, depth: cfg.depth });
+      // 压成 (from<<6|to) 再发:Worker 的 replayMoves 会按合法着法还原旗位
+      worker.postMessage({ id, moves: moves.map((m) => (mFrom(m) << 6) | mTo(m)), nodes: cfg.nodes, ms: cfg.ms, depth: cfg.depth });
     }
 
     function resetGame() {
@@ -796,6 +897,32 @@ register({
       sel = null; legal = []; legalRaw = [];
       gameOver = false;
       syncPieces(); showHighlights(); updateStatus();
+      if (vsAI && pos.stm === aiColor()) thinkAI();   // 换边后玩家执黑时,AI 执白先行
+    }
+
+    /** 悔棋:撤到「轮到玩家重新决策」为止。人机撤两手(对方应手 + 自己那手),
+     * 人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。 */
+    function doUndo() {
+      if (!moves.length) return;
+      abortEngine();
+      let n = 1;
+      if (vsAI && pos.stm === humanColor && moves.length >= 2) n = 2;
+      while (n-- > 0 && moves.length) unmake(pos, moves.pop());
+      gameOver = false;
+      sel = null; legal = []; legalRaw = [];
+      syncPieces(); showHighlights();
+      if (vsAI && pos.stm === aiColor()) thinkAI();   // 撤完轮到 AI(如执黑方在起点悔棋)就让它重想
+      else updateStatus();
+    }
+
+    /** 换边:与 AI 互换执子方。中途换边作废在途搜索并立即接手;
+     * 3D 视角飞向新一侧,2D 棋盘由 render2d 按 humanColor 翻转。终局后换边只改偏好,下局生效。 */
+    function switchSide() {
+      abortEngine();
+      humanColor = otherStm(humanColor);
+      faceSide(humanColor);
+      if (!gameOver && pos.stm === aiColor()) thinkAI();
+      else if (!gameOver) updateStatus();
     }
 
     /* 工具栏 */
@@ -813,31 +940,70 @@ register({
     }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
     levelSel.value = String(levelIdx);            // 默认「高级」
     const aiBtn = el('button', {
-      class: 'btn', title: '切换人机 / 人人对战',
+      class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
         vsAI = !vsAI;
-        e.currentTarget.textContent = vsAI ? '人机:开' : '人人对战';
+        e.currentTarget.textContent = vsAI ? '人机' : '双人';
+        sideBtn.disabled = !vsAI;                                  // 换边只对人机模式有意义
         if (!vsAI) { abortEngine(); updateStatus(); }              // 关掉 AI 要把在途搜索停掉
-        else if (!gameOver && pos.stm === BLACK) thinkAI();        // 轮到黑方就立刻接手
+        else if (!gameOver && pos.stm === aiColor()) thinkAI();    // 轮到 AI 一侧就立刻接手
         else updateStatus();
       },
-    }, '人机:开');
-    const viewBtn = el('button', { class: 'btn', title: '切换到白/黑方视角', onClick: () => { flyTo({ theta: theta + Math.PI, phi, radius }, 420); } }, icon('refresh', 13), '换边视角');
-    const homeBtn = el('button', { class: 'btn', title: '归正到 65° 标准俯视角', onClick: goHome }, icon('home', 13), '归正');
+    }, '人机');
+    const sideBtn = el('button', {
+      class: 'btn', title: '换边:与 AI 互换执子方,视角随之转向',
+      onClick: switchSide,
+    }, '换边');
+    const undoBtn = el('button', {
+      class: 'btn', title: '悔棋:人机模式连 AI 的应手一起撤,人人模式撤一手',
+      onClick: doUndo,
+    }, icon('reply', 13), '悔棋');
+    /* 归正:3D 视角专属操作,做成画面内悬浮按钮,2D 视图下随容器一起隐藏,
+     * 工具栏只留对局级操作。换边不需要按钮 —— 拖拽转过去即可,归正会保留朝向。 */
+    const homeBtn = el('button', { class: 'btn chess3d-home', title: '归正到 65° 标准俯视角', onClick: goHome }, icon('home', 13), '归正');
+    container.append(homeBtn);
+
+    /* 2D/3D 视图切换(分段按钮,样式同扫雷的难度档)。2D 下两个 3D 视角按钮随之禁用。 */
+    const modeBtns = [];
+    const modeSeg = el('div', { class: 'seg', role: 'group', 'aria-label': '棋盘视图', title: '切换 2D / 3D 视图' },
+      ...['2d', '3d'].map((id) => {
+        const b = el('button', { class: 'seg-btn', onClick: () => setMode(id) }, id.toUpperCase());
+        modeBtns.push([id, b]);
+        return b;
+      }));
+    /** 把界面各处同步到当前 mode:容器显隐 / 分段按钮态 */
+    function applyMode() {
+      const two = mode === '2d';
+      for (const [id, b] of modeBtns) {
+        b.classList.toggle('active', id === mode);
+        b.setAttribute('aria-pressed', String(id === mode));
+      }
+      wrap2d.style.display = two ? '' : 'none';
+      container.style.display = two ? 'none' : '';
+      if (two) fit2d(); else fit();
+    }
+    /** 切换后各重建一遍视图:2D 期间 3D 网格没跟着走子更新,切回来要重摆;反向同理 */
+    function setMode(m) {
+      if ((m !== '2d' && m !== '3d') || mode === m) return;
+      mode = m;
+      hideHover();      // 切走的瞬间清掉悬停片,切回来别残留旧位置
+      applyMode();
+      syncPieces();
+      showHighlights();
+    }
 
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         newBtn,
         el('label', { class: 'chess3d-level-wrap', title: 'AI 难度' },
           el('span', { class: 'dim', style: { fontSize: '12px' } }, '难度'), levelSel),
-        aiBtn, viewBtn, homeBtn,
-        el('span', { class: 'grow' }),
-        el('span', { class: 'dim', style: { fontSize: '12px' } }, '拖拽旋转 · 滚轮/捏合缩放 · 两指滑动转向 · 点击走子')),
+        aiBtn, sideBtn, undoBtn, modeSeg),
       container,
+      wrap2d,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        infoL,
-        el('span', { class: 'mono' }, 'ogl+worker'))));
+        infoL)));
+    applyMode();    // 初始视图:WebGL 可用为 3D,失败则落在 2D(错误提示留在 container 里备用)
 
     /* ---------- 尺寸自适应 + 渲染循环 ----------
      * WebGL 不会自动刷新画面,必须每帧手动 render()。
@@ -857,7 +1023,7 @@ register({
     function tick(ts = 0) {
       if (disposed) return;
       raf = requestAnimationFrame(tick);
-      if (!renderer) return;
+      if (!renderer || mode === '2d') return;   // 2D 期间画面由 DOM 承担,跳过 3D 出帧
       fit();
       stepTween(ts);
       frames++;
@@ -873,9 +1039,11 @@ register({
     }
     tick();
 
-    const ro = renderer ? new ResizeObserver(fit) : null;
-    if (ro) ro.observe(container);
-    window.addEventListener('resize', fit);
+    const onWinResize = () => { fit(); fit2d(); };
+    const ro = new ResizeObserver(onWinResize);
+    ro.observe(container);
+    ro.observe(wrap2d);
+    window.addEventListener('resize', onWinResize);
 
     updateStatus();
 
@@ -890,6 +1058,13 @@ register({
       moves: () => moves.length,
       searching: () => searching,
       level: () => LEVELS[levelIdx].id,
+      mode: () => mode,
+      /** 测试用:切 2D / 3D 视图 */
+      setMode: (m) => setMode(m),
+      /** 玩家执子方('w'/'b')与换边、悔棋(测试用) */
+      human: () => sideChar(humanColor),
+      switchSide: () => switchSide(),
+      undo: () => doUndo(),
       /** 测试用:直接切换难度(0 初级 … 3 大师),与下拉保持同步 */
       setLevel: (i) => {
         if (i >= 0 && i < LEVELS.length) {
@@ -921,7 +1096,7 @@ register({
         disposed = true;
         abortEngine();                  // 停掉在途的 AI 搜索并释放 Worker
         cancelAnimationFrame(raf);
-        window.removeEventListener('resize', fit);
+        window.removeEventListener('resize', onWinResize);
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', endPointer);
         ro?.disconnect();

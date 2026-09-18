@@ -1,4 +1,4 @@
-/* 3D 国际象棋专属样式 */
+/* 国际象棋专属样式(2D/3D 双视图) */
 .chess3d-view {
   flex: 1; min-height: 0;
   display: flex; align-items: center; justify-content: center;
@@ -8,7 +8,45 @@
 .chess3d-view canvas { cursor: grab; touch-action: none; }
 .chess3d-view canvas:active { cursor: grabbing; }
 
+/* 归正按钮:悬浮在 3D 画面右下角(2D 视图下随 .chess3d-view 容器一起隐藏) */
+.chess3d-home { position: absolute; right: 10px; bottom: 10px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); }
+
 /* 难度下拉:与 .btn 同高(30px),给足宽度免得中文选项被裁 */
 .chess3d-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .chess3d-level { min-width: 84px; cursor: pointer; }
 .chess3d-level option { background: var(--panel-solid); color: var(--text); }
+
+/* 2D 视图:容器复用 .chess3d-view 的底色与居中,棋盘尺寸由 fit2d() 按容器短边算 */
+.chess2d-wrap { padding: 14px; }
+.chess2d-board {
+  --cell: 48px;                       /* fit2d() 会覆写;字号/提示点全按它换算 */
+  flex: none;
+  display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+  aspect-ratio: 1;
+  border-radius: 6px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+.chess2d-cell {
+  position: relative; display: grid; place-items: center;
+  border: 0; padding: 0; font: inherit; line-height: 1;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+/* 格色与 3D 的 lightV/darkV(见 index.js)保持一致:浅格取木色而不是近白,
+ * 否则白子(象牙 #f5f0e6 一类)落在浅格上认不出来。 */
+.chess2d-cell.light { background: #d2aa6e; }
+.chess2d-cell.dark { background: #7a5233; }
+.chess2d-cell:focus-visible { outline: 2px solid #22d3ee; outline-offset: -2px; z-index: 1; }
+.chess2d-cell.sel { box-shadow: inset 0 0 0 3px #22d3ee; }
+.chess2d-cell.mv:hover, .chess2d-cell.cap:hover { filter: brightness(1.14); }
+/* 棋子:classic 赛用 SVG(pieces2d.js),尺寸随格子,投影让白子在浅格上有分量 */
+.chess2d-pc { user-select: none; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45)); }
+.chess2d-pc svg { display: block; width: calc(var(--cell) * 0.86); height: calc(var(--cell) * 0.86); }
+.chess2d-dot {
+  width: calc(var(--cell) * 0.26); height: calc(var(--cell) * 0.26); border-radius: 50%;
+  background: rgba(34, 197, 94, 0.85);
+}
+.chess2d-cell.cap::after {
+  content: ''; position: absolute; inset: 5%;
+  border: calc(var(--cell) * 0.085) solid rgba(239, 68, 68, 0.85);
+  border-radius: 50%; pointer-events: none;
+}

@@ -47,38 +47,54 @@ const t = (name, ok, extra) => {
 };
 
 const chunk = findChunk();
-const code = fs.readFileSync(chunk, 'utf8');
-const self = { postMessage: (m) => { self.__last = m; } };
-new Function('self', code)(self);           // 打包产物自包含,无 import
+const code = fs.readFileSync(chunk, 'utf8')
+  // 开局库 book.bin 是独立资产,冒烟环境没有它:资产加载替换为拒绝,
+  // worker 内部 catch 后自动走"无谱"路径(搜索兜底);import.meta 一并中和
+  .replace(/fetch\(new URL\([^)]*\)\)/g, 'Promise.reject(new Error("smoke: no book.bin"))')
+  .replace(/import\.meta\.url/g, '"."');
 
-const ask = (msg) => { self.__last = null; self.onmessage({ data: msg }); return self.__last; };
+const self = { postMessage: (m) => { self.__last = m; } };
+/* URL 影子类:chunk 里的开局库资产解析(new URL)在冒烟环境必然失败,
+ * 用不抛错的影子类顶住,让加载失败走 worker 内部的 catch(谱外搜索兜底) */
+class ShadowURL {
+  constructor(u) { this.href = String(u); }
+}
+new Function('self', 'URL', code)(self, ShadowURL);
+
+const ask = async (msg) => {                // worker 经 bookReady 微任务分派,异步等回包
+  self.__last = null;
+  self.onmessage({ data: msg });
+  await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  return self.__last;
+};
 
 console.log(`引擎 chunk: ${chunk}(${(fs.statSync(chunk).size / 1024).toFixed(1)} KB)\n`);
 
 t('chunk 带引擎标记', self.__engineTag === TAG, `tag=${self.__engineTag}`);
 
-const pong = ask({ type: 'ping' });
+const pong = await ask({ type: 'ping' });
 t('ping → pong', !!pong && pong.type === 'pong');
 
-const r1 = ask({ id: 1, moves: [], nodes: 20000, ms: 200, depth: 24 });
+const r1 = await ask({ id: 1, moves: [], nodes: 20000, ms: 200, depth: 24 });
 t('开局面:返回着法并迭代加深到 ≥ 5 层',
   !!r1 && !r1.error && r1.move > 0 && r1.depth >= 5,
   r1 && !r1.error ? `${describe(r1.move)} · 深度 ${r1.depth} · ${r1.nodes} 节点 · ${r1.ms}ms · ${r1.score}` : JSON.stringify(r1));
 
-const r2 = ask({ id: 2, moves: [wire(6, 4, 4, 4)], nodes: 40000, ms: 500, depth: 24 });
+const r2 = await ask({ id: 2, moves: [wire(6, 4, 4, 4)], nodes: 40000, ms: 500, depth: 24 });
 t('重演 1.e4 后返回黑方着法',
   !!r2 && !r2.error && r2.move > 0,
   r2 && !r2.error ? `${describe(r2.move)} · 深度 ${r2.depth} · ${r2.nodes} 节点` : JSON.stringify(r2));
 
-const r3 = ask({ id: 3, moves: [wire(0, 6, 0, 4)], nodes: 5000, ms: 100 });
+const r3 = await ask({ id: 3, moves: [wire(0, 6, 0, 4)], nodes: 5000, ms: 100 });
 t('非法走法序列被拒绝(而不是当空局面乱搜)', !!r3 && r3.error === 'illegal-sequence', JSON.stringify(r3));
 
-const r4 = ask({ id: 4, moves: [], nodes: 30000, ms: 5000, depth: 24 });
+const r4 = await ask({ id: 4, moves: [], nodes: 30000, ms: 5000, depth: 24 });
 t('节点预算是硬上限(不超请求值 30%)', !!r4 && r4.nodes <= 30000 * 1.3, `请求 30000,实用 ${r4 && r4.nodes}`);
 
 /* 大师档:确认高预算下能明显搜得更深 */
 const t0 = Date.now();
-const r5 = ask({ id: 5, moves: [], nodes: 1200000, ms: 3500, depth: 24 });
+const r5 = await ask({ id: 5, moves: [], nodes: 1200000, ms: 3500, depth: 24 });
 t('大师档节点预算下深度 ≥ 9 层', !!r5 && r5.depth >= 9,
   r5 ? `深度 ${r5.depth} · ${r5.nodes} 节点 · ${r5.ms}ms(墙钟 ${Date.now() - t0}ms)` : JSON.stringify(r5));
 

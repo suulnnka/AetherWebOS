@@ -23,7 +23,7 @@ await sleep(3000);
 
 const view = () => c.evaluate(`window.__chess.home()`);
 const clickBtn = (label) => c.evaluate(`(() => {
-  const btns = [...document.querySelectorAll('.win[data-app=chess3d] .app-toolbar button')];
+  const btns = [...document.querySelectorAll('.win[data-app=chess3d] .app-toolbar button, .win[data-app=chess3d] .chess3d-view button')];
   const b = btns.find(x => x.textContent.includes('${label}'));
   if (!b) throw new Error('按钮未找到: ${label}');
   b.click(); return true;
