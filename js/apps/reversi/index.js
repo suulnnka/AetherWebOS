@@ -5,6 +5,9 @@
  *
  * AI 引擎在独立子项目 vendor/AetherOthello(github.com/suulnnka/AetherOthello):
  * 位棋盘 + PVS/置换表 + 残局完全求解,测试与基准都在该仓库。
+ * **对弈走 zig 通道**:引擎编译成 othello.wasm(原生 u64 位棋盘),跑在 Worker 里;
+ * 本文件一行搜索代码都没有,只有「8×8 棋盘 ↔ 两个 u32 位板」的转换。
+ * 主分支的 src/engine.js(纯 JS 版)仍在仓库里当参照实现给探针用,对弈路径不再用它。
  * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess)。
  * ============================================================ */
 import { el } from '../../core/utils.js';
@@ -13,7 +16,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './reversi.css';
 import { dialogs } from '../../core/dialogs.js';
-import { think, LEVELS } from '../../../vendor/AetherOthello/src/engine.js';
+import { LEVELS } from '../../../vendor/AetherOthello/src/levels.js';
 
 /* ==================== 应用 UI ==================== */
 
@@ -68,6 +71,21 @@ const fmtT = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms)
 const fmtNps = (res) => (res.ms > 0 ? ` · ${fmtN(Math.round(res.nodes / res.ms * 1000))}节点/s` : '');
 const sideName = (p) => (p === 'b' ? '黑方' : '白方');
 
+/** 棋盘 + 行棋方 → 位板的两半(lo = 第 1–4 行,hi = 第 5–8 行)。
+ *  wasm 的 i64 在 JS 侧是 BigInt,边界上容易写错,所以 ABI 统一拆两个 u32;
+ *  这里直接按位拼,不经过 BigInt —— 每半 32 位刚好是 4 行,`>>> 0` 把符号位掰回来。 */
+function halfs(b, color) {
+  let lo = 0, hi = 0;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (b[r][c] !== color) continue;
+      const i = r * 8 + c;
+      if (i < 32) lo |= 1 << i; else hi |= 1 << (i - 32);
+    }
+  }
+  return [lo >>> 0, hi >>> 0];
+}
+
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
@@ -78,7 +96,7 @@ register({
     let humanColor = 'b';    // 人机模式下玩家执子方,「换边」互换
     let moves = [];          // 走子历史 { color, r, c, flips },悔棋按它还原
     let lastMove = null;
-    let searchGen = 0;       // 搜索代数:新对局/模式切换时 +1,打断进行中的搜索
+    let searchGen = 0;       // 搜索代数:作废在途搜索用的请求号(见 killWorker)
     let thinking = false;
     let levelIdx = 2;        // 默认高级
     const aiColor = () => other(humanColor);
@@ -91,28 +109,28 @@ register({
     const blackCount = el('span', { class: 'rv-count black' }, '2');
     const whiteCount = el('span', { class: 'rv-count white' }, '2');
 
-    /** 把搜索过程写入状态栏右侧(样式同 chess 的 infoL:mono 11px) */
-    function showSearch(res, done) {
+    /** 把搜索结果写入状态栏右侧(样式同 chess 的 infoL:mono 11px)。
+     *  wasm 通道是一锤子买卖:没有逐层/预热/待定那些中间态,只有最后一轮的结果 ——
+     *  所以这里看不到「深度一层层涨」,但每个数字都是真的跑完了的。 */
+    function showSearch(res) {
       const me = sideName(aiColor()), opp = sideName(other(aiColor()));
-      const sc = (s) => (s >= 0 ? `${me} +${s}` : `${opp} +${-s}`);
-      if (res.greedy) {
-        infoL.textContent = `初级 贪心选点 ${moveName(res.move)} · 评估 ${sc(res.score)} · 节点 ${fmtN(res.nodes)} · ${fmtT(res.ms)}`;
-        return;
-      }
+      const sc = (s) => (s >= 0 ? `${me} +${s.toFixed(1)}` : `${opp} +${(-s).toFixed(1)}`);
       if (res.only) { infoL.textContent = `唯一合法步 ${moveName(res.move)},无需搜索`; return; }
       const tail = ` · 节点 ${fmtN(res.nodes)} · ${fmtT(res.ms)}${fmtNps(res)}`;
-      if (res.warm) { // 残局前置中层搜索:只为完全求解排序
-        infoL.textContent = `残局预热 深度 ${res.depth}/${res.depthMax} · 最佳 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
+      if (res.greedy) {
+        infoL.textContent = `初级 贪心选点 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
         return;
       }
-      if (res.endgame) {
-        if (res.pending) { infoL.textContent = `残局完全求解中…(${res.empties} 空) · 先行着法 ${moveName(res.move)}`; return; }
-        const d = Math.round((res.score || 0) / 100);
+      if (res.exact) {
+        const d = Math.round(res.score);
         const verdict = d > 0 ? `${me}胜 ${d} 子` : d < 0 ? `${opp}胜 ${-d} 子` : '和棋';
-        infoL.textContent = `残局完全求解(${res.empties}空):${verdict} · 最佳 ${moveName(res.move)}${tail}`;
-      } else {
-        infoL.textContent = `${done ? '' : '搜索中… '}深度 ${res.depth}/${res.depthMax} · 最佳 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
+        infoL.textContent = `残局完全求解(${res.empties} 空):${verdict} · 最佳 ${moveName(res.move)}${tail}`;
+        return;
       }
+      /* 进了完全求解的空格区间却没跑完(节点预算截断):明说,别把前置中层
+       * 迭代的启发式估值当成终局判决报出去 —— 那会显示一场凭空的胜负。 */
+      const head = res.partial ? `残局求解未跑完(${res.empties} 空)` : `深度 ${res.depth}/${res.depthMax}`;
+      infoL.textContent = `${head} · 最佳 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
     }
 
     function renderBoard() {
@@ -191,25 +209,120 @@ register({
       advance();
     }
 
+    /* ---------- AI:搜索跑在 Worker 里(zig → wasm 通道)----------
+     * 传位板而不是棋盘:结构化克隆最省(4 个 number),而且 Worker 里根本不需要
+     * 规则 —— 引擎自己就是规则。UI 与引擎各持一套规则的风险被压到最小:UI 只用
+     * 自己那套画界面/翻子,引擎只负责「给一手」,最后仍由 UI 判合法性兜底。
+     *
+     * 搜索在 Worker 里同步跑:一个 engineThink 跑完才返回,中间没有进度可报。
+     * 要真中断(新对局/悔棋/换难度/换边)只能 terminate() 再造一个 —— 光丢弃
+     * 结果的话它还会白算到结束(大师档一手可能几秒)。 */
+    let worker = null;
+    let pending = null;          // 在途请求 { id, resolve, only }
+    let reqId = 0;               // 请求号 —— **必须与 searchGen 分开**:
+                                 // searchGen 是「作废代数」(killWorker 自增),
+                                 // 若拿它当请求号,requestThink 里的自增会让调用方
+                                 // 手上一份的 gen 立刻"过期",AI 就永远不落子(踩过)。
+
+    function killWorker() {
+      if (worker) { worker.terminate(); worker = null; }
+      thinking = false;
+      searchGen++;               // 让已经进了主线程队列的旧结果作废
+      if (pending) { const p = pending; pending = null; p.resolve(null); }
+    }
+
+    function ensureWorker() {
+      if (worker) return worker;
+      try {
+        worker = new Worker(new URL('../../../vendor/AetherOthello/src/worker.js', import.meta.url), { type: 'module' });
+      } catch (err) {
+        console.error('[reversi] 无法创建 AI Worker:', err);
+        worker = null;
+        statusL.textContent = 'AI 不可用(Worker 创建失败)';
+        return null;
+      }
+      worker.onmessage = onEngineMsg;
+      worker.onerror = (ev) => {
+        console.warn('[reversi] AI Worker 异常:', ev.message || ev);
+        killWorker();
+        statusL.textContent = 'AI 出错,已跳过本步';
+      };
+      return worker;
+    }
+
+    function onEngineMsg(e) {
+      const d = e.data;
+      if (!d || !pending || d.id !== pending.id) return;      // 过期结果直接丢
+      const p = pending;
+      pending = null;
+      if (d.error) {
+        console.warn('[reversi] 引擎异常:', d.error);
+        statusL.textContent = '引擎异常:' + d.error;
+        p.resolve(null);
+        return;
+      }
+      const lv = LEVELS[levelIdx];
+      p.resolve({
+        ...d,
+        only: p.only,
+        greedy: d.depth === 0 && !d.exact,
+        // 进了完全求解的空格区间却没给出精确解 = 被节点预算截断
+        partial: d.empties <= lv.end && !d.exact,
+        depthMax: lv.depth,
+      });
+    }
+
+    /** 向 Worker 要一手;返回结果对象,请求被作废时返回 null */
+    function requestThink() {
+      return new Promise((resolve) => {
+        if (typeof Worker === 'undefined') {
+          statusL.textContent = '当前环境不支持 Web Worker,AI 不可用';
+          resolve(null); return;
+        }
+        if (!ensureWorker()) { resolve(null); return; }
+        const n = counts(board);
+        pending = { id: ++reqId, resolve, only: legalMoves(board, turn).length === 1 };
+        worker.postMessage({
+          type: 'think', id: pending.id,
+          own: halfs(board, turn), opp: halfs(board, other(turn)),
+          level: levelIdx, empties: 64 - n.black - n.white,
+        });
+        infoL.textContent = `搜索中…(${LEVELS[levelIdx].name})`;
+      });
+    }
+
     async function aiMove() {
       const color = aiColor();
       if (gameOver || !vsAI || turn !== color) return;
-      if (!root.isConnected) { searchGen++; return; }
+      if (!root.isConnected) { killWorker(); return; }
       if (thinking) { setTimeout(aiMove, 260); return; } // 上一轮搜索尚未结束,稍后重试
       thinking = true;
       const gen = searchGen;
       try {
-        const res = await think(board, color, LEVELS[levelIdx], showSearch, () => gen !== searchGen);
+        const res = await requestThink();
         if (!res || gen !== searchGen || gameOver || !root.isConnected) return;
+        if (res.move < 0) {                 // 引擎说无棋可走:交给 advance 走「跳过回合」那条路
+          turn = other(color);
+          advance();
+          return;
+        }
         const r = res.move >> 3, c = res.move & 7;
-        const { board: nb, flipped } = applyMove(board, r, c, color);
-        board = nb;
-        moves.push({ color, r, c, flips: flipped });
+        const flips = flipsFor(board, r, c, color);
+        if (!flips.length) {                // 兜底:宁可跳过也不能往盘上落一手脏子
+          console.warn('[reversi] 引擎返回非法着法', res.move);
+          statusL.textContent = '引擎返回非法着法,已跳过本步';
+          turn = other(color);
+          advance();
+          return;
+        }
+        board = applyMove(board, r, c, color).board;
+        moves.push({ color, r, c, flips });
         lastMove = [r, c];
         turn = other(color);
+        showSearch(res);
         advance();
       } finally {
-        thinking = false;
+        if (gen === searchGen) thinking = false;
       }
     }
 
@@ -218,7 +331,7 @@ register({
      * 历史条目自带行棋方,跳过回合不会打乱还原(轮到谁由条目颜色决定)。 */
     function doUndo() {
       if (!moves.length) return;
-      searchGen++;                       // 掐掉在途搜索,过期结果回来直接作废
+      killWorker();                      // 掐掉在途搜索:terminate 才真停得住 CPU 白烧
       let n = 1;
       if (vsAI && turn === humanColor && moves.length >= 2) n = 2;
       while (n-- > 0 && moves.length) {
@@ -239,7 +352,7 @@ register({
     /** 换边:与 AI 互换执子方。棋盘上下对称,无需转向;中途换边作废在途搜索并立即
      * 接手/交出;终局后换边只改偏好,下局(含新对局)生效。双人模式下按钮禁用。 */
     function switchSide() {
-      searchGen++;
+      killWorker();
       humanColor = other(humanColor);
       renderBoard();                     // 提示点跟「轮到的是不是人」走,执子方变了要重画
       if (!gameOver && turn === aiColor()) setTimeout(aiMove, 260);
@@ -248,7 +361,7 @@ register({
 
     /* 工具栏(样式与结构对齐 chess:图标按钮 + 难度下拉 + 人机/换边/悔棋) */
     const newBtn = el('button', { class: 'btn primary', title: '重新开始一局', onClick: () => {
-      searchGen++; // 打断进行中的搜索
+      killWorker(); // 打断进行中的搜索
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
       infoL.textContent = '';
       renderBoard(); updateStatus();
@@ -258,10 +371,10 @@ register({
      * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效。 */
     const levelSel = el('select', {
       class: 'select rv-level',
-      title: 'AI 难度:初级 / 中级 / 高级',
+      title: 'AI 难度:' + LEVELS.map((lv) => lv.name).join(' / '),
       'aria-label': 'AI 难度',
       onChange: (e) => {
-        searchGen++;
+        killWorker();
         levelIdx = Number(e.currentTarget.value) || 0;
         infoL.textContent = '';
         // 若切换发生在 AI 思考中,重新调度被打断的 AI
@@ -272,7 +385,7 @@ register({
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
-        searchGen++;
+        killWorker();
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                 // 换边只对人机模式有意义
@@ -305,5 +418,42 @@ register({
 
     renderBoard();
     updateStatus();
+
+    /* 浏览器探针(tools/probe-reversi.mjs)用的钩子。
+     * ping() 是唯一能证明「浏览器真的取到了 wasm 并初始化成功」的手段:
+     * 它走的是与对弈完全相同的 Worker/资源路径,回包里带着权重书的元信息。 */
+    window.__reversi = {
+      stats: () => ({
+        level: levelIdx, vsAI, thinking, plies: moves.length, turn,
+        human: humanColor, gameOver, hasWorker: !!worker,
+        counts: counts(board),
+      }),
+      info: () => infoL.textContent,
+      status: () => statusL.textContent,
+      levelSel: () => levelSel.value + ':' + levelSel.selectedOptions[0].textContent,
+      setLevel: (i) => {
+        if (i < 0 || i >= LEVELS.length) return;
+        levelSel.value = String(i);
+        levelSel.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      ping: () => new Promise((resolve) => {
+        if (!ensureWorker()) { resolve({ error: 'no-worker' }); return; }
+        const prev = worker.onmessage;
+        const done = (d) => { worker.onmessage = prev; resolve(d); };
+        worker.onmessage = (e) => {
+          const d = e.data;
+          if (d && d.type === 'pong') done(d); else prev(e);
+        };
+        worker.postMessage({ type: 'ping' });
+        setTimeout(() => done({ error: 'timeout' }), 5000);
+      }),
+    };
+
+    return {
+      onClose() {
+        killWorker();
+        delete window.__reversi;
+      },
+    };
   },
 });
