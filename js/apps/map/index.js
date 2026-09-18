@@ -1,74 +1,90 @@
 /* ============================================================
  * 应用:地图
- * 基于百度地图 JS API GL(WebGL 版,BD-09 坐标系),AK 为浏览器测试密钥:
- * 地点搜索(分页)/ 标准·卫星·混合图切换 / 路况图层 /
- * 点击取坐标 / 距离测量 / 浏览器定位
- * GL 版 centerAndZoom 只接受 Point,城市名统一走 Geocoder/LocalCity。
+ * 基于 Leaflet + OpenStreetMap 数据生态,免密钥、免审核:
+ *  - 底图:OSM 标准(tile.openstreetmap.de,失败自动切 CARTO)/
+ *    Esri World Imagery 卫星 / Esri 地形(均为境内可直连服务;
+ *    OSM 官方瓦片与 Nominatim 在境内不可达)
+ *  - 搜索/逆地理:Photon(komoot 的 OSM 搜索服务)
+ *  - 点击取坐标(WGS-84)/ 距离测量 / 浏览器定位 / 快捷城市
  * ============================================================ */
-import { el, escapeHtml } from '../../core/utils.js';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './map.css';
 
-const AK = 'M6gP5GsIPshSgOh7JnGgnxgXlEj0gyRj';
-const DEFAULT_CENTER = [116.404, 39.915];   // 北京天安门附近
-const QUICK_CITIES = ['北京', '上海', '广州', '深圳', '杭州', '成都'];
-const SEARCH_STATUS = {
-  1: '该城市下没有找到,可换个关键词试试',
-  2: '没能确定所在城市',
-  3: '密钥无效或无权限',
-  4: '搜索超时,请重试',
-  5: '请求不合法',
-  6: '搜索服务暂不可用',
+const QUICK_CITIES = [
+  { name: '北京', lat: 39.909, lng: 116.397 },
+  { name: '上海', lat: 31.230, lng: 121.473 },
+  { name: '广州', lat: 23.129, lng: 113.264 },
+  { name: '深圳', lat: 22.543, lng: 114.058 },
+  { name: '杭州', lat: 30.274, lng: 120.155 },
+  { name: '成都', lat: 30.572, lng: 104.066 },
+  { name: '西安', lat: 34.341, lng: 108.940 },
+  { name: '重庆', lat: 29.563, lng: 106.551 },
+];
+
+const BASE_LAYERS = {
+  normal: () => L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '© OpenStreetMap 贡献者',
+  }),
+  normalFallback: () => L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 20, attribution: '© OpenStreetMap 贡献者 © CARTO',
+  }),
+  satellite: () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19, attribution: '© Esri & Maxar & Earthstar Geographics',
+  }),
+  topo: () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19, attribution: '© Esri & OpenStreetMap 贡献者',
+  }),
 };
 
-/* ---- 异步加载百度地图 GL 脚本(JSONP callback;共享 Promise,失败可重试) ---- */
-let bmapPromise = null;
-function loadBMapGL() {
-  if (window.BMapGL) return Promise.resolve();
-  if (bmapPromise) return bmapPromise;
-  bmapPromise = new Promise((resolve, reject) => {
-    const cb = '__bmapgl_ready_' + Math.random().toString(36).slice(2);
-    let done = false;
-    const script = el('script', { src: `https://api.map.baidu.com/api?type=webgl&v=1.0&ak=${AK}&callback=${cb}` });
-    const finish = (ok, err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      delete window[cb];
-      script.onerror = null;
-      if (ok) resolve();
-      else { bmapPromise = null; script.remove(); reject(err); }
-    };
-    const timer = setTimeout(() => finish(false, new Error('加载超时,请检查网络')), 20000);
-    window[cb] = () => finish(true);
-    script.onerror = () => finish(false, new Error('百度地图脚本加载失败,请检查网络'));
-    document.head.appendChild(script);
-  });
-  return bmapPromise;
+const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} 米` : `${(m / 1000).toFixed(2)} 公里`);
+
+/* Haversine 球面距离(米) */
+function haversine(a, b) {
+  const rad = Math.PI / 180, R = 6371000;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} 米` : `${(m / 1000).toFixed(2)} 公里`);
+/* Photon(komoot 的 OSM 搜索服务,境内可直连) */
+async function photonSearch(q) {
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=10&lang=default`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`搜索服务返回 ${resp.status}`);
+  const j = await resp.json();
+  return (j.features || []).map((f) => {
+    const p = f.properties || {};
+    return {
+      lat: f.geometry?.coordinates?.[1],
+      lng: f.geometry?.coordinates?.[0],
+      name: p.name || p.city || p.state || q,
+      display: [p.name, p.city, p.state, p.country].filter(Boolean).join(' · '),
+      type: p.osm_value || p.type,
+    };
+  }).filter((it) => Number.isFinite(it.lat) && Number.isFinite(it.lng));
+}
 
 register({
   ...manifest,
   mount({ root, setTitle }) {
-    let B = null;           // window.BMapGL(脚本就绪后缓存)
-    let map = null;         // BMapGL.Map
-    let local = null;       // BMapGL.LocalSearch
-    let geocoder = null;    // BMapGL.Geocoder
-    let disposed = false;   // 窗口提前关闭时放弃后续异步初始化
-    let searched = false;   // 搜索过后不再让 IP 定城纠正视野
-    let trafficOn = false;
+    let map = null;
+    let baseLayer = null;
+    let searchMarker = null, coordMarker = null;
     let measuring = false;
-    let measure = null;     // { pts:[], line, dot, label }
+    let measurePts = [], measureGroup = null;
+    let closed = false;
+    const disposed = () => closed;
 
     /* ---------------- 骨架 ---------------- */
     const mapDiv = el('div', { class: 'mp-canvas' });
-    const overlay = el('div', { class: 'mp-overlay' });
     const side = el('div', { class: 'app-side mp-side' });
-    const statusL = el('span', {}, '正在加载地图…');
+    const statusL = el('span', {}, '');
     const statusR = el('span', { class: 'mono' }, '');
 
     const searchInput = el('input', {
@@ -77,13 +93,10 @@ register({
     searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
     const typeSeg = el('div', { class: 'seg mp-seg' },
-      segBtn('标准', true, () => setMapType('BMAP_NORMAL_MAP')),
-      segBtn('卫星', false, () => setMapType('BMAP_SATELLITE_MAP')),
-      segBtn('混合', false, () => setMapType('BMAP_HYBRID_MAP')));
+      segBtn('标准', true, () => setBase('normal')),
+      segBtn('卫星', false, () => setBase('satellite')),
+      segBtn('地形', false, () => setBase('topo')));
 
-    const trafficBtn = el('button', {
-      class: 'btn mp-toggle', title: '实时路况图层', onClick: toggleTraffic,
-    }, icon('activity', 14), '路况');
     const measureBtn = el('button', {
       class: 'btn mp-toggle', title: '测量地图上折线的实际距离', onClick: () => setMeasuring(!measuring),
     }, icon('sliders', 14), '测距');
@@ -97,9 +110,9 @@ register({
         el('button', { class: 'btn primary', onClick: doSearch }, icon('search', 14), '搜索'),
         typeSeg,
         el('span', { class: 'grow' }),
-        trafficBtn, measureBtn, locateBtn),
+        measureBtn, locateBtn),
       el('div', { class: 'app-mid' }, side,
-        el('div', { class: 'mp-wrap' }, mapDiv, overlay)),
+        el('div', { class: 'mp-wrap' }, mapDiv)),
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
         statusR)));
@@ -118,13 +131,16 @@ register({
       side.append(
         el('div', { class: 'mp-side-tip' },
           icon('info', 14),
-          el('div', {}, '点击地图取坐标;「测距」模式下依次打点可量实际距离。')),
+          el('div', {}, '点击地图取坐标(WGS-84);「测距」模式下依次打点可量实际距离。')),
         el('div', { class: 'mp-side-head' }, '快捷城市'),
         el('div', { class: 'mp-chips' },
-          ...QUICK_CITIES.map(c => el('button', { class: 'mp-chip', onClick: () => gotoCity(c) }, c))),
+          ...QUICK_CITIES.map(c => el('button', { class: 'mp-chip', onClick: () => {
+            map.setView([c.lat, c.lng], 12);
+            setTitle(`${c.name} — 地图`);
+          } }, c.name))),
         el('div', { class: 'mp-side-head' }, '说明'),
         el('div', { class: 'dim', style: { fontSize: '11.5px', lineHeight: 1.7, padding: '0 12px 12px' } },
-          '底图与搜索服务来自百度地图 JS API GL,坐标为 BD-09;定位使用浏览器定位并自动转换为百度坐标。'));
+          '底图数据 © OpenStreetMap 贡献者(CARTO/Esri 渲染,境内可直连);搜索由 Photon 提供;坐标为 WGS-84,全程无需密钥。'));
     }
 
     function renderSideError(msg, retry) {
@@ -135,90 +151,80 @@ register({
           retry ? el('button', { class: 'btn', style: { marginTop: '8px' }, onClick: retry }, '重试') : null)));
     }
 
-    /* ---------------- 城市 / 搜索 ---------------- */
-    function gotoCity(name) {
-      if (!map || !geocoder) return;
-      statusL.textContent = `正在跳转到${name}…`;
-      geocoder.getPoint(name, (pt) => {
-        if (disposed || !map) return;
-        if (!pt) { statusL.textContent = `没能定位到${name}`; return; }
-        statusL.textContent = '';
-        map.centerAndZoom(pt, 12);
-        setTitle(`${name} — 地图`);
-      });
-    }
-
-    function doSearch() {
+    /* ---------------- 搜索(Photon) ---------------- */
+    async function doSearch() {
       const kw = searchInput.value.trim();
-      if (!kw || !local) return;
+      if (!kw || !map) return;
       statusL.textContent = `正在搜索「${kw}」…`;
-      local.search(kw);
-    }
-
-    function onSearchDone(results) {
-      if (disposed || !results) return;
-      searched = true;
-      const kw = searchInput.value.trim();
-      const n = results.getCurrentNumPois ? results.getCurrentNumPois() : 0;
-      statusL.textContent = '';
-      if (local.getStatus() !== 0 || !n) {   // BMAP_STATUS_SUCCESS
-        setTitle('地图');
-        const reason = SEARCH_STATUS[local.getStatus()] || '没有找到相关地点';
-        renderSideError(`「${kw}」:${reason}`, () => doSearch());
-        return;
-      }
-      setTitle(`「${kw}」— 地图`);
-      const pages = results.getNumPages ? results.getNumPages() : 1;
-      const page = results.getPageIndex ? results.getPageIndex() : 0;
       side.innerHTML = '';
-      side.append(el('div', { class: 'mp-side-head' }, `「${kw}」· ${n} 个结果`));
-      for (let i = 0; i < n; i++) {
-        const poi = results.getPoi(i);
-        if (!poi) continue;
-        side.append(el('button', { class: 'mp-poi', onClick: () => gotoPoi(poi) },
-          el('b', {}, poi.title || '未命名地点'),
-          el('span', {}, poi.address || [poi.province, poi.city].filter(Boolean).join(' ') || '无地址')));
+      side.append(el('div', { class: 'mp-side-head' }, `搜索「${kw}」…`));
+      try {
+        const list = await photonSearch(kw);
+        if (disposed()) return;
+        statusL.textContent = '';
+        if (!list.length) {
+          setTitle('地图');
+          renderSideError(`「${kw}」:没有找到相关地点,可换个说法重试`, doSearch);
+          return;
+        }
+        setTitle(`「${kw}」— 地图`);
+        renderResults(kw, list);
+      } catch (e) {
+        if (disposed()) return;
+        statusL.textContent = '';
+        renderSideError(`「${kw}」:搜索失败(${e.message})`, doSearch);
       }
-      if (pages > 1) {
-        side.append(el('div', { class: 'mp-pager' },
-          el('button', { class: 'btn icon', disabled: page <= 0, title: '上一页', onClick: () => local.gotoPage(page - 1) }, '‹'),
-          el('span', { class: 'dim' }, `${page + 1} / ${pages}`),
-          el('button', { class: 'btn icon', disabled: page >= pages - 1, title: '下一页', onClick: () => local.gotoPage(page + 1) }, '›')));
+    }
+
+    function renderResults(kw, list) {
+      side.innerHTML = '';
+      side.append(el('div', { class: 'mp-side-head' }, `「${kw}」· ${list.length} 个结果`));
+      for (const item of list) {
+        const title = item.name || String(item.display_name || '').split(',')[0];
+        side.append(el('button', { class: 'mp-poi', onClick: () => gotoResult(item) },
+          el('b', {}, title),
+          el('span', {}, item.display_name || '')));
       }
     }
 
-    function gotoPoi(poi) {
-      if (!map || !poi?.point) return;
-      map.openInfoWindow(new B.InfoWindow(
-        `<b>${escapeHtml(poi.title || '未命名地点')}</b>` +
-        `<div class="mp-iw-sub">${escapeHtml(poi.address || '')}</div>`,
-        { width: 220 }), poi.point);
-      map.panTo(poi.point);
+    function gotoResult(item) {
+      const latlng = [Number(item.lat), Number(item.lon)];
+      map.setView(latlng, item.type === 'city' || item.type === 'state' ? 12 : 16);
+      if (searchMarker) map.removeLayer(searchMarker);
+      searchMarker = L.circleMarker(latlng, {
+        radius: 8, color: '#0ea5e9', weight: 3, fillColor: '#0ea5e9', fillOpacity: 0.35,
+      }).addTo(map);
+      searchMarker.bindPopup(
+        `<b>${escapeHtml(item.name || item.display_name.split(',')[0])}</b>` +
+        `<div class="mp-iw-sub">${escapeHtml(item.display_name || '')}</div>`, { maxWidth: 260 }).openPopup();
     }
 
-    /* ---------------- 图层与视图 ---------------- */
-    function setMapType(constName) {
+    /* ---------------- 底图切换(标准图连续瓦片失败时自动切 CARTO) ---------------- */
+    function setBase(kind) {
       if (!map) return;
-      map.setMapType(window[constName]);
-    }
-
-    function toggleTraffic() {
-      if (!map) return;
-      trafficOn = !trafficOn;
-      trafficBtn.classList.toggle('active', trafficOn);
-      if (trafficOn) map.setTrafficOn(); else map.setTrafficOff();
+      if (baseLayer) map.removeLayer(baseLayer);
+      baseLayer = BASE_LAYERS[kind]();
+      let errs = 0;
+      baseLayer.on('tileerror', () => {
+        errs++;
+        if (errs === 4 && kind === 'normal') {
+          const keep = baseLayer;
+          baseLayer = BASE_LAYERS.normalFallback();
+          map.removeLayer(keep);
+          baseLayer.addTo(map);
+          statusL.textContent = '标准图源不可达,已自动切换备用源';
+        }
+      });
+      baseLayer.addTo(map);
     }
 
     /* ---------------- 点击取坐标 ---------------- */
-    let coordMarker = null;   // 只保留最新取点标记,不动搜索/测距等其它覆盖物
-    function showCoord(point) {
-      const html = `<b>此处坐标(BD-09)</b><div class="mp-iw-sub mono">${point.lng.toFixed(6)}, ${point.lat.toFixed(6)}</div>`;
-      const info = new B.InfoWindow(html, { width: 220 });
-      if (coordMarker) map.removeOverlay(coordMarker);
-      coordMarker = new B.Marker(point);
-      coordMarker.addEventListener('click', () => map.openInfoWindow(info, point));
-      map.addOverlay(coordMarker);
-      map.openInfoWindow(info, point);
+    function showCoord(latlng) {
+      const html = `<b>此处坐标(WGS-84)</b><div class="mp-iw-sub mono">${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}</div>`;
+      if (coordMarker) map.removeLayer(coordMarker);
+      coordMarker = L.circleMarker(latlng, {
+        radius: 7, color: '#0ea5e9', weight: 3, fillColor: '#0ea5e9', fillOpacity: 0.35,
+      }).addTo(map).bindPopup(html, { maxWidth: 240 }).openPopup();
     }
 
     /* ---------------- 测距 ---------------- */
@@ -227,156 +233,86 @@ register({
       if (on && measuring) return;
       measuring = on;
       measureBtn.classList.toggle('active', on);
-      map.setDefaultCursor(on ? 'crosshair' : 'default');
+      map.getContainer().style.cursor = on ? 'crosshair' : '';
       if (on) {
         clearMeasureOverlays();
-        measure = { pts: [], line: null, dot: null, label: null };
+        measurePts = [];
         statusL.textContent = '测距:在地图上依次点击打点,双击或关闭按钮结束(保留画线)';
       } else {
-        statusL.textContent = measure?.pts.length ? `测距结束,总长 ${fmtDist(measureTotal())}` : '';
+        statusL.textContent = measurePts.length > 1 ? `测距结束,总长 ${fmtDist(measureTotal())}` : '';
       }
     }
 
     function measureTotal() {
       let sum = 0;
-      const pts = measure?.pts || [];
-      for (let i = 1; i < pts.length; i++) sum += map.getDistance(pts[i - 1], pts[i]);
+      for (let i = 1; i < measurePts.length; i++) sum += haversine(measurePts[i - 1], measurePts[i]);
       return sum;
     }
 
-    function addMeasurePoint(pt) {
-      measure.pts.push(pt);
-      clearMeasureOverlays();
-      measure.line = new B.Polyline(measure.pts, { strokeColor: '#22d3ee', strokeWeight: 3, strokeOpacity: 0.85 });
-      const last = measure.pts[measure.pts.length - 1];
-      measure.dot = new B.Circle(last, 3, { strokeWeight: 2, fillColor: '#22d3ee', fillOpacity: 0.9, strokeColor: '#22d3ee' });
-      measure.label = new B.Label(fmtDist(measureTotal()), {
-        position: last, offset: new B.Size(10, -16),
-      });
-      measure.label.setStyle({
-        border: '1px solid #22d3ee', borderRadius: '6px', padding: '1px 6px',
-        fontSize: '11px', color: '#0e7490', background: 'rgba(255,255,255,.92)', whiteSpace: 'nowrap',
-      });
-      for (const o of [measure.line, measure.dot, measure.label]) map.addOverlay(o);
+    function addMeasurePoint(latlng) {
+      measurePts.push(latlng);
+      measureGroup.clearLayers();
+      L.polyline(measurePts, { color: '#22d3ee', weight: 3, opacity: 0.85 }).addTo(measureGroup);
+      for (const p of measurePts) {
+        L.circleMarker(p, { radius: 4, color: '#22d3ee', weight: 2, fillColor: '#22d3ee', fillOpacity: 0.9 }).addTo(measureGroup);
+      }
+      const last = measurePts[measurePts.length - 1];
+      L.tooltip({ permanent: true, direction: 'right', offset: [8, 0] })
+        .setLatLng(last).setContent(fmtDist(measureTotal())).addTo(measureGroup);
+      statusL.textContent = `测距中,已 ${fmtDist(measureTotal())}`;
     }
 
     function clearMeasureOverlays() {
-      if (!measure) return;
-      for (const o of [measure.line, measure.dot, measure.label]) if (o) map.removeOverlay(o);
-      measure.line = measure.dot = measure.label = null;
+      if (measureGroup) measureGroup.clearLayers();
     }
 
     /* ---------------- 定位 ---------------- */
-    let locOverlays = [];     // 上次定位的标记 + 精度圈,再次定位时移除
     function locate() {
-      if (!map) return;
+      if (!map || !navigator.geolocation) {
+        statusL.textContent = '浏览器不支持定位';
+        return;
+      }
       statusL.textContent = '正在定位…';
-      const geo = new B.Geolocation();
-      geo.getCurrentPosition((r) => {
-        if (disposed) return;
-        if (geo.getStatus() !== 0 || !r?.point) {   // BMAP_STATUS_SUCCESS
-          statusL.textContent = '定位失败:浏览器未授权或不可用';
-          return;
-        }
-        for (const o of locOverlays) map.removeOverlay(o);
-        locOverlays = [new B.Marker(r.point)];
-        if (r.accuracy) locOverlays.push(new B.Circle(r.point, r.accuracy, {
-          fillColor: '#34d399', fillOpacity: 0.15, strokeColor: '#34d399', strokeWeight: 1, strokeOpacity: 0.5,
-        }));
-        for (const o of locOverlays) map.addOverlay(o);
-        map.panTo(r.point);
-        statusL.textContent = `已定位(精度约 ${Math.round(r.accuracy || 0)} 米)`;
-      }, { enableHighAccuracy: true });
+      navigator.geolocation.getCurrentPosition((pos) => {
+        if (disposed()) return;
+        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+        map.setView([lat, lng], 15);
+        L.circleMarker([lat, lng], { radius: 7, color: '#34d399', weight: 3, fillColor: '#34d399', fillOpacity: 0.5 })
+          .addTo(map).bindPopup(`你在这里(精度约 ${Math.round(accuracy || 0)} 米)`).openPopup();
+        L.circle([lat, lng], { radius: accuracy || 0, color: '#34d399', weight: 1, fillColor: '#34d399', fillOpacity: 0.12 }).addTo(map);
+        statusL.textContent = `已定位(精度约 ${Math.round(accuracy || 0)} 米)`;
+      }, () => { if (!disposed()) statusL.textContent = '定位失败:浏览器未授权或不可用'; },
+      { enableHighAccuracy: true });
     }
 
     /* ---------------- 初始化 ---------------- */
-    function showOverlay(node) {
-      overlay.innerHTML = '';
-      overlay.append(node);
-      overlay.hidden = false;
-    }
-
-    function showError(err) {
-      statusL.textContent = '地图加载失败';
-      showOverlay(el('div', { class: 'mp-overlay-box' },
-        icon('alertTriangle', 34),
-        el('b', {}, '百度地图加载失败'),
-        el('div', { class: 'dim' }, String(err?.message || err)),
-        el('button', { class: 'btn primary', onClick: () => { showLoading(); boot(); } }, icon('refresh', 14), '重试')));
-    }
-
-    function showLoading() {
-      showOverlay(el('div', { class: 'mp-overlay-box' },
-        el('i', { class: 'mp-spin' }), el('span', {}, '正在加载百度地图…')));
-    }
-
-    function boot() {
-      loadBMapGL().then(initMap).catch((err) => { if (!disposed) showError(err); });
-    }
+    initMap();
 
     function initMap() {
-      if (disposed) return;
-      B = window.BMapGL;
-      map = new B.Map(mapDiv, { enableMapClick: false });
-      map.centerAndZoom(new B.Point(DEFAULT_CENTER[0], DEFAULT_CENTER[1]), 11);
-      map.enableScrollWheelZoom(true);
-      map.addControl(new B.ScaleControl({ anchor: BMAP_ANCHOR_BOTTOM_LEFT }));
-      map.addControl(new B.ZoomControl({ anchor: BMAP_ANCHOR_TOP_LEFT }));
-      map.addControl(new B.OverviewMapControl({ isOpen: false, anchor: BMAP_ANCHOR_BOTTOM_RIGHT }));
+      map = L.map(mapDiv, { zoomControl: true });
+      map.setView([39.909, 116.397], 11);
+      setBase('normal');
+      measureGroup = L.layerGroup().addTo(map);
+      L.control.scale({ imperial: false }).addTo(map);
 
-      geocoder = new B.Geocoder();
-      local = new B.LocalSearch(map, {
-        onSearchComplete: onSearchDone,
-        renderOptions: { map, selectFirstResult: false, autoViewport: true },
+      map.on('click', (e) => {
+        if (measuring) addMeasurePoint(e.latlng);
+        else showCoord(e.latlng);
       });
+      map.on('dblclick', () => { if (measuring) setMeasuring(false); });
+      map.on('mousemove', (e) => {
+        statusR.textContent = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)} · 级别 ${map.getZoom()}`;
+      });
+      map.on('zoomend', () => { statusR.textContent = `级别 ${map.getZoom()}`; });
 
-      map.addEventListener('click', (e) => {
-        if (measuring) addMeasurePoint(e.point);
-        else showCoord(e.point);
-      });
-      map.addEventListener('dblclick', () => { if (measuring) setMeasuring(false); });
-      map.addEventListener('mousemove', (e) => {
-        if (e.point) statusR.textContent = `${e.point.lng.toFixed(5)}, ${e.point.lat.toFixed(5)} · 级别 ${map.getZoom()}`;
-      });
-      map.addEventListener('zoomend', () => {
-        statusR.textContent = `级别 ${map.getZoom()}`;
-      });
-
-      overlay.hidden = true;
-      statusL.textContent = '';
       renderSideDefault();
       setTitle('地图');
-
-      // 按 IP 所在城市纠正初始视野(仅在没有搜索/取点动作前);
-      // 级别限制在 10~14,避免百度返回过小的级别导致视野跨省
-      try {
-        new B.LocalCity().get((r) => {
-          if (!disposed && !searched && r?.center) {
-            map.centerAndZoom(r.center, Math.min(Math.max(r.level || 12, 10), 14));
-            if (r.name) setTitle(`${r.name} — 地图`);
-          }
-        });
-      } catch { /* IP 定城失败则维持默认视野 */ }
-
-      // 出场动画期间窗口尺寸未定,稳定后再校正一次
-      setTimeout(() => {
-        if (disposed || !map) return;
-        if (typeof map.checkResize === 'function') map.checkResize();
-        else if (typeof map.resize === 'function') map.resize();
-      }, 300);
+      setTimeout(() => { if (map) map.invalidateSize(); }, 300);
     }
 
-    renderSideDefault();
-    showLoading();
-    boot();
-
     return {
-      onResize: () => {
-        if (!map) return;
-        if (typeof map.checkResize === 'function') map.checkResize();
-        else if (typeof map.resize === 'function') map.resize();
-      },
-      onClose: () => { disposed = true; },
+      onResize: () => { if (map) map.invalidateSize(); },
+      onClose: () => { closed = true; },
     };
   },
 });

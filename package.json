@@ -14,6 +14,7 @@
     "test:chess-worker": "node tools/chess-worker-smoke.mjs"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
     "ogl": "^1.0.11"
   },
   "devDependencies": {
