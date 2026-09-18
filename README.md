@@ -33,12 +33,13 @@ GitHub Actions 自动构建部署,棋类应用用的就是下面的引擎子项�
 
 需要 Node.js 20.19+ 或 22.12+。
 
-**克隆时必须带上子模块**:四个棋类的引擎在各自独立的仓库里,以
-git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`、`vendor/AetherXiangqi`
-与 `vendor/AetherGo`(即 [AetherOthello](https://github.com/suulnnka/AetherOthello)、
+**克隆时必须带上子模块**:五个棋类的引擎在各自独立的仓库里,以
+git submodule 挂在 `vendor/AetherOthello`、`vendor/AetherChess`、`vendor/AetherXiangqi`、
+`vendor/AetherGo` 与 `vendor/AetherRenju`(即 [AetherOthello](https://github.com/suulnnka/AetherOthello)、
 [AetherChess](https://github.com/suulnnka/AetherChess)、
-[AetherXiangqi](https://github.com/suulnnka/AetherXiangqi) 与
-[AetherGo](https://github.com/suulnnka/AetherGo))。不检出子模块,
+[AetherXiangqi](https://github.com/suulnnka/AetherXiangqi)、
+[AetherGo](https://github.com/suulnnka/AetherGo) 与
+[AetherRenju](https://github.com/suulnnka/AetherRenju))。不检出子模块,
 `npm run build` / `npm run dev` 会因找不到引擎文件直接失败:
 
 ```bash
@@ -111,7 +112,8 @@ webos/
 │  ├─ AetherOthello/     黑白棋引擎(github.com/suulnnka/AetherOthello)
 │  ├─ AetherChess/       国际象棋引擎(github.com/suulnnka/AetherChess)
 │  ├─ AetherXiangqi/     中国象棋引擎(github.com/suulnnka/AetherXiangqi)
-│  └─ AetherGo/          9×9 围棋引擎(github.com/suulnnka/AetherGo)
+│  ├─ AetherGo/          9×9 围棋引擎(github.com/suulnnka/AetherGo)
+│  └─ AetherRenju/       五子棋/连珠引擎(github.com/suulnnka/AetherRenju)
 └─ README.md
 ```
 
@@ -316,11 +318,11 @@ register({
 ## 自动化测试
 
 内置一套端到端冒烟测试(需要本机装有 Chrome,走 CDP 协议),
-共 43 个用例组,每组可独立运行:开始前自动重置到初始桌面,组内失败不影响其他组:
+共 44 个用例组,每组可独立运行:开始前自动重置到初始桌面,组内失败不影响其他组:
 
 ```bash
 npm run dev                        # 先起开发服务器(8080 端口)
-npm run e2e                        # 全部 41 组
+npm run e2e                        # 全部 44 组
 npm run e2e -- --list              # 列出全部用例组
 npm run e2e -- T22                 # 只跑某一组
 npm run e2e -- T1-T5 邮件 天气     # 区间 / 组号 / 标题关键词,可混写
@@ -337,7 +339,7 @@ npm run e2e -- --clean             # 清空测试 profile,全新 localStorage �
 风格皮肤切换(Win3.1/Win98/WinXP/Win7/macOS/Ubuntu/霓虹未来,`t15-*.png` ~ `t17-*.png` 为各皮肤截图)/
 托盘三面板/文件管家与记事本联动/终端 IPC 三种模式(事件、命令、request-response)/
 计算器/音乐/通知中心/刷新后数据恢复/虚拟网络谜题/多窗口管理/系统对话框/邮件、
-任务、短信、笔记、日记等应用与账号隔离。`index.html` 中还内置了 `window.__errs`
+任务、短信、笔记、日记、五子棋(双规则/禁手标记/AI 应答)等应用与账号隔离。`index.html` 中还内置了 `window.__errs`
 错误收集器,控制台可随时查看运行期异常。
 
 ### 风格主题架构
@@ -529,6 +531,14 @@ WebOS.__errs                         // 运行期错误
   四档难度按演棋局数分档),Worker 后台思考逐层回报,底栏实时显示
   档位/演棋数/耗时/胜率;支持停一手、悔棋、双人对弈与换边(棋盘不翻转,
   坐标恒定),双停后自动数子判胜负
+- **五子棋**:15×15 棋盘(SVG 画线:天元 + 四星、A~O/15~1 边缘坐标)——
+  **无禁 / 有禁双规则一键切换**:无禁(自由)长连也算胜;有禁(连珠)黑方
+  恰好五连才胜,三三/四四/长连禁手点盘上标 × 且不可落(黑被禁手封盘判负),
+  禁手判定按 RIF 规则递归展开(假活三自动识别),五连连线呼吸金圈高亮;
+  引擎为独立子项目 vendor/AetherRenju(alpha-beta 迭代加深 + 置换表 +
+  增量五元窗评估 + VCF 式静态搜索,禁手与独立暴力判定器逐点对拍,
+  四档难度),Worker 后台思考逐层回报,底栏实时显示
+  档位/深度/节点数/耗时/评分;支持悔棋、双人对弈与换边(棋盘对称不翻转)
 - **扫雷**:初级/中级/高级三难度,首击安全、右键插旗、双击快开(chord)、
   LED 计时器与计雷器,胜利/失败判定
 - **国际象棋**:2D / 3D 双视图一键切换 —— 3D 为 ogl(经 npm 打包,无 CDN)渲染的

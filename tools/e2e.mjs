@@ -3037,6 +3037,116 @@ group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
   await c.shot('t43-diary');
 });
 
+group('T44', '五子棋(双规则 / 禁手标记 / AI 应答)', async () => {
+  /* ---- T44 五子棋:双规则 / 禁手标记 / AI 应答 / 悔棋 ---- */
+  await fresh();
+  await ev(`WebOS.wm.open('gomoku')`);
+  await sleep(700);
+  const g0 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=gomoku]');
+    return {
+      pts: w.querySelectorAll('.gk-pt').length,
+      stats: window.__gomoku?.stats(),
+      bars: w.querySelectorAll('.app-status').length,
+      buttons: [...w.querySelectorAll('.app-toolbar .btn')].map((b) => b.textContent.trim()),
+      selects: [...w.querySelectorAll('.app-toolbar select')].map((s) => s.selectedOptions[0].textContent),
+      status: w.querySelector('.app-status span')?.textContent,
+    };
+  })()`);
+  t('T44 窗口与棋盘(225 交叉点,有禁手默认档)',
+    g0.pts === 225 && g0.stats?.mode === 'renju' && g0.bars === 1, JSON.stringify(g0.stats));
+  t('T44.1 顶栏按钮组:新对局/人机/换边/悔棋 + 规则/难度下拉',
+    g0.buttons.join('|') === '新对局|人机|换边|悔棋' && g0.selects.join('/') === '有禁手/高级',
+    g0.buttons.join(' ') + ' | ' + g0.selects.join('/'));
+  t('T44.2 底栏左边是行棋状态(黑先)', g0.status === '黑方行棋 · 第 1 手', g0.status);
+
+  // 落一子(H8 天元)→ AI 应答 → plies=2
+  await ev(`document.querySelector('.win[data-app=gomoku] .gk-pt[data-i="112"]').click()`);
+  await sleep(400);
+  const g1 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=gomoku]');
+    return {
+      black: w.querySelectorAll('.gk-stone.black').length,
+      last: !!w.querySelector('.gk-stone.last'),
+      stats: window.__gomoku.stats(),
+    };
+  })()`);
+  t('T44.3 点天元真的落子(黑子 1 颗,带上一手标记)',
+    g1.black === 1 && g1.last && g1.stats.plies === 1, JSON.stringify(g1));
+
+  let g2 = null;
+  for (let i = 0; i < 60; i++) {
+    g2 = await ev(`({ stats: window.__gomoku.stats(),
+      info: document.querySelector('.win[data-app=gomoku] .app-status .mono')?.textContent,
+      status: document.querySelector('.win[data-app=gomoku] .app-status span')?.textContent })`);
+    if (g2.stats.plies === 2 && !g2.stats.searching) break;
+    await sleep(250);
+  }
+  t('T44.4 AI(白方)应答,回到黑方回合', g2.stats.plies === 2 && g2.stats.turn === 0, JSON.stringify(g2.stats));
+  t('T44.5 底栏右侧有引擎信息(档位·深度·节点·耗时·评分)',
+    /^.+ · 深度 \d+ · \d+k 节点 · \d+ms · [+-]/.test(g2.info), g2.info);
+
+  // 有禁手:双人模式按谱落子构造「横竖双活三」局面 → (7,7) 出现 × 标记且点不下去
+  await ev(`(() => {
+    const btns = [...document.querySelectorAll('.win[data-app=gomoku] .app-toolbar .btn')];
+    btns.find(b => b.textContent === '人机').click();          // 切双人
+    btns.find(b => b.textContent.includes('新对局')).click();  // 清掉 AI 对局残子,拿一张空盘
+    return true;
+  })()`);
+  await sleep(350);
+  for (const i of [111, 0, 113, 30, 97, 60, 127, 90]) {   // 黑 (7,6)(7,8)(6,7)(8,7),白 (0,0)(2,0)(4,0)(6,0) 摊开 —— 8 手后轮黑
+    await ev(`document.querySelector('.win[data-app=gomoku] .gk-pt[data-i="${i}"]').click()`);
+    await sleep(120);
+  }
+  const g3 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=gomoku]');
+    const pt = w.querySelector('.gk-pt[data-i="112"]');
+    const stonesBefore = w.querySelectorAll('.gk-stone').length;
+    pt.click();                                     // 点禁手点:应被拒绝
+    return {
+      stonesBefore,
+      stonesAfter: w.querySelectorAll('.gk-stone').length,
+      banCls: pt.classList.contains('ban'),
+      banMark: !!pt.querySelector('.gk-ban'),
+      banCount: w.querySelectorAll('.gk-ban').length,
+      stats: window.__gomoku.stats(),
+    };
+  })()`);
+  t('T44.6 双活三点标 × 且拒落(点后子数不变)',
+    g3.banCls && g3.banMark && g3.banCount === 1 &&
+    g3.stonesBefore === 8 && g3.stonesAfter === 8, JSON.stringify(g3));
+
+  // 切无禁手:重开新对局,禁手标记逻辑整体关闭
+  await ev(`window.__gomoku.setMode(0)`);
+  await sleep(400);
+  const g5 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=gomoku]');
+    return {
+      stats: window.__gomoku.stats(),
+      stones: w.querySelectorAll('.gk-stone').length,
+      bans: w.querySelectorAll('.gk-ban').length,
+      status: w.querySelector('.app-status span')?.textContent,
+    };
+  })()`);
+  t('T44.7 切无禁手后重开(空盘,无禁手标记)',
+    g5.stats.mode === 'free' && g5.stats.plies === 0 && g5.stones === 0 && g5.bans === 0, JSON.stringify(g5));
+
+  // 悔棋:先走一手再悔(无禁双人下悔一手)
+  await ev(`document.querySelector('.win[data-app=gomoku] .gk-pt[data-i="112"]').click()`);
+  await sleep(250);
+  await ev(`[...document.querySelectorAll('.win[data-app=gomoku] .app-toolbar .btn')].find(b => b.textContent.includes('悔棋')).click()`);
+  await sleep(250);
+  const g6 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=gomoku]');
+    return { stones: w.querySelectorAll('.gk-stone').length, stats: window.__gomoku.stats() };
+  })()`);
+  t('T44.8 悔棋撤一手回到空盘', g6.stones === 0 && g6.stats.plies === 0, JSON.stringify(g6));
+
+  const errs = await ev(`window.__errs.length`);
+  t('T44.9 全程无错误', errs === 0, `errs=${errs}`);
+  await c.shot('t44-gomoku');
+});
+
 
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {

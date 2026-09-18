@@ -37,6 +37,7 @@ const ENGINES = [
   { name: '国际象棋', tag: 'chess-engine-v2', kb: 35 },
   { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 35 },
   { name: '围棋', tag: 'go-engine-v1', kb: 35 },
+  { name: '五子棋', tag: 'renju-engine-v1', kb: 35 },
 ];
 /** 引擎里绝不该出现的渲染指纹(出现即说明 ogl / 着色器被拖进了 worker) */
 const FORBIDDEN = ['gl_FragColor', 'WebGLRenderingContext', 'requestAnimationFrame'];

@@ -34,6 +34,7 @@ import chess3d from './chess3d/manifest.js';
 import reversi from './reversi/manifest.js';
 import xiangqi from './xiangqi/manifest.js';
 import go from './go/manifest.js';
+import gomoku from './gomoku/manifest.js';
 import solitaire from './solitaire/manifest.js';
 import pairs from './pairs/manifest.js';
 import sokoban from './sokoban/manifest.js';
@@ -63,6 +64,7 @@ const APPS = [
   [reversi, () => import('./reversi/index.js')],
   [xiangqi, () => import('./xiangqi/index.js')],
   [go, () => import('./go/index.js')],
+  [gomoku, () => import('./gomoku/index.js')],
   [solitaire, () => import('./solitaire/index.js')],
   [pairs, () => import('./pairs/index.js')],
   [sokoban, () => import('./sokoban/index.js')],
