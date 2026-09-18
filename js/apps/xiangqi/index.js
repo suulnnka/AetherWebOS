@@ -191,6 +191,9 @@ register({
     function killWorker() {
       if (worker) { worker.terminate(); worker = null; }
       searching = false;
+      /* 请求号自增:terminate() 拦不住「已经进了主线程消息队列」的那条结果,
+       * 新对局/换档后它要是被当成当前结果应用,就会把旧局面的着法落到新局面上 */
+      reqSeq++;
     }
     function abortEngine() { killWorker(); }
 
