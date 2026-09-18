@@ -141,8 +141,7 @@ register({
     function updateStatus() {
       if (gameOver) return;
       const inC = inCheck(bd, turn);
-      statusL.textContent = sideName(turn) + (vsAI && turn === aiSide() ? '(AI)' : '')
-        + '行棋' + (inC ? ' — 将军!⚠' : '');
+      statusL.textContent = sideName(turn) + '行棋' + (inC ? ' — 将军!⚠' : '');
       const last = hist.length ? ` · 上一手 ${hist[hist.length - 1].text}` : '';
       setTitle(`中国象棋 — ${sideName(turn)}行棋${inC ? '(将军)' : ''}${last}`);
     }
@@ -232,7 +231,7 @@ register({
       searching = true;
       sel = -1;
       render();
-      statusL.textContent = `${sideName(aiSide())}(AI)思考中…(${cfg.name})`;
+      statusL.textContent = `${sideName(aiSide())}思考中…`;
       setTitle(`中国象棋 — AI 思考中(${cfg.name})`);
       infoL.textContent = '';
       if (typeof Worker === 'undefined') {
