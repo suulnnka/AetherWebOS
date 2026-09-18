@@ -32,6 +32,7 @@ import diary from './diary/manifest.js';
 import minesweeper from './minesweeper/manifest.js';
 import chess3d from './chess3d/manifest.js';
 import reversi from './reversi/manifest.js';
+import xiangqi from './xiangqi/manifest.js';
 import solitaire from './solitaire/manifest.js';
 import pairs from './pairs/manifest.js';
 import sokoban from './sokoban/manifest.js';
@@ -59,6 +60,7 @@ const APPS = [
   [minesweeper, () => import('./minesweeper/index.js')],
   [chess3d, () => import('./chess3d/index.js')],
   [reversi, () => import('./reversi/index.js')],
+  [xiangqi, () => import('./xiangqi/index.js')],
   [solitaire, () => import('./solitaire/index.js')],
   [pairs, () => import('./pairs/index.js')],
   [sokoban, () => import('./sokoban/index.js')],

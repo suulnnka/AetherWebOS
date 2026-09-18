@@ -5,15 +5,16 @@ export default defineConfig({
   base: './',
   server: { port: 8080 },
   preview: { port: 8080 },
-  /* 象棋引擎(ai-worker.js)走独立 Worker chunk:
-   * - format:'es' 是因为 index.js 里用 new Worker(url, { type: 'module' })
-   * - 固定文件名便于 tools/check-size.mjs 定位并卡 35KB gzip 预算 */
+  /* 各棋类的引擎(国际象棋 ai-worker.js / 中国象棋 worker.js)走独立 Worker chunk:
+   * - format:'es' 是因为应用里用 new Worker(url, { type: 'module' })
+   * - 命名与具体棋类解耦(check-size.mjs 是靠 chunk 里的 ENGINE_TAG 认引擎的,
+   *   不靠文件名)—— 现在有两个棋类引擎了,再写死 chess3d 会误导 */
   worker: {
     format: 'es',
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/app-chess3d-worker-[hash].js',
-        chunkFileNames: 'assets/app-chess3d-worker-[hash].js',
+        entryFileNames: 'assets/app-worker-[hash].js',
+        chunkFileNames: 'assets/app-worker-[hash].js',
       },
     },
   },

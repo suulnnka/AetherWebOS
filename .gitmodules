@@ -6,3 +6,6 @@
 	url = https://github.com/suulnnka/AetherChess.git
 	# 本地调参数据(tuner/data/,gitignore)会让子模块显得 dirty,忽略未跟踪项
 	ignore = untracked
+[submodule "vendor/AetherXiangqi"]
+	path = vendor/AetherXiangqi
+	url = https://github.com/suulnnka/AetherXiangqi.git
