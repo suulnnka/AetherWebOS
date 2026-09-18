@@ -5,6 +5,18 @@ export default defineConfig({
   base: './',
   server: { port: 8080 },
   preview: { port: 8080 },
+  /* 象棋引擎(ai-worker.js)走独立 Worker chunk:
+   * - format:'es' 是因为 index.js 里用 new Worker(url, { type: 'module' })
+   * - 固定文件名便于 tools/check-size.mjs 定位并卡 35KB gzip 预算 */
+  worker: {
+    format: 'es',
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/app-chess3d-worker-[hash].js',
+        chunkFileNames: 'assets/app-chess3d-worker-[hash].js',
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     rollupOptions: {

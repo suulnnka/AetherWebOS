@@ -1,11 +1,15 @@
 /* ============================================================
  * 应用:3D 国际象棋(ogl 渲染)
  * - 拖拽旋转视角 / 滚轮缩放 / 点击走子
- * - 完整走子规则:各兵种 + 王车易位 + 吃过路兵 + 兵升变(自动升后)
- * - 将军 / 将死 / 逼和判定;简单 AI(一层贪心 + 子力价值)
+ * - 走子规则在 rules.js,AI 搜索在 ai.js(经 ai-worker.js 跑在 Worker 里)
+ * - 多档难度:初级 / 中级 / 高级 / 大师
  *
  * 渲染原用 three.js(压缩后 116 KB),已换成 ogl(约 15 KB):
  * ogl 不带光照材质系统,这里的 Lambert 光照与阴影采样由下方自写 GLSL 承担。
+ *
+ * 本文件只负责「渲染 + 交互 + 难度档 UI」;棋规、搜索、评估一律走引擎模块,
+ * 引擎模块不 import ogl 也不碰 DOM,所以 Node 里能直接跑 perft 与战术测试
+ * (见 tools/chess-engine-test.mjs)。将来要换 WASM 实现,只需替换这一段调用。
  * ============================================================ */
 import { Renderer, Camera, Transform, Box, Cylinder, Sphere, Geometry, Program, Mesh, Vec3, Raycast, Shadow, RenderTarget } from 'ogl';
 import { el } from '../../core/utils.js';
@@ -14,121 +18,36 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './chess3d.css';
 import { dialogs } from '../../core/dialogs.js';
+import {
+  WHITE, BLACK, QUEEN, CHARS, NAME, C_WK, C_WQ, C_BK, C_BQ,
+  mFrom, mTo, mFlag, mCap, mPromo, mkMove,
+  newPos, make, genMoves, genLegal, hasLegalMove, isLegal,
+  inCheck, isThreefold, insufficientMaterial,
+} from './rules.js';
+import { LEVELS, DEFAULT_LEVEL } from './ai.js';
 
-/* ============ 棋规引擎(8x8 数组,null 或 {t:'p/r/n/b/q/k', c:'w/b'}) ============ */
-const VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+/* ============ 引擎侧的薄适配层 ============
+ * 渲染/高亮沿用 8x8 的 {t,c} 对象数组与 [r,c] 坐标(绘制代码一行不动),
+ * 引擎内部是 Int8Array(64) 的 sq = r*8+c,这里做一层换算。 */
 const inB = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
-const other = (c) => (c === 'w' ? 'b' : 'w');
+const otherStm = (s) => (s === WHITE ? BLACK : WHITE);
 
-function initBoard() {
-  const b = Array.from({ length: 8 }, () => Array(8).fill(null));
-  const back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
-  for (let c = 0; c < 8; c++) {
-    b[0][c] = { t: back[c], c: 'b' };
-    b[1][c] = { t: 'p', c: 'b' };
-    b[6][c] = { t: 'p', c: 'w' };
-    b[7][c] = { t: back[c], c: 'w' };
+/** 引擎局面 → 8x8 视图(只给渲染与 e2e 钩子看,搜索从不碰它) */
+function viewOf(pos) {
+  const v = Array.from({ length: 8 }, () => Array(8).fill(null));
+  for (let s = 0; s < 64; s++) {
+    const p = pos.b[s];
+    if (p) v[s >> 3][s & 7] = { t: CHARS[p & 7], c: (p >> 3) === WHITE ? 'w' : 'b' };
   }
-  return b;
+  return v;
 }
-
-/** 伪合法走法(不考虑送王) */
-function pseudoMoves(b, r, c, state) {
-  const p = b[r][c];
-  if (!p) return [];
+/** 该方全部合法着法(压紧到普通数组,UI 用) */
+function allLegal(pos) {
+  const buf = new Int32Array(256);
+  const n = genLegal(pos, buf);
   const out = [];
-  const push = (rr, cc) => { if (inB(rr, cc) && (!b[rr][cc] || b[rr][cc].c !== p.c)) out.push([rr, cc]); };
-  const ray = (dr, dc) => {
-    let rr = r + dr, cc = c + dc;
-    while (inB(rr, cc)) {
-      if (!b[rr][cc]) out.push([rr, cc]);
-      else { if (b[rr][cc].c !== p.c) out.push([rr, cc]); break; }
-      rr += dr; cc += dc;
-    }
-  };
-  if (p.t === 'p') {
-    const dir = p.c === 'w' ? -1 : 1;
-    const start = p.c === 'w' ? 6 : 1;
-    if (inB(r + dir, c) && !b[r + dir][c]) {
-      out.push([r + dir, c]);
-      if (r === start && !b[r + 2 * dir][c]) out.push([r + 2 * dir, c]);
-    }
-    for (const dc of [-1, 1]) {
-      const rr = r + dir, cc = c + dc;
-      if (inB(rr, cc) && b[rr][cc] && b[rr][cc].c !== p.c) out.push([rr, cc]);
-      // 吃过路兵
-      if (state.ep && state.ep[0] === rr && state.ep[1] === cc && !b[rr][cc]) out.push([rr, cc]);
-    }
-  } else if (p.t === 'n') {
-    for (const [dr, dc] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) push(r + dr, c + dc);
-  } else if (p.t === 'b') { for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) ray(dr, dc); }
-  else if (p.t === 'r') { for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) ray(dr, dc); }
-  else if (p.t === 'q') { for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]) ray(dr, dc); }
-  else if (p.t === 'k') {
-    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) push(r + dr, c + dc);
-    // 王车易位(未移动过、路径空、不被将 — 简化:只查路径无子)
-    const home = p.c === 'w' ? 7 : 0;
-    if (r === home && c === 4 && !state.moved[`k${p.c}`]) {
-      if (b[home][0]?.t === 'r' && b[home][0].c === p.c && !state.moved[`r${p.c}a`] && !b[home][1] && !b[home][2] && !b[home][3]) out.push([home, 2]);
-      if (b[home][7]?.t === 'r' && b[home][7].c === p.c && !state.moved[`r${p.c}h`] && !b[home][5] && !b[home][6]) out.push([home, 6]);
-    }
-  }
+  for (let i = 0; i < n; i++) out.push(buf[i]);
   return out;
-}
-
-function cloneB(b) { return b.map(row => row.map(p => p ? { ...p } : null)); }
-
-function attacked(b, r, c, byColor) {
-  for (let rr = 0; rr < 8; rr++) for (let cc = 0; cc < 8; cc++) {
-    const p = b[rr][cc];
-    if (p && p.c === byColor) {
-      // 王的攻击格不含易位
-      const ms = pseudoMoves(b, rr, cc, { moved: {}, ep: null });
-      if (ms.some(([mr, mc]) => mr === r && mc === c)) return true;
-    }
-  }
-  return false;
-}
-
-function findKing(b, color) {
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    const p = b[r][c];
-    if (p && p.t === 'k' && p.c === color) return [r, c];
-  }
-  return null;
-}
-
-function inCheck(b, color) {
-  const k = findKing(b, color);
-  return k ? attacked(b, k[0], k[1], other(color)) : false;
-}
-
-/** 执行走法(返回新棋盘;处理升变/易位/吃过路兵) */
-function applyMove(b, fr, fc, tr, tc) {
-  const nb = cloneB(b);
-  const p = nb[fr][fc];
-  nb[fr][fc] = null;
-  if (p.t === 'p' && (tr === 0 || tr === 7)) { p.t = 'q'; }   // 自动升后
-  nb[tr][tc] = p;
-  // 易位:王横移两格 → 同时移车
-  if (p.t === 'k' && Math.abs(tc - fc) === 2) {
-    if (tc === 6) { nb[tr][5] = nb[tr][7]; nb[tr][7] = null; }
-    else { nb[tr][3] = nb[tr][0]; nb[tr][0] = null; }
-  }
-  return nb;
-}
-
-/** 合法走法(过滤送王) */
-function legalMoves(b, r, c, state) {
-  return pseudoMoves(b, r, c, state).filter(([tr, tc]) => !inCheck(applyMove(b, r, c, tr, tc), b[r][c].c));
-}
-
-function hasAnyMove(b, color, state) {
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    const p = b[r][c];
-    if (p && p.c === color && legalMoves(b, r, c, state).length) return true;
-  }
-  return false;
 }
 
 /* ============ 着色器(ogl 无内置光照,这里自写 Lambert + 阴影采样) ============ */
@@ -203,6 +122,12 @@ void main() { gl_FragColor = vec4(uColor, uOpacity); }
 
 const rgb = (hex) => new Vec3(((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255);
 
+/* 引擎评分(白方视角、单位厘兵)→ 给人看的字符串。±20000 以上是将杀分,只标 M。 */
+const fmtScore = (s) => {
+  if (Math.abs(s) >= 20000) return s > 0 ? '+M' : '-M';
+  return (s >= 0 ? '+' : '') + (s / 100).toFixed(2);
+};
+
 /* 棋子整体缩放系数(1 = 底座直径 0.88,几乎填满 1.0 的格子) */
 const PIECE_SCALE = 0.8;
 /* 拾取用的包围圆柱 [半径, 高]:棋子是回转体,射线打圆柱足够准也比逐三角形求交快得多。
@@ -214,18 +139,22 @@ const HIT_CYL = { p: [0.44, 0.79], r: [0.44, 0.96], n: [0.45, 1.09], b: [0.44, 1
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
-    let board = initBoard();
-    let turn = 'w';
-    let moved = {};            // 易位用:k w/b、r w a/h 等
-    let ep = null;             // 吃过路兵目标格
-    let sel = null;            // 选中格
-    let legal = [];            // 选中格的合法走法
+    let pos = newPos();          // 引擎局面(棋盘 + 走子权 + 易位权 + 吃过路兵 + 历史)
+    let moves = [];              // 走过的着法序列((from<<6)|to),Worker 用它重演局面
+    let sel = null;              // 选中格 [r, c]
+    let legal = [];              // 选中格的合法落点 [[r, c], ...](已按落点去重)
+    let legalRaw = [];           // 与 legal 并列的打包走法
     let gameOver = false;
     let vsAI = true;
+    let levelIdx = DEFAULT_LEVEL;
+    let searching = false;
 
     const statusL = el('span', {}, '白方行棋');
+    const infoL = el('span', { class: 'mono', style: { fontSize: '11px' } }, '');
     const container = el('div', { class: 'chess3d-view' });
     const square = 1;
+    const turnChar = () => (pos.stm === WHITE ? 'w' : 'b');
+    const level = () => LEVELS[levelIdx];
 
     /* ---------- ogl 渲染器 ---------- */
     // 某些环境(无硬件加速 / 远程桌面)拿不到 WebGL 上下文,
@@ -482,10 +411,11 @@ register({
       for (const p of pieceMeshes) p.mesh.setParent(null);
       pieceMeshes.length = 0;
       shadow.castMeshes.length = 0;            // 旧棋子的投影登记作废
-      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-        const p = board[r][c];
+      for (let s = 0; s < 64; s++) {
+        const p = pos.b[s];
         if (!p) continue;
-        const mesh = pieceMesh(p.t, p.c);
+        const r = s >> 3, c = s & 7;
+        const mesh = pieceMesh(CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b');
         mesh.position.set((c - 3.5) * square, 0, (r - 3.5) * square);
         mesh.setParent(boardGroup);
         pieceMeshes.push({ mesh, r, c });
@@ -511,7 +441,7 @@ register({
         highlightMeshes.push(m);
       };
       if (sel) mk(sel[0], sel[1], rgb(0x22d3ee));
-      for (const [r, c] of legal) mk(r, c, board[r][c] ? rgb(0xef4444) : rgb(0x22c55e));
+      for (const [r, c] of legal) mk(r, c, pos.b[r * 8 + c] ? rgb(0xef4444) : rgb(0x22c55e));
     }
 
     /* 相机轨道(自实现)—— 支持的输入:
@@ -661,7 +591,7 @@ register({
     function pickPiece(o, d) {
       let hit = null, bestT = Infinity;
       for (const it of pieceMeshes) {
-        const [br, bh] = HIT_CYL[board[it.r][it.c].t];
+        const [br, bh] = HIT_CYL[CHARS[pos.b[it.r * 8 + it.c] & 7]];
         const R = br * PIECE_SCALE * 1.15, H = bh * PIECE_SCALE;
         const ox = o.x - (it.c - 3.5) * square, oz = o.z - (it.r - 3.5) * square;
         const a = d.x * d.x + d.z * d.z;
@@ -682,7 +612,7 @@ register({
     }
     function onClick(e) {
       if (suppressClick) { suppressClick = false; return; }   // 手势/拖拽刚结束,别当走子
-      if (!camera || gameOver || (vsAI && turn === 'b')) return;
+      if (!camera || gameOver || searching || (vsAI && turnChar() === 'b')) return;
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -705,92 +635,190 @@ register({
     if (canvas) canvas.addEventListener('click', onClick);
 
     function handleSquare(r, c) {
-      const target = legal.find(([tr, tc]) => tr === r && tc === c);
-      if (sel && target) { doMove(sel[0], sel[1], r, c); return; }
-      const p = board[r][c];
-      if (p && p.c === turn) {
+      if (gameOver) return;
+      if (searching) return;              // AI 想棋时锁盘,免得和在途结果打架
+      if (sel) {
+        const m = moveTo(r, c);
+        if (m) { doMove(m); return; }
+      }
+      const p = pos.b[r * 8 + c];
+      if (p && (p >> 3) === pos.stm) {
+        const from = r * 8 + c;
         sel = [r, c];
-        legal = legalMoves(board, r, c, { moved, ep });
+        legal = []; legalRaw = [];
+        const buf = new Int32Array(256);
+        const n = genLegal(pos, buf);
+        for (let i = 0; i < n; i++) {
+          const m = buf[i];
+          if (mFrom(m) !== from) continue;
+          if (mPromo(m) && mPromo(m) !== QUEEN) continue;   // 落点去重:升变只留升后
+          legalRaw.push(m);
+          legal.push([mTo(m) >> 3, mTo(m) & 7]);
+        }
         showHighlights();
-      } else { sel = null; legal = []; showHighlights(); }
+      } else if (sel) {
+        sel = null; legal = []; legalRaw = []; showHighlights();
+      }
     }
 
-    function doMove(fr, fc, tr, tc) {
-      // 易位状态记录
-      const p = board[fr][fc];
-      if (p.t === 'k') moved[`k${p.c}`] = true;
-      if (p.t === 'r') {
-        if (fc === 0) moved[`r${p.c}a`] = true;
-        if (fc === 7) moved[`r${p.c}h`] = true;
+    /** 在选中格的合法着法里取「落到 (r,c)」的那一手(升变优先升后) */
+    function moveTo(r, c) {
+      const to = r * 8 + c;
+      let first = 0;
+      for (const m of legalRaw) {
+        if (mTo(m) !== to) continue;
+        const pr = mPromo(m);
+        if (!pr || pr === QUEEN) return m;
+        if (!first) first = m;
       }
-      // 吃过路兵:移除被吃的兵
-      if (p.t === 'p' && ep && ep[0] === tr && ep[1] === tc && !board[tr][tc]) {
-        board[fr][tc] = null;
-      }
-      // 设置下一次 ep 目标
-      ep = null;
-      if (p.t === 'p' && Math.abs(tr - fr) === 2) ep = [(fr + tr) / 2, fc];
+      return first;
+    }
 
-      board = applyMove(board, fr, fc, tr, tc);
-      sel = null; legal = []; showHighlights();
+    /** 升变统一成升后:Worker 靠 (from<<6|to) 重演局面,还原出来的也只可能是升后 */
+    function normalize(m) {
+      const pr = mPromo(m);
+      if (!pr || pr === QUEEN) return m;
+      return mkMove(mFrom(m), mTo(m), mFlag(m) >= 10 ? 13 : 9, mCap(m));
+    }
+
+    /** 落子:先走引擎局面,再刷视图与状态;轮到 AI 就交给 Worker */
+    function doMove(m) {
+      m = normalize(m);
+      make(pos, m);
+      moves.push((mFrom(m) << 6) | mTo(m));
+      sel = null; legal = []; legalRaw = []; showHighlights();
       syncPieces();
-      turn = other(turn);
       checkEnd();
-      if (!gameOver && vsAI && turn === 'b') {
-        statusL.textContent = '黑方(AI)思考中…';
-        setTimeout(aiMove, 450);
-      } else updateStatus();
+      if (gameOver) return;
+      if (vsAI && pos.stm === BLACK) thinkAI();
+      else updateStatus();
     }
 
     function updateStatus() {
-      const inC = inCheck(board, turn);
-      statusL.textContent = (turn === 'w' ? '白方' : '黑方(AI)') + '行棋' + (inC ? ' — 将军!⚠' : '');
-      setTitle(`3D 国际象棋 — ${turn === 'w' ? '白' : '黑'}方行棋${inC ? '(将军)' : ''}`);
+      const c = turnChar();
+      const inC = inCheck(pos);
+      const who = c === 'w' ? '白方' : '黑方(AI)';
+      statusL.textContent = who + '行棋' + (inC ? ' — 将军!⚠' : '');
+      setTitle(`3D 国际象棋 — ${c === 'w' ? '白' : '黑'}方行棋${inC ? '(将军)' : ''}`);
     }
 
+    /* 终局判定:将死 / 逼和 / 子力不足 / 三次重复 */
     function checkEnd() {
-      if (!hasAnyMove(board, turn, { moved, ep })) {
-        gameOver = true;
-        if (inCheck(board, turn)) {
-          dialogs.info({ title: '将死', message: `${turn === 'w' ? '黑方' : '白方'}获胜!` });
-          statusL.textContent = `将死 — ${turn === 'w' ? '黑方' : '白方'}胜`;
-        } else {
-          dialogs.info({ title: '逼和', message: '和棋(无子可动)' });
-          statusL.textContent = '逼和 — 和棋';
-        }
-        setTitle('3D 国际象棋 — 终局');
-      } else updateStatus();
+      const buf = new Int32Array(256);
+      const c = turnChar();
+      const inC = inCheck(pos);
+      const winner = c === 'w' ? '黑方' : '白方';
+      let title = null, msg = null, line = null;
+      if (!hasLegalMove(pos, buf)) {
+        if (inC) { title = '将死'; msg = `${winner}获胜!`; line = `将死 — ${winner}胜`; }
+        else { title = '逼和'; msg = '和棋(无子可动)'; line = '逼和 — 和棋'; }
+      } else if (insufficientMaterial(pos)) {
+        title = '和棋'; msg = '子力不足,无法将死'; line = '子力不足 — 和棋';
+      } else if (isThreefold(pos)) {
+        title = '和棋'; msg = '三次重复局面'; line = '三次重复 — 和棋';
+      }
+      if (!title) { updateStatus(); return; }
+      gameOver = true;
+      abortEngine();
+      dialogs.info({ title, message: msg });
+      statusL.textContent = line;
+      setTitle('3D 国际象棋 — 终局');
     }
 
-    /* AI:一层贪心(最大化子力 + 简单位置噪声) */
-    function aiMove() {
-      if (gameOver) return;
-      let best = null, bestScore = -Infinity;
-      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-        const p = board[r][c];
-        if (!p || p.c !== 'b') continue;
-        for (const [tr, tc] of legalMoves(board, r, c, { moved, ep })) {
-          const target = board[tr][tc];
-          let score = (target ? VAL[target.t] * 10 : 0) + Math.random() * 3;
-          if (target?.t === 'k') score += 500;
-          // 走后不被吃回的奖励(粗略)
-          const nb = applyMove(board, r, c, tr, tc);
-          if (!attacked(nb, tr, tc, 'w')) score += 2;
-          if (score > bestScore) { bestScore = score; best = [r, c, tr, tc]; }
+    /* ---------- AI:搜索跑在 Worker 里 ----------
+     * 传的是走法序列(不是棋盘):结构化克隆更省,且 UI 与 Worker 共用同一份
+     * rules.js,走法编码天然一致,不存在第二套解析路径。
+     * 每条请求带自增 id,回来的 id 对不上就当过期结果丢掉;需要立刻刹车
+     * (新对局 / 换难度 / 关窗)时直接 terminate 再新建 —— Worker 里的迭代加深
+     * 是同步跑的,消息只会排队,terminate 才是真中断。 */
+    let worker = null, reqSeq = 0, pendingId = 0;
+
+    function onEngineMsg(e) {
+      const d = e.data;
+      if (!d || d.type === 'pong' || d.id !== pendingId) return;      // 过期 / 无关消息
+      pendingId = 0; searching = false;
+      if (d.error || !d.move) { infoL.textContent = 'AI 无可用着法'; checkEnd(); return; }
+      infoL.textContent = `${level().name} · 深度 ${d.depth} · ${Math.round(d.nodes / 1000)}k 节点 · ${d.ms}ms · ${fmtScore(d.score)}`;
+      doMove(d.move);
+    }
+
+    function killWorker() {
+      if (worker) { worker.terminate(); worker = null; }
+      pendingId = 0; searching = false;
+    }
+
+    /** 作废在途请求(局面已变 / 窗口关闭),免得过期着法落到新对局上 */
+    function abortEngine() {
+      reqSeq++;
+      killWorker();
+      infoL.textContent = '';
+    }
+
+    function thinkAI() {
+      if (gameOver || searching) return;
+      const cfg = level();
+      searching = true;
+      sel = null; legal = []; legalRaw = []; showHighlights();
+      statusL.textContent = `黑方(AI)思考中…(${cfg.name})`;
+      setTitle(`3D 国际象棋 — AI 思考中(${cfg.name})`);
+      infoL.textContent = '';
+      if (typeof Worker === 'undefined') {
+        searching = false;
+        statusL.textContent = '当前环境不支持 Web Worker,AI 不可用';
+        return;
+      }
+      if (!worker) {
+        try {
+          worker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+          worker.onmessage = onEngineMsg;
+          worker.onerror = (ev) => {
+            console.warn('[chess3d] AI Worker 异常:', ev.message || ev);
+            killWorker();
+            statusL.textContent = 'AI 出错,已跳过本步';
+          };
+        } catch (err) {
+          console.error('[chess3d] 无法创建 AI Worker:', err);
+          worker = null; searching = false;
+          statusL.textContent = 'AI 不可用(Worker 创建失败)';
+          return;
         }
       }
-      if (best) doMove(best[0], best[1], best[2], best[3]);
+      const id = ++reqSeq;
+      pendingId = id;
+      worker.postMessage({ id, moves: moves.slice(), nodes: cfg.nodes, ms: cfg.ms, depth: cfg.depth });
+    }
+
+    function resetGame() {
+      abortEngine();
+      pos = newPos();
+      moves = [];
+      sel = null; legal = []; legalRaw = [];
+      gameOver = false;
+      syncPieces(); showHighlights(); updateStatus();
     }
 
     /* 工具栏 */
-    const newBtn = el('button', { class: 'btn primary', onClick: () => {
-      board = initBoard(); turn = 'w'; moved = {}; ep = null; sel = null; legal = [];
-      gameOver = false; syncPieces(); showHighlights(); updateStatus();
-    } }, icon('refresh', 13), '新对局');
+    const newBtn = el('button', { class: 'btn primary', onClick: resetGame }, icon('refresh', 13), '新对局');
+    /* 难度档:原生 <select>(计划 §3.6 的首选形态,比循环按钮少点几下、状态一眼可见)。
+     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效,用户会以为下拉没反应。 */
+    const levelSel = el('select', {
+      class: 'select chess3d-level',
+      title: 'AI 难度:初级 / 中级 / 高级 / 大师',
+      'aria-label': 'AI 难度',
+      onChange: (e) => {
+        levelIdx = Number(e.currentTarget.value) || 0;
+        if (searching) { abortEngine(); thinkAI(); }
+      },
+    }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+    levelSel.value = String(levelIdx);            // 默认「高级」
     const aiBtn = el('button', {
-      class: 'btn', onClick: (e) => {
+      class: 'btn', title: '切换人机 / 人人对战',
+      onClick: (e) => {
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机:开' : '人人对战';
+        if (!vsAI) { abortEngine(); updateStatus(); }              // 关掉 AI 要把在途搜索停掉
+        else if (!gameOver && pos.stm === BLACK) thinkAI();        // 轮到黑方就立刻接手
+        else updateStatus();
       },
     }, '人机:开');
     const viewBtn = el('button', { class: 'btn', title: '切换到白/黑方视角', onClick: () => { flyTo({ theta: theta + Math.PI, phi, radius }, 420); } }, icon('refresh', 13), '换边视角');
@@ -798,13 +826,17 @@ register({
 
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
-        newBtn, aiBtn, viewBtn, homeBtn,
+        newBtn,
+        el('label', { class: 'chess3d-level-wrap', title: 'AI 难度' },
+          el('span', { class: 'dim', style: { fontSize: '12px' } }, '难度'), levelSel),
+        aiBtn, viewBtn, homeBtn,
         el('span', { class: 'grow' }),
         el('span', { class: 'dim', style: { fontSize: '12px' } }, '拖拽旋转 · 滚轮/捏合缩放 · 两指滑动转向 · 点击走子')),
       container,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        el('span', { class: 'mono' }, 'ogl'))));
+        infoL,
+        el('span', { class: 'mono' }, 'ogl+worker'))));
 
     /* ---------- 尺寸自适应 + 渲染循环 ----------
      * WebGL 不会自动刷新画面,必须每帧手动 render()。
@@ -849,10 +881,21 @@ register({
     // e2e 测试钩子:绕过屏幕坐标,直接按格子坐标走子
     window.__chess = {
       click: (r, c) => handleSquare(r, c),
-      turn: () => turn,
-      board: () => board,
+      turn: () => turnChar(),
+      board: () => viewOf(pos),
       sel: () => sel,
       legal: () => legal,
+      /** 引擎侧信息:已走着法数 / 搜索是否在跑 / 当前难度 id */
+      moves: () => moves.length,
+      searching: () => searching,
+      level: () => LEVELS[levelIdx].id,
+      /** 测试用:直接切换难度(0 初级 … 3 大师),与下拉保持同步 */
+      setLevel: (i) => {
+        if (i >= 0 && i < LEVELS.length) {
+          levelIdx = i;
+          levelSel.value = String(i);
+        }
+      },
       goHome, flyHome: goHome,
       /** e2e 用:某格(可指定高度 y)中心的屏幕坐标,便于发真实鼠标事件 */
       screen: (r, c, y = 0) => {
@@ -863,8 +906,11 @@ register({
         return [rect.left + (v.x * 0.5 + 0.5) * rect.width, rect.top + (0.5 - v.y * 0.5) * rect.height];
       },
       home: () => ({ theta, phi, radius,俯角: Math.round((90 - phi * 180 / Math.PI) * 10) / 10 }),
-      /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧 */
-      stats: () => renderer ? { alive: true, frames, size: [vw, vh], lib: 'ogl' } : { alive: false },
+      /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧;附引擎侧状态 */
+      stats: () => (renderer ? {
+        alive: true, frames, size: [vw, vh], lib: 'ogl',
+        ai: { level: LEVELS[levelIdx].id, vsAI, searching, plies: moves.length },
+      } : { alive: false }),
     };
 
     /* ---------- 关闭时释放 ---------- */
@@ -872,6 +918,7 @@ register({
       onResize: fit,
       onClose() {
         disposed = true;
+        abortEngine();                  // 停掉在途的 AI 搜索并释放 Worker
         cancelAnimationFrame(raf);
         window.removeEventListener('resize', fit);
         window.removeEventListener('pointermove', onMove);

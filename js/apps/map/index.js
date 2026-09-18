@@ -347,11 +347,12 @@ register({
       renderSideDefault();
       setTitle('地图');
 
-      // 按 IP 所在城市纠正初始视野(仅在没有搜索/取点动作前)
+      // 按 IP 所在城市纠正初始视野(仅在没有搜索/取点动作前);
+      // 级别限制在 10~14,避免百度返回过小的级别导致视野跨省
       try {
         new B.LocalCity().get((r) => {
           if (!disposed && !searched && r?.center) {
-            map.centerAndZoom(r.center, r.level || 12);
+            map.centerAndZoom(r.center, Math.min(Math.max(r.level || 12, 10), 14));
             if (r.name) setTitle(`${r.name} — 地图`);
           }
         });

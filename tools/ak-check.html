@@ -175,19 +175,22 @@
         try {
           const map = new BMapGL.Map(box, { enableMapClick: false });
           map.centerAndZoom(new BMapGL.Point(116.404, 39.915), 12);
+          let tilesLoaded = false;
+          map.addEventListener('tilesloaded', () => { tilesLoaded = true; });   // 瓦片真正画上才触发;403 时永不触发
           setTimeout(() => {
             const txt = (box.innerText || '').trim();
             const hasCanvas = !!box.querySelector('canvas');
             const errMatch = txt && /ak|密钥|key|校验|无效|错误|失败/i.test(txt) ? txt.slice(0, 200) : '';
             finish({
               ok: hasCanvas && !errMatch && alerts.length === 0,
+              tilesLoaded,
               msg: hasCanvas
-                ? (alerts.length ? '瓦片已渲染,但出现弹窗:' + alerts.join(' | ') : '瓦片已正常渲染')
-                : (errMatch || alerts.join(' | ') || '已加载但未检测到瓦片渲染'),
+                ? (alerts.length ? '画布已建,但出现弹窗:' + alerts.join(' | ') : (tilesLoaded ? '瓦片已正常渲染' : '画布已建,但瓦片始终未加载完成'))
+                : (errMatch || alerts.join(' | ') || '已加载但未检测到地图画布'),
               version: window.BMapGL ? (window.BMapGL.version || '未知') : '未加载',
               alerts,
             });
-          }, 4000);
+          }, 6000);
         } catch (e) {
           finish({ ok: false, msg: '建图异常:' + (e.message || e), alerts });
         }
@@ -197,6 +200,38 @@
       s.onerror = () => finish({ ok: false, msg: 'GL 脚本加载失败(网络问题或 AK 被直接拒绝)', alerts });
       document.head.appendChild(s);
     });
+  }
+
+  /* 解码百度 jsapi 遥测(blank.gif 的 l= 参数),从其 ajax 错误里找瓦片 403:
+     鉴权接口通过、但瓦片服务(qt=vtile)返回 403 = 新 key 权限未完全生效。
+     遥测批量上报有延迟,轮询最多 budgetMs 直到抓到错误或超时 */
+  async function checkTileErrors(sinceTs, budgetMs = 7000) {
+    const t0 = performance.now();
+    const seen = new Set();
+    const errors = [];
+    while (performance.now() - t0 < budgetMs) {
+      const logs = performance.getEntriesByType('resource')
+        .filter(r => r.startTime >= sinceTs && r.name.includes('blank.gif') && r.name.includes('l='));
+      for (const r of logs) {
+        const key = r.startTime + r.name;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const m = r.name.match(/l=([^&]+)/);
+        if (!m) continue;
+        try {
+          const data = JSON.parse(decodeURIComponent(atob(decodeURIComponent(m[1]))));
+          for (const d of (data.dataset || [])) {
+            if (d.category === 'ajax' && d.level === 'error' && d.msg && d.msg.includes('qt=vtile')) {
+              const status = (d.msg.match(/"status":(\d+)/) || [])[1];
+              if (status && status !== '200') errors.push(status);
+            }
+          }
+        } catch { /* 单条解码失败不影响整体 */ }
+      }
+      if (errors.length) break;
+      await new Promise(r => setTimeout(r, 600));
+    }
+    return errors;
   }
 
   function setVerdict(cls, html) {
@@ -213,6 +248,7 @@
     setState('st-rest', 'run', '检测中');
     setState('st-gl', 'idle', '待检测');
     $('out-rest').textContent = '请求中…';
+    const testStart = performance.now();
 
     const rest = await testRest(ak);
     $('out-rest').textContent = rest.summary + '\n\n原始返回:\n' + rest.raw;
@@ -222,12 +258,22 @@
     setState('st-gl', 'run', '渲染中');
     $('out-gl').textContent = '加载 GL 脚本并建图,约需 5 秒…';
     const gl = await testGL(ak);
-    $('out-gl').textContent = `GL 版本: ${gl.version}\n结果: ${gl.msg}` + (gl.raw ? '\n' + gl.raw : '');
-    setState('st-gl', gl.ok ? 'ok' : 'bad', gl.ok ? '通过' : '未通过');
+    const tile403 = await checkTileErrors(testStart);
+    const glOk = gl.ok && gl.tilesLoaded && tile403.length === 0;
+    $('out-gl').textContent = `GL 版本: ${gl.version}\n结果: ${gl.msg}` +
+      (tile403.length ? `\n检测到瓦片服务 403 ×${tile403.length}(qt=vtile)` : '') +
+      (gl.raw ? '\n' + gl.raw : '');
+    setState('st-gl', glOk ? 'ok' : (gl.ok ? 'warn' : 'bad'),
+      glOk ? '通过' : (gl.ok ? '鉴权过,瓦片未确认' : '未通过'));
 
     const glText = gl.msg || '';
-    if (gl.ok) {
+    if (glOk) {
       setVerdict('ok', '✅ AK 有效:JS API GL 实际渲染成功,可以直接使用。');
+    } else if (tile403.length) {
+      setVerdict('warn', '⏳ AK 已通过鉴权,但瓦片服务(qt=vtile)返回 ' + [...new Set(tile403)].join('/') +
+        ' —— 通常是新 key 的权限还在百度各集群间同步,等几分钟后点「检测」重试;若长期如此,到控制台确认该应用已勾选并审核通过「JavaScript API GL」服务。');
+    } else if (gl.ok && !gl.tilesLoaded) {
+      setVerdict('warn', '⏳ AK 已通过鉴权、画布已创建,但未确认瓦片加载完成(tilesloaded 未触发)—— 最常见原因是瓦片服务对新 key 仍在同步中,等几分钟后重试;也可能是网络较慢。');
     } else if (/AK有误|APP不存在/.test(glText)) {
       setVerdict('bad', '❌ AK 无效:百度官方返回「' + glText.replace(/^APP不存在，?/, '') + '」—— 这串 AK 在百度系统里不存在(或已被删除),请到百度智能云控制台(lbsyun.baidu.com/apiconsole/key)重新复制,或新建一个「浏览器端」类型的应用。');
     } else if (rest.warn) {

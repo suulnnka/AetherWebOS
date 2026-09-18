@@ -7,3 +7,8 @@
 }
 .chess3d-view canvas { cursor: grab; touch-action: none; }
 .chess3d-view canvas:active { cursor: grabbing; }
+
+/* 难度下拉:与 .btn 同高(30px),给足宽度免得中文选项被裁 */
+.chess3d-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.chess3d-level { min-width: 84px; cursor: pointer; }
+.chess3d-level option { background: var(--panel-solid); color: var(--text); }
