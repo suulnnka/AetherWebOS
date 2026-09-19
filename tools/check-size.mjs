@@ -41,7 +41,7 @@ const overrideKB = argOf('--budget', null);
 /** 各引擎 chunk 的指纹(worker 里的 ENGINE_TAG)与预算 */
 const ENGINES = [
   /* wasm 通道(2026-09 zig 移植):规则/评估/搜索/开局谱库二进制全在 chess.wasm
-   * (~44KB gzip,其中谱库 blob ~17KB),worker 胶水 ~1KB,合计 ~45KB。
+   * (~40KB gzip,谱库剪枝后 ~13KB),worker 胶水 ~1KB,合计 ~41KB。
    * 旧 JS 引擎时代是 35KB(纯 JS chunk);谱库从 JS 文本搬进 wasm 后总量略增,
    * 换来同节点预算下约 2.4× 的搜索速度。 */
   { name: '国际象棋', tag: 'chess-engine-v2', kb: 50, wasm: 'chess' },
