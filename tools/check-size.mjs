@@ -6,7 +6,7 @@
  *   国际象棋(rules.js + ai.js + ai-worker.js)      ≤ 35 KB
  *   中国象棋(engine.js + worker.js,单文件引擎)     ≤ 35 KB
  *   围棋(engine.js + worker.js,MCTS 引擎)          ≤ 35 KB
- *   黑白棋(othello.wasm + worker.js 胶水)          ≤ 35 KB(两者求和)
+ *   黑白棋(othello.wasm + worker.js 胶水)          ≤ 70 KB(两者求和)
  *
  * 为什么卡 gzip 而不是 raw:线上走的是压缩传输,gzip 体积才等于用户
  * 真正要下载的字节数;raw 体积受标识符长度影响,压缩后会大幅缩水,看它没意义。
@@ -46,8 +46,10 @@ const ENGINES = [
   { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 35 },
   { name: '围棋', tag: 'go-engine-v1', kb: 35 },
   { name: '五子棋', tag: 'renju-engine-v1', kb: 35 },
-  /* wasm 通道:wasm 字段是资源名里的可辨识片段(dist 里叫 othello-<hash>.wasm) */
-  { name: '黑白棋', tag: 'othello-engine-v1', kb: 35, wasm: 'othello' },
+  /* wasm 通道:wasm 字段是资源名里的可辨识片段(dist 里叫 othello-<hash>.wasm)。
+   * 预算 70 KB:权重书 2026-09 从 2 相位升到 6 相位(棋力换体积,int8 权重
+   * gzip 压不动,6×9475B ≈ 55.5 KB 是硬成本),旧的 35 KB 是 2 相位时代的数。 */
+  { name: '黑白棋', tag: 'othello-engine-v1', kb: 70, wasm: 'othello' },
 ];
 /** 引擎里绝不该出现的渲染指纹(出现即说明 ogl / 着色器被拖进了 worker) */
 const FORBIDDEN = ['gl_FragColor', 'WebGLRenderingContext', 'requestAnimationFrame'];
