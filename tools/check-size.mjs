@@ -3,10 +3,10 @@
  * 引擎体积闸门
  *
  * 约束:各棋类的引擎 worker chunk gzip 后必须 ≤ 预算
- *   国际象棋(rules.js + ai.js + ai-worker.js)      ≤ 35 KB
+ *   国际象棋(chess.wasm + worker.js 胶水)          ≤ 55 KB(两者求和)
  *   中国象棋(engine.js + worker.js,单文件引擎)     ≤ 35 KB
  *   围棋(engine.js + worker.js,MCTS 引擎)          ≤ 35 KB
- *   黑白棋(othello.wasm + worker.js 胶水)          ≤ 70 KB(两者求和)
+ *   黑白棋(othello.wasm + worker.js 胶水)          ≤ 35 KB(两者求和)
  *
  * 为什么卡 gzip 而不是 raw:线上走的是压缩传输,gzip 体积才等于用户
  * 真正要下载的字节数;raw 体积受标识符长度影响,压缩后会大幅缩水,看它没意义。
@@ -16,10 +16,10 @@
  * hash 也能认出来;顺带能查出「引擎被误打进主包」这种回归 —— 那时同一个标记
  * 会出现在多个 chunk 里。
  *
- * 黑白棋是**唯一走 wasm 的引擎**(引擎逻辑 + int8 权重书都在 .wasm 里,worker
- * chunk 只剩加载与拆位板的胶水),所以它多一条:必须能找到一个 .wasm 资源,
- * 且**把两者 gzip 求和**再比预算 —— 用户下载的字节数就是这两块加一起。
- * 注意 .wasm 里的 int8 权重是高熵数据,gzip 几乎压不动:
+ * 走 wasm 的引擎(引擎逻辑/数据都在 .wasm 里,worker chunk 只剩加载胶水)
+ * 各多一条:必须能找到一个 .wasm 资源,且**把两者 gzip 求和**再比预算 ——
+ * 用户下载的字节数就是这两块加一起。注意 .wasm 里的 int8 权重书是高熵数据,
+ * gzip 几乎压不动:
 
  * 那是这块预算里躲不掉的成本,别指望靠改代码省出来。
  *
@@ -42,7 +42,11 @@ const overrideKB = argOf('--budget', null);
 
 /** 各引擎 chunk 的指纹(worker 里的 ENGINE_TAG)与预算 */
 const ENGINES = [
-  { name: '国际象棋', tag: 'chess-engine-v2', kb: 35 },
+  /* wasm 通道(2026-09 zig 移植):规则/评估/搜索/开局谱库二进制全在 chess.wasm
+   * (~48KB gzip,其中谱库 blob ~20KB),worker 胶水 ~2KB,合计 ~50KB → 预算 55KB。
+   * 旧 JS 引擎时代是 35KB(纯 JS chunk);谱库从 JS 文本搬进 wasm 后总量略增,
+   * 换来同节点预算下约 2.4× 的搜索速度。 */
+  { name: '国际象棋', tag: 'chess-engine-v2', kb: 55, wasm: 'chess' },
   { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 35 },
   { name: '围棋', tag: 'go-engine-v1', kb: 35 },
   { name: '五子棋', tag: 'renju-engine-v1', kb: 35 },

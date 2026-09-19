@@ -1,5 +1,5 @@
 /* ============================================================
- * WebOS 端到端冒烟测试
+ * AetherWebOS 端到端冒烟测试
  * 先 npm run dev(Vite 开发服务器,固定 8080;应用裸模块依赖需要 Vite 解析),
  * 再运行本脚本(自动携带 ?e2e=1 进入应用测试模式,见 js/core/utils.js):
  *   node tools/e2e.mjs                  # 全部用例
@@ -332,7 +332,7 @@ group('T9', '终端 + IPC 演示', async () => {
   /* ---- T9 终端 + IPC 演示 ---- */
   await ev(`WebOS.wm.open('terminal')`);
   await sleep(500);
-  await termType('notify 你好 WebOS');
+  await termType('notify 你好 AetherWebOS');
   const toast = await ev(`!!document.querySelector('.toast')`);
   const badge = await ev(`(document.getElementById('tray-bell').querySelector('.badge')?.hidden === false)`);
   t('T9 终端 notify → 系统通知(IPC)', toast === true, `toast=${toast} badgeVisible=${badge}`);
@@ -652,7 +652,7 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
   t('T18.8 服务器自定义命令', statusRun === true);
   await termType('exit');
   await sleep(300);
-  const exited = await ev(`document.querySelector('.t-prompt').textContent.includes('@webos:')`);
+  const exited = await ev(`document.querySelector('.t-prompt').textContent.includes('@aetherwebos:')`);
   t('T18.9 SSH 退出', exited === true);
   await c.shot('t18-terminal-ssh');
 
@@ -774,7 +774,7 @@ group('T20', '终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络', as
 
   const b0 = await bashOut();
   const b0prompt = await ev(`document.querySelector('.win[data-app=terminal] .t-prompt').textContent`);
-  t('T20.0 Bash 启动(唯一 shell)', b0.includes('GNU Bash 5.2') && b0prompt.includes('@webos:'), `prompt=${b0prompt}`);
+  t('T20.0 Bash 启动(唯一 shell)', b0.includes('GNU Bash 5.2') && b0prompt.includes('@aetherwebos:'), `prompt=${b0prompt}`);
 
   await bashType('ls /home');
   const b1 = await bashOut();
@@ -795,7 +795,7 @@ group('T20', '终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络', as
 
   await bashType('uname -a');
   const b5 = await bashOut();
-  t('T20.3 uname -a', b5.includes('6.1.0-webos'), '');
+  t('T20.3 uname -a', b5.includes('6.1.0-aetherwebos'), '');
 
   await bashType('sudo rm -rf /');
   const b6 = await bashOut();
@@ -1144,16 +1144,18 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   await ev(`[...document.querySelectorAll('.win')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(500);
 
-  // a. 桌面渲染应用快捷方式 + 桌面文件
+  // a. 桌面 = /home/desktop 内容:全部是快捷方式文件与文件夹,无自动生成的应用图标
   const dsk1 = await ev(`(() => {
     const icons = [...document.querySelectorAll('.dicon')];
     return {
       total: icons.length,
       apps: icons.filter(n => n.dataset.kind === 'app').length,
       files: icons.filter(n => n.dataset.kind === 'fs').length,
+      links: icons.filter(n => n.dataset.key.endsWith('.app')).length,
+      folders: icons.filter(n => n.dataset.dir === '1').length,
     };
   })()`);
-  t('T24 桌面 = 应用快捷方式 + 文件图标', dsk1.apps >= 11 && await ev(`WebOS.fs.isDir('/home/desktop')`), JSON.stringify(dsk1));
+  t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 11 && dsk1.folders >= 1 && await ev(`WebOS.fs.isDir('/home/desktop')`), JSON.stringify(dsk1));
 
   // b. 桌面右键 → 新建文本文档(全 GUI:菜单 → 系统对话框输入)
   await ev(`document.getElementById('icons').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 300 }))`);
@@ -1290,9 +1292,9 @@ group('T25', '真实输入回归(浏览器输入管线:真实鼠标与键盘事�
   await ev(`(() => { document.querySelectorAll('.dicon.selected').forEach(d => d.classList.remove('selected')); return true; })()`);
 
 
-  // 25.1 真实鼠标双击桌面图标 → 打开应用(回归:窗口层曾挡住真实点击)
+  // 25.1 真实鼠标双击桌面快捷方式 → 打开应用(回归:窗口层曾挡住真实点击)
   const iconPt = await ev(`(() => {
-    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'app:notes');
+    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:/home/desktop/记事本.app');
     const r = n.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   })()`);
@@ -2356,7 +2358,7 @@ group('T37', 'QQ 聊天', async () => {
     online: document.querySelectorAll('.qq-friend.online').length,
     me: document.querySelector('.qq-top b')?.textContent,
   }))()`);
-  t('T37.1 登录进入好友列表', q1.friends === 5 && q1.me === 'webos 用户', JSON.stringify(q1));
+  t('T37.1 登录进入好友列表', q1.friends === 5 && q1.me === 'AetherWebOS 用户', JSON.stringify(q1));
 
   // 双击好友打开聊天 → 发消息 → 机器人自动回复
   const q2 = await ev(`(async () => {
@@ -2393,7 +2395,7 @@ group('T37', 'QQ 聊天', async () => {
     historyKept: Object.keys(localStorage).filter(k => k.startsWith('webos.qq.v1'))
       .some(k => { const s = JSON.parse(localStorage.getItem(k) || '{}'); return (s.history?.['10001'] || []).length >= 1; }),
   }))()`);
-  t('T37.4 会话持久化(刷新自动登录+历史保留)', q4.autoLogin && q4.me === 'webos 用户' && q4.historyKept,
+  t('T37.4 会话持久化(刷新自动登录+历史保留)', q4.autoLogin && q4.me === 'AetherWebOS 用户' && q4.historyKept,
     JSON.stringify(q4));
 
 
@@ -3231,7 +3233,7 @@ try {
 }
 
 const scope = ids.length === GROUPS.length ? '全部' : ids.join(', ');
-console.log(`====== WebOS E2E:${scope}(${ids.length}/${GROUPS.length} 组,parallel=${parallel}${clean ? ',clean' : ''})======`);
+console.log(`====== AetherWebOS E2E:${scope}(${ids.length}/${GROUPS.length} 组,parallel=${parallel}${clean ? ',clean' : ''})======`);
 const T0 = Date.now();
 
 if (clean) {

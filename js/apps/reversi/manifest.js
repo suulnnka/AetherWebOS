@@ -8,5 +8,6 @@ export default {
   width: 640, height: 660,
   min: { w: 460, h: 480 },
   singleton: true,
+  desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 /home/desktop/棋类游戏)
   order: 9.8,
 };

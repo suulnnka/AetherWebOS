@@ -33,7 +33,7 @@ function load() {
     seq: 1,
     projects: ['个人', '工作'],
     tasks: [
-      { id: 't1', project: '个人', text: '探索 WebOS 的各个应用', done: true, prio: 1, due: '', starred: false, created: Date.now() - 86400e3 },
+      { id: 't1', project: '个人', text: '探索 AetherWebOS 的各个应用', done: true, prio: 1, due: '', starred: false, created: Date.now() - 86400e3 },
       { id: 't2', project: '个人', text: '完成《赛博档案》谜题', done: false, prio: 2, due: '', starred: true, created: Date.now() - 3600e3 },
       { id: 't3', project: '工作', text: '给 hint@nexus 写信获取提示', done: false, prio: 0, due: fmtDate(new Date()), starred: false, created: Date.now() },
     ],

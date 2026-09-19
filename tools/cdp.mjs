@@ -1,6 +1,6 @@
 /* ============================================================
  * CDP(Chrome DevTools Protocol)驱动
- * 用系统 Chrome 无头实例驱动 WebOS,做交互与截图验证。
+ * 用系统 Chrome 无头实例驱动 AetherWebOS,做交互与截图验证。
  * 用法见 tools/e2e.mjs
  * ============================================================ */
 import { spawn, execSync } from 'node:child_process';

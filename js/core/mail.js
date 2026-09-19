@@ -62,7 +62,7 @@ export function deliver(spec = {}) {
     folder: spec.folder || 'inbox',
     from: spec.from || 'system@nexus',
     fromName: spec.fromName || spec.from || '系统',
-    to: spec.to || 'me@webos',
+    to: spec.to || 'me@aetherwebos',
     subject: spec.subject || '(无主题)',
     body: spec.body || '',
     attachments: spec.attachments || [],
@@ -89,7 +89,7 @@ export function deliverLater(spec, ms = 1500) {
 
 /** 玩家发送邮件(进已发送;触发作者钩子,可产生自动回信) */
 export function send({ to, subject, body }) {
-  const msg = deliver({ folder: 'sent', read: true, from: 'me@webos', fromName: '我', to, subject, body });
+  const msg = deliver({ folder: 'sent', read: true, from: 'me@aetherwebos', fromName: '我', to, subject, body });
   for (const fn of [...sendHooks]) {
     try {
       const reply = fn(msg);

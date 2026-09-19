@@ -15,6 +15,7 @@
  * ============================================================ */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TAG = 'chess-engine-v2';
 
@@ -47,19 +48,24 @@ const t = (name, ok, extra) => {
 };
 
 const chunk = findChunk();
-const code = fs.readFileSync(chunk, 'utf8');
-/* 开局库已内嵌进 chunk(book.js 字符串谱树,不再有 book.bin 资产):
- *   - 起始局面 / 主流首着必然「命中谱树直接回着」(book:true,0 节点)—— r1/r2 验它;
- *   - 搜索路径要验证就得用「必出谱」的走法序列(h3/d5/g4 这类无 ECO 谱线的组合)
- *     —— r4/r5 验它(迭代加深 / 节点上限在产物里没坏)。 */
+/* 以 **ESM 动态导入**执行 chunk:模块 worker 的产物里有 import.meta
+ * (wasm 通道用 new URL('../wasm/*.wasm', import.meta.url) 定位资产),
+ * 经典脚本(new Function)装不下 —— SyntaxError: Cannot use 'import.meta'。
+ * self / fetch 走垫片:worker 顶层取 self,并按 chunk 同目录 fetch .wasm。 */
 const self = { postMessage: (m) => { self.__last = m; } };
-new Function('self', code)(self);
+globalThis.self = self;
+globalThis.fetch = async (url) => {
+  const u = new URL(String(url), pathToFileURL(chunk).href);
+  const data = fs.readFileSync(fileURLToPath(u));
+  return { ok: true, status: 200, arrayBuffer: async () => data };
+};
+await import(pathToFileURL(chunk).href);
 
-const ask = async (msg) => {                // worker 经 bookReady 微任务分派,异步等回包
+const ask = async (msg, timeoutMs = 5000) => {   // wasm 通道 boot 是异步的,轮询等回包
   self.__last = null;
   self.onmessage({ data: msg });
-  await Promise.resolve();
-  await new Promise((r) => setTimeout(r, 0));
+  const end = Date.now() + timeoutMs;
+  while (!self.__last && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
   return self.__last;
 };
 

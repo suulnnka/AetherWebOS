@@ -105,7 +105,7 @@ html[data-style="win98"] #start-menu {
   padding-left: 32px;
 }
 html[data-style="win98"] #start-menu::before {
-  content: "WebOS 98";
+  content: "AetherWebOS 98";
   position: absolute; left: 0; top: 0; bottom: 0; width: 27px;
   background: linear-gradient(180deg, #000080, #1084d0);
   color: #c0c0c0;

@@ -1,4 +1,4 @@
-# WebOS 应用开发指南
+# AetherWebOS 应用开发指南
 
 面向 `js/apps/` 下第三方/内置应用的开发者。所有接口均以当前代码为准,
 对照阅读:`js/core/registry.js`(注册)、`js/core/wm.js`(窗口与挂载)、`js/core/bus.js`(通信)。
@@ -25,8 +25,10 @@ js/apps/<id>/
    `[hello, () => import('./hello/index.js')]`(顶部同步 import 清单);
 3. 有样式表的话,在 `index.js` 顶部 `import './hello.css';`
 
-注册后应用自动出现在开始菜单与桌面(可用 `desktop: false` 关闭),
-并获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
+注册后应用自动出现在开始菜单(可用 `desktop: false` 关闭),并初始化时在
+桌面生成 `.app` 快捷方式(桌面本身不自动生成图标,桌面就是 `/home/desktop`
+目录,快捷方式可被用户删除/改名/收进文件夹;`desktopIcon: false` 跳过播种),
+同时获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
 
 > **⚠️ import 边界**:应用只能 import `js/core/*`、`js/lib/*`(自研库,
 > 如地图内核 minimap)与自身目录的文件,
@@ -61,7 +63,7 @@ import './hello.css';                              // 可选
 register({
   ...manifest,
   mount({ root, setTitle }) {
-    setTitle('你好 WebOS');
+    setTitle('你好 AetherWebOS');
     let n = 0;
     const num = el('b', {}, '0');
     root.append(
@@ -88,9 +90,11 @@ register({
 | `min` | `{w,h}` | 360/240 | 最小尺寸 |
 | `singleton` | boolean | false | 单实例:再次 open 时聚焦已有窗口 |
 | `resizable` | boolean | true | 是否允许拖拽调整大小 |
-| `desktop` | boolean | true | 是否出现在桌面与开始菜单 |
+| `desktop` | boolean | true | 是否出现在开始菜单;false 同时不参与桌面快捷方式播种 |
+| `desktopIcon` | boolean | true | 初始化/迁移时是否在桌面生成 `.app` 快捷方式;设 false 则不播种(棋类应用收纳进「棋类游戏」文件夹即此模式) |
 | `order` | number | 100 | 菜单排序权重,小的在前 |
 | `prefetch` | boolean | false | 高频应用预读:启动空闲后后台拉取应用 chunk,首次打开免等(browser/terminal/files 已启用) |
+| `hoverPrefetch` | boolean | true | 悬停预读:鼠标移到启动入口(桌面图标/开始菜单/任务栏)上时预读应用 chunk;重型应用可设 false 关闭(围棋:引擎包后续会很大,已关闭) |
 | `dialog` | boolean | false | 对话框型窗口(无最小化/最大化,配合模态遮罩) |
 
 ## 4. `mount(ctx)` 上下文
@@ -154,8 +158,26 @@ fs.list(path)             // 目录项数组
 fs.exists(p) / fs.isDir(p)
 ```
 
-约定用户目录:`/home/desktop`(桌面图标实时映射此目录)、`/home/documents`、`/home/downloads`。
+约定用户目录:`/home/desktop`(桌面即此目录:文件、文件夹与 .app 快捷方式,系统不自动生成图标)、`/home/documents`、`/home/downloads`。
 监听变动:`bus.onSys('fs-changed', ...)`,写文件后其他应用会自动收到通知。
+
+`.app` 应用快捷方式:内容为应用 ID 的文本文件(如「国际象棋.app」内容为 `chess3d`)。
+桌面/文件管家按应用磁贴渲染并隐藏扩展名,双击/`open` 命令直达应用;
+创建用 `js/core/applink.js` 的 `createAppLink(dir, appId)`,识别用 `isAppLink` / `appLinkApp`。
+
+### 文件加密(`core/crypto.js`)
+
+对单个文件做 AES-256-GCM 加密(密码经 PBKDF2-SHA-256 15 万次迭代派生
+密钥,随机盐 + IV,格式 `WEOS1:<salt>:<iv>:<ciphertext>`):
+
+- **文件管家**:文件右键「加密…」/「解密…」(密码对话框,加密需二次确认);
+  加密文件显示 🔒 锁图标;双击弹出密码解锁后以**只读预览**查看(明文不落盘);
+- **终端**:`crypt encrypt <文件> <密码>` / `crypt decrypt <文件> <密码>` /
+  `crypt islocked <文件>`(支持子命令分发);`cat` 加密文件会拒绝并提示
+  (加密文件不可被管道/重定向读取);
+- 密码错误时解密会明确报「密码错误或文件已损坏」(GCM 认证失败),
+  文件本身不受影响;
+- 代码:`import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js'`。
 
 ### 设置(`settings`,自动持久化 + 广播)
 
@@ -251,6 +273,19 @@ mount({ root, onLoginRetry }) {
 }
 ```
 
+### 存储键速览(localStorage)
+
+| 键 | 内容 |
+|---|---|
+| `webos.settings.v1` | 全部系统设置 |
+| `webos.fs.v1` | 虚拟文件系统整棵树 |
+| `webos.iconpos.v1` | 桌面图标位置 |
+| `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |
+| `webos.vnet.v1` | 虚拟网络状态与游戏旗标 |
+| `webos.<app>.v1` | 应用私有数据(多用户请配 `accounts.userKey()`,见上节) |
+
+「系统设置 → 系统」可查看用量并一键重置。
+
 ## 6. 右键菜单
 
 系统会拦截窗口内所有右键(不再弹出浏览器菜单),优先级:
@@ -296,8 +331,25 @@ await copyText(text);   // Clipboard API + execCommand 回退
 | `--shadow` / `--shadow-2` | 投影 |
 | `--tb` | 任务栏高度 |
 
-- 通用结构类:`.app-side`(侧栏)/ `.app-body`(主区)/ `.app-toolbar`(工具条)/
-  `.app-status`(底部状态栏)、按钮 `.btn` / `.btn.icon` / `.icon-btn`、输入 `.input`;
+- 应用骨架(AppKit 推荐布局):
+
+  ```
+  div.app                      应用根(相对定位,可承载应用内模态框)
+  ├─ div.app-toolbar           顶部工具栏(44px)
+  ├─ div.app-mid               中段(可选侧栏)
+  │  ├─ div.app-side           侧边栏(180px)
+  │  └─ div.app-body           内容区(自动滚动)
+  └─ div.app-status            底部状态栏(26px)
+  ```
+
+- 通用组件类:`.btn`(.primary/.danger/.icon)、`.input` / `.select`、
+  `.field`、`.switch`、`.seg`、`.card`、`.list` / `.list-item`、`.nav-item`、
+  `.table`、`.badge-pill`、`.modal-mask` / `.modal-box`、`.empty`、
+  `.row`、`.dim`、`.mono`、`.kbd`(实现见 `css/appkit.css`);
+- **应用内对话框**(轻量确认/输入,非系统窗口):`core/ui.js` 的
+  `modal(root, opts)` / `confirmBox(root, title, body, danger)` /
+  `promptBox(root, title, placeholder, value)`,Promise 风格;
+  需要系统级窗口(可拖动、跨应用、三级模态)时改用 `dialogs`(见 §5);
 - `neon: { a, b }` 声明的双色会以 `--neon-a/--neon-b` 注入窗口,霓虹皮肤自动渲染窗头流光;
 - 用户关闭动效时根节点带 `.no-effects`,大动画请写在 `html:not(.no-effects)` 分支。
 

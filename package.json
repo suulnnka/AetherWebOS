@@ -1,9 +1,9 @@
 {
-  "name": "webos",
+  "name": "aetherwebos",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "纯前端网页操作系统(类群晖 DSM),Vite 构建,无后端",
+  "description": "AetherWebOS —— 纯前端网页操作系统,Vite 构建,无后端",
   "scripts": {
     "dev": "vite",
     "start": "vite",
@@ -14,6 +14,5 @@
   },
   "devDependencies": {
     "vite": "^7.1.0"
-  },
-  "license": "MIT"
+  }
 }

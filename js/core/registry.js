@@ -10,9 +10,13 @@
  *   min:{w,h}           最小尺寸
  *   singleton  是否单实例(再次打开时聚焦已有窗口)
  *   resizable  是否允许调整大小(默认 true)
- *   desktop    是否出现在桌面与开始菜单(默认 true)
+ *   desktop    是否出现在开始菜单(默认 true;false 同时不参与桌面快捷方式播种)
+ *   desktopIcon 初始化/迁移时是否在桌面生成 .app 快捷方式(默认 true;
+ *              桌面本身不自动生成图标,应用入口都是快捷方式文件)
  *   order      排序权重(小的在前)
  *   prefetch   高频应用预读:启动空闲后在后台拉取应用 chunk,首次打开免等
+ *   hoverPrefetch  鼠标悬停启动入口(桌面图标/开始菜单/任务栏)时预读
+ *              chunk(默认 true;围棋等重型应用设为 false 关闭)
  *   mount(ctx) 挂载函数:在 ctx.root 里构建界面,可返回生命周期钩子
  *
  * 惰性加载:js/apps/index.js 通过 registerLazy 只注册清单元数据,
@@ -32,8 +36,10 @@ export function register(manifest) {
     singleton: false,
     resizable: true,
     desktop: true,
+    desktopIcon: true,
     order: 100,
     prefetch: false,
+    hoverPrefetch: true,
     ...manifest,
   });
 }
@@ -52,8 +58,10 @@ export function registerLazy(manifest, load) {
     singleton: false,
     resizable: true,
     desktop: true,
+    desktopIcon: true,
     order: 100,
     prefetch: false,
+    hoverPrefetch: true,
     ...manifest,
     load,
   });
@@ -83,6 +91,16 @@ export function prefetchApps() {
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 3000 });
   else setTimeout(kick, 1500);
+}
+
+/* 悬停预读:鼠标移到启动入口(桌面图标/开始菜单磁贴/任务栏固定钮)上时
+ * 提前拉取应用 chunk,真正点击时免等网络。清单 hoverPrefetch: false 的
+ * 应用(围棋:引擎包后续会很大)跳过。
+ * 重复触发因模块缓存立即返回;失败只告警,打开时 ensureLoaded 会再试。 */
+export function prefetchOnHover(id) {
+  const m = apps.get(id);
+  if (!m || !m.load || m.hoverPrefetch === false) return;
+  m.load().catch((err) => console.warn(`[registry] 悬停预读 ${id} 失败:`, err));
 }
 
 export const get = (id) => apps.get(id);

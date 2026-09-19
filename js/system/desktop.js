@@ -3,13 +3,14 @@ import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings, wallpaperCss, wallpaperMotion } from '../core/store.js';
 import fs from '../core/fs.js';
-import { list as listApps } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
-import { renderPinned } from './taskbar.js';
+import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, hoverPrefetch } from '../core/applink.js';
+import { renderPinned, pinnedApps, togglePin } from './taskbar.js';
 
-/* 桌面:壁纸 + 图标(应用快捷方式与 /home/desktop 文件)*/
+/* 桌面:壁纸 + 图标(桌面即 /home/desktop 目录:文件、文件夹与 .app 应用快捷方式,
+ * 系统不为应用自动生成图标;自动生成的应用列表在开始菜单)*/
 /* ============ 桌面壁纸 ============ */
 export function applyWallpaper() {
   const wp = $('#wallpaper');
@@ -26,7 +27,7 @@ subscribe('sys:settings-changed', (p) => {
   if (p?.changed?.includes('style')) { wm.relayout(); renderDesktopIcons(); }
 });
 
-/* ============ 桌面:应用快捷方式 + 桌面文件(像操作系统一样可操作) ============ */
+/* ============ 桌面 = /home/desktop:文件、文件夹与 .app 快捷方式(像操作系统一样可操作) ============ */
 const ICON_KEY = 'webos.iconpos.v1';
 const DESKTOP_DIR = '/home/desktop';
 const GRID = { x: 92, y: 104, mx: 12, my: 10 };
@@ -37,9 +38,15 @@ const saveIconPos = () => {
   try { localStorage.setItem(ICON_KEY, JSON.stringify(iconPos)); } catch { /* 忽略 */ }
 };
 
-/** 桌面文件图标外观 */
-function fsTileMeta(name, isDir) {
+/** 桌面文件图标外观(.app 快捷方式渲染为目标应用的磁贴) */
+function fsTileMeta(name, isDir, path) {
   if (isDir) return { icon: 'folder', color: 'linear-gradient(135deg,#3b82f6,#1d4ed8)' };
+  if (isAppLink(name)) {
+    const app = appLinkApp(path);
+    return app
+      ? { icon: app.icon, color: app.color || 'var(--accent)', link: true, app }
+      : { icon: 'file', color: 'linear-gradient(135deg,#94a3b8,#64748b)', link: true };
+  }
   const ext = name.split('.').pop().toLowerCase();
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return { icon: 'image', color: 'linear-gradient(135deg,#a78bfa,#7c3aed)' };
   if (['mp4', 'webm', 'mkv', 'mov'].includes(ext)) return { icon: 'film', color: 'linear-gradient(135deg,#f472b6,#db2777)' };
@@ -48,19 +55,24 @@ function fsTileMeta(name, isDir) {
   return { icon: 'fileText', color: 'linear-gradient(135deg,#94a3b8,#64748b)' };
 }
 
-/** 桌面条目:应用快捷方式 + /home/desktop 下的文件 */
+/** 桌面条目:即 /home/desktop 的内容(应用入口也是 .app 快捷方式文件,
+ *  系统不为应用自动生成桌面图标;完整应用列表在开始菜单) */
 function desktopItems() {
-  const apps = listApps().filter(a => a.desktop !== false)
-    .map(a => ({ kind: 'app', key: 'app:' + a.id, app: a, name: a.name, icon: a.icon, color: a.color || 'var(--accent)' }));
-  const files = (fs.list(DESKTOP_DIR) || [])
+  return (fs.list(DESKTOP_DIR) || [])
     .map(f => ({ kind: 'fs', key: 'fs:' + f.path, path: f.path, name: f.name, dir: f.dir,
-      ...fsTileMeta(f.name, f.dir) }));
-  return [...apps, ...files];
+      label: displayName(f.name),
+      ...fsTileMeta(f.name, f.dir, f.path) }));
 }
 
 function openFsItem(item) {
-  if (item.dir) wm.open('files', { params: { path: item.path } });
-  else wm.open('notes', { params: { path: item.path } });
+  if (item.dir) return wm.open('files', { params: { path: item.path } });
+  if (isAppLink(item.name)) {
+    const app = appLinkApp(item.path);
+    if (app) return wm.open(app.id);
+    dialogs.error({ title: '快捷方式失效', message: `「${displayName(item.name)}」指向的应用不存在。` });
+    return;
+  }
+  wm.open('notes', { params: { path: item.path } });
 }
 
 /** 选中项(当前 .selected 的桌面条目) */
@@ -94,6 +106,33 @@ async function desktopDelete(paths) {
   paths.forEach(p => fs.rm(p));
 }
 
+/* ---- 拖动图标放入文件夹 ---- */
+/** 光标处的文件夹图标(排除被拖动的与已选中的) */
+function dropTargetAt(x, y, draggedNode) {
+  const sel = new Set(document.querySelectorAll('.dicon.selected'));
+  for (const n of document.querySelectorAll('.dicon[data-dir="1"]')) {
+    if (n === draggedNode || sel.has(n)) continue;
+    const r = n.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return n;
+  }
+  return null;
+}
+
+/** 把当前选中的桌面文件(含 .app 快捷方式)移入目标文件夹 */
+function moveToFolder(targetNode) {
+  const dir = targetNode.dataset.key.slice('fs:'.length);
+  const items = selectedItems().filter(s => s.kind === 'fs'
+    && s.path !== dir && fs.parentPath(s.path) !== dir);
+  let n = 0;
+  for (const it of items) {
+    const dest = fs.joinPath(dir, it.name);
+    if (fs.exists(dest)) continue;             // 目标重名时跳过,不做覆盖
+    if (fs.rename(it.path, dest)) { delete iconPos[it.key]; n++; }
+  }
+  saveIconPos();
+  return n;                                    // rename 触发 fs-changed → 自动重渲染
+}
+
 export function renderDesktopIcons() {
   const box = $('#icons');
   box.innerHTML = '';
@@ -109,13 +148,17 @@ export function renderDesktopIcons() {
     const tile = el('div', { class: 'tile' });
     paintTile(tile, item);
     tile.append(icon(item.icon, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile') || 48) * 0.52) || 24));
+    if (item.link) tile.append(el('span', { class: 'lnk-badge', title: '应用快捷方式' }, icon('external', 9)));
 
     const node = el('button', {
       class: 'dicon',
-      dataset: { key: item.key, kind: item.kind },
+      dataset: { key: item.key, kind: item.kind, ...(item.dir ? { dir: '1' } : {}) },
       style: { left: pos.x + 'px', top: pos.y + 'px' },
-      title: item.name,
-    }, tile, el('span', { class: 'label' }, item.name));
+      title: item.label || item.name,
+    }, tile, el('span', { class: 'label' }, item.label || item.name));
+
+    const clearDropHover = () =>
+      box.querySelectorAll('.dicon.drop-target').forEach(d => d.classList.remove('drop-target'));
 
     let moved = false;
     node.addEventListener('pointerdown', (e) => {
@@ -137,11 +180,17 @@ export function renderDesktopIcons() {
         pos.y = clamp(ev.clientY - sy, 0, areaH - 96);
         node.style.left = pos.x + 'px';
         node.style.top = pos.y + 'px';
+        // 悬停在某文件夹图标上时高亮,提示松手即移入
+        clearDropHover();
+        dropTargetAt(ev.clientX, ev.clientY, node)?.classList.add('drop-target');
       };
-      const up = () => {
+      const up = (ev) => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        clearDropHover();
         if (moved) {
+          const target = dropTargetAt(ev.clientX, ev.clientY, node);
+          if (target && moveToFolder(target)) return;   // 移入成功:fs-changed 触发重渲染
           // 网格吸附
           pos.x = clamp(snap(pos.x, GRID.x, GRID.mx), 0, areaW - 84);
           pos.y = clamp(snap(pos.y, GRID.y, GRID.my), 0, areaH - 96);
@@ -156,7 +205,10 @@ export function renderDesktopIcons() {
       window.addEventListener('pointerup', up);
     });
 
-    node.addEventListener('dblclick', () => (item.kind === 'app' ? wm.open(item.app.id) : openFsItem(item)));
+    node.addEventListener('dblclick', () => openFsItem(item));
+
+    // 悬停预读 chunk:.app 快捷方式也是启动入口(item.app 来自 applink)
+    if (item.app) hoverPrefetch(node, item.app.id);
 
     node.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -165,23 +217,17 @@ export function renderDesktopIcons() {
         box.querySelectorAll('.dicon').forEach(d => d.classList.remove('selected'));
         node.classList.add('selected');
       }
-      if (item.kind === 'app') {
-        const pinned = pinnedApps().includes(item.app.id);
-        showMenu(e.clientX, e.clientY, [
-          { label: '打开', icon: 'chevronR', fn: () => wm.open(item.app.id) },
-          ...(item.app.singleton ? [] : [{ label: '打开新窗口', icon: 'plus', fn: () => wm.open(item.app.id) }]),
-          { sep: true },
-          { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(item.app.id) },
-        ]);
-      } else {
-        showMenu(e.clientX, e.clientY, [
-          { label: item.dir ? '打开' : '用记事本打开', icon: item.dir ? 'folderOpen' : 'fileText', fn: () => openFsItem(item) },
-          ...(item.dir ? [{ label: '在文件管家中打开', icon: 'folder', fn: () => wm.open('files', { params: { path: item.path } }) }] : []),
-          { sep: true },
-          { label: '重命名(F2)', icon: 'pencil', fn: () => desktopRename(item.path) },
-          { label: '删除(Del)', icon: 'trash', danger: true, fn: () => desktopDelete(selectedItems().filter(s => s.kind === 'fs').map(s => s.path).concat([])) },
-        ]);
-      }
+      const linkApp = !item.dir && isAppLink(item.name) ? appLinkApp(item.path) : null;
+      const pinned = linkApp && pinnedApps().includes(linkApp.id);
+      showMenu(e.clientX, e.clientY, [
+        { label: item.dir ? '打开' : linkApp ? `打开「${linkApp.name}」` : '用记事本打开',
+          icon: item.dir ? 'folderOpen' : linkApp ? linkApp.icon : 'fileText', fn: () => openFsItem(item) },
+        ...(item.dir ? [{ label: '在文件管家中打开', icon: 'folder', fn: () => wm.open('files', { params: { path: item.path } }) }] : []),
+        ...(linkApp ? [{ label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(linkApp.id) }] : []),
+        { sep: true },
+        { label: '重命名(F2)', icon: 'pencil', fn: () => desktopRename(item.path) },
+        { label: '删除(Del)', icon: 'trash', danger: true, fn: () => desktopDelete(selectedItems().map(s => s.path)) },
+      ]);
     });
 
     box.append(node);
@@ -228,9 +274,12 @@ $('#desktop').addEventListener('pointerdown', (e) => {
 $('#desktop').addEventListener('contextmenu', (e) => {
   if (e.target.id !== 'wallpaper' && e.target.id !== 'desktop' && e.target.id !== 'icons') return;
   e.preventDefault();
-  showMenu(e.clientX, e.clientY, [
+  const cx = e.clientX, cy = e.clientY;
+  showMenu(cx, cy, [
     { label: '新建文本文档', icon: 'filePlus', fn: () => desktopNew('file') },
     { label: '新建文件夹', icon: 'folderPlus', fn: () => desktopNew('dir') },
+    { label: '新建应用快捷方式', icon: 'star',
+      fn: () => showMenu(cx, cy, appLinkMenuItems((a) => createAppLink(DESKTOP_DIR, a.id))) },
     { sep: true },
     {
       label: '排列图标', icon: 'grid', fn: () => {
@@ -262,16 +311,16 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
-  if (e.key === 'F2' && sel.length === 1 && sel[0].kind === 'fs') {
+  if (e.key === 'F2' && sel.length === 1) {
     e.preventDefault();
     desktopRename(sel[0].path);
   } else if (e.key === 'Delete') {
     e.preventDefault();
-    const paths = sel.filter(s => s.kind === 'fs').map(s => s.path);
+    const paths = sel.map(s => s.path);
     if (paths.length) desktopDelete(paths);
   } else if (e.key === 'Enter' && sel.length === 1) {
     e.preventDefault();
-    sel[0].kind === 'app' ? wm.open(sel[0].app.id) : openFsItem(sel[0]);
+    openFsItem(sel[0]);
   } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
     e.preventDefault();
     document.querySelectorAll('.dicon').forEach(d => d.classList.add('selected'));

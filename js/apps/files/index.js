@@ -10,6 +10,7 @@ import { showMenu } from '../../core/menu.js';
 import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
+import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
 
 /** 系统对话框:输入(返回 string|null)与危险确认(返回 boolean) */
 const modalPrompt = (title, placeholder, value) =>
@@ -27,6 +28,10 @@ const QUICK = [
 
 function fileIcon(item, encrypted = false) {
   if (item.dir) return { name: 'folder', color: '#4f9cf9', size: 34 };
+  if (isAppLink(item.name)) {
+    const app = appLinkApp(item.path);
+    return { name: app?.icon || 'file', color: app ? flatColor(app) : '#8a94a8', size: 30 };
+  }
   if (encrypted) return { name: 'lock', color: '#a855f7', size: 30 };
   if (/\.zip$/i.test(item.name)) return { name: 'download', color: '#eab308', size: 30 };
   const ext = item.name.split('.').pop().toLowerCase();
@@ -71,6 +76,12 @@ register({
 
     function openItem(item) {
       if (item.dir) nav(item.path);
+      else if (isAppLink(item.name)) {
+        // 应用快捷方式:启动目标应用(单实例应用复用已有窗口)
+        const app = appLinkApp(item.path);
+        if (app) open(app.id);
+        else bus.notify('快捷方式失效', `「${displayName(item.name)}」指向的应用不存在`);
+      }
       else if (/\.zip$/i.test(item.name)) browseZip(item);   // ZIP:打开包内浏览器
       else if (isEncrypted(fs.read(item.path))) {
         // 加密文件:解锁后只读预览(不落盘明文)
@@ -261,7 +272,12 @@ register({
           },
         },
           el('span', { class: 'f-ico', style: { color: fi.color } }, icon(fi.name, fi.size)),
-          el('span', { class: 'f-name', title: item.path }, (encrypted ? '🔒 ' : '') + item.name));
+          el('span', { class: 'f-name', title: item.path }, (encrypted ? '🔒 ' : '') + displayName(item.name)));
+        // .app 快捷方式也是启动入口:悬停预读目标应用 chunk
+        if (!item.dir && isAppLink(item.name)) {
+          const linkApp = appLinkApp(item.path);
+          if (linkApp) hoverPrefetch(node, linkApp.id);
+        }
         grid.append(node);
       }
     }
@@ -318,9 +334,14 @@ register({
         }, onContextmenu: (e) => {
           if (e.target !== grid && e.target !== e.currentTarget) return;
           e.preventDefault();
-          showMenu(e.clientX, e.clientY, [
+          const cx = e.clientX, cy = e.clientY;
+          showMenu(cx, cy, [
             { label: '新建文件夹', icon: 'folderPlus', fn: () => newItem('dir') },
             { label: '新建文本文件', icon: 'filePlus', fn: () => newItem('file') },
+            { label: '新建应用快捷方式', icon: 'star',
+              fn: () => showMenu(cx, cy, appLinkMenuItems((a) => {
+                if (createAppLink(cwd, a.id)) bus.notify('已创建快捷方式', a.name);
+              })) },
             { sep: true },
             { label: '刷新', icon: 'refresh', fn: () => render() },
           ]);

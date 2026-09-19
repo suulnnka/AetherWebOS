@@ -1,4 +1,4 @@
-/* ============ 应用:终端 —— Bash(Bash 是唯一 shell,WebOS 能力为扩展命令) ============ */
+/* ============ 应用:终端 —— Bash(Bash 是唯一 shell,AetherWebOS 能力为扩展命令) ============ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';

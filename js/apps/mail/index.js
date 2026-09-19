@@ -65,7 +65,7 @@ register({
       const s = mail.stats();
       const counts = { inbox: s.inbox, sent: s.sent, drafts: s.drafts, trash: s.trash };
       side.append(el('div', { class: 'dim', style: { fontSize: '11.5px', padding: '4px 10px 8px' } },
-        `邮箱 · ${settings.get('username')}@webos`));
+        `邮箱 · ${settings.get('username')}@aetherwebos`));
       side.append(el('div', { class: 'list' },
         ...FOLDERS.map(f => el('button', {
           class: 'list-item' + (f.id === folder ? ' active' : ''),
@@ -166,7 +166,7 @@ register({
         el('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } },
           el('button', {
             class: 'btn', onClick: () => {
-              mail.deliver({ folder: 'drafts', read: true, from: 'me@webos', fromName: '我', to: to.value.trim(), subject: subj.value.trim() || '(无主题)', body: body.value });
+              mail.deliver({ folder: 'drafts', read: true, from: 'me@aetherwebos', fromName: '我', to: to.value.trim(), subject: subj.value.trim() || '(无主题)', body: body.value });
               if (composing.draftId) mail.move(composing.draftId, 'trash');
               bus.notify('已存入草稿箱', '');
               composing = null; folder = 'drafts'; render();
@@ -187,7 +187,7 @@ register({
       class: 'btn', onClick: () => {
         const m = selId && mail.get(selId);
         if (!m) return;
-        startCompose({ to: m.from === 'me@webos' ? m.to : m.from, subject: 'Re: ' + m.subject, body: `\n\n---- 原始邮件 ----\n${m.body.replace(/<[^>]+>/g, '')}` });
+        startCompose({ to: m.from === 'me@aetherwebos' ? m.to : m.from, subject: 'Re: ' + m.subject, body: `\n\n---- 原始邮件 ----\n${m.body.replace(/<[^>]+>/g, '')}` });
       },
     }, icon('reply', 13), '回复');
     const delLabel = el('span', {}, '删除');
@@ -214,7 +214,7 @@ register({
         el('button', { class: 'btn icon', title: '刷新', onClick: () => render() }, icon('refresh', 14)),
         el('span', { class: 'grow' }),
         logoutButton(() => { root.innerHTML = ''; appRemount(); }),
-        el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@webos`)),
+        el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@aetherwebos`)),
       el('div', { class: 'app-mid' }, side, right),
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),

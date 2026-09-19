@@ -499,7 +499,7 @@ local function sort_list(list)
 
 ---
 
-## 6. 对 WebOS 的建议
+## 6. 对 AetherWebOS 的建议
 
 1. **体积完全够用，而且不需要 int4。**
    `tools/check-size.mjs` 卡的是 **gzip**。折叠 + int8 + 全局定标 = **12.0 KB gzip / 10.3 KB brotli**，

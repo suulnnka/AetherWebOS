@@ -61,7 +61,7 @@ register({
         el('h2', {}, 'QQ'),
         el('div', { class: 'qq-login-tip' }, '回味 2005 的 Messaging 时光'),
         el('label', {}, 'QQ号', el('input', { class: 'input', id: 'qq-num', value: '88888888' })),
-        el('label', {}, '昵称', el('input', { class: 'input', id: 'qq-name', value: 'webos 用户', placeholder: '昵称' })),
+        el('label', {}, '昵称', el('input', { class: 'input', id: 'qq-name', value: 'AetherWebOS 用户', placeholder: '昵称' })),
         el('button', {
           class: 'btn primary qq-login-btn',
           onClick: async () => {

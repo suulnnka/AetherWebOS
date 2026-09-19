@@ -3,7 +3,7 @@ import { icon, svg, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
-import { list as listApps } from '../core/registry.js';
+import { list as listApps, prefetchOnHover } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { logoutSession } from './session.js';
@@ -29,6 +29,8 @@ export function renderStartMenu() {
       class: 'sm-item', 'data-search': (app.name + ' ' + app.id).toLowerCase(),
       onClick: () => { toggleStartMenu(false); wm.open(app.id); },
     }, tile, el('span', { class: 'name' }, app.name));
+    // 悬停预读 chunk,点击时秒开(hoverPrefetch: false 的应用内部跳过)
+    item.addEventListener('mouseenter', () => prefetchOnHover(app.id));
     // 开始菜单右键:打开 / 新窗口 / 固定到任务栏
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();

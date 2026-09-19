@@ -48,7 +48,7 @@ function boot() {
   setTimeout(() => $('#boot').classList.add('hide'), E2E ? 60 : 1000);
   setTimeout(() => $('#boot').remove(), E2E ? 180 : 1500);
 
-  console.log('%cWebOS 1.0 已启动 %c— 全局对象:WebOS',
+  console.log('%cAetherWebOS 1.0 已启动 %c— 全局对象:WebOS',
     'color:#5b6cff;font-weight:bold', 'color:#888');
 }
 

@@ -1,7 +1,7 @@
 /* ============================================================
  * 终端 —— Bash 命令引擎(唯一 shell)
  *
- * WebOS 终端就是一个 bash:白名单 Linux 指令 + WebOS 扩展命令
+ * AetherWebOS 终端就是一个 bash:白名单 Linux 指令 + AetherWebOS 扩展命令
  * (虚拟网络 nslookup/ping/curl/ssh、IPC 演示 notify/vol/sysinfo、
  * 文件加密 crypt、系统对话框 alert/ask/progress 等)共用一张命令表:
  *  - 支持管道(|)、输出重定向(> >>)、引号、# 注释;
@@ -14,6 +14,7 @@ import fs from '../../core/fs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { settings, WALLPAPERS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper } from '../../core/store.js';
 import { list as listApps } from '../../core/registry.js';
+import { isAppLink, appLinkApp } from '../../core/applink.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
 import { dialogs } from '../../core/dialogs.js';
@@ -97,8 +98,8 @@ CMDS.cd = {
 
 CMDS.pwd = { desc: '显示当前目录', run: (a, { state }) => state.cwd };
 CMDS.whoami = { desc: '当前用户', run: (a, { state }) => state.user };
-CMDS.hostname = { desc: '主机名', run: () => 'webos' };
-CMDS.uname = { desc: '系统信息(uname -a)', run: (args) => args.includes('-a') ? 'Linux webos 6.1.0-webos #1 SMP x86_64 GNU/Linux' : 'Linux' };
+CMDS.hostname = { desc: '主机名', run: () => 'aetherwebos' };
+CMDS.uname = { desc: '系统信息(uname -a)', run: (args) => args.includes('-a') ? 'Linux aetherwebos 6.1.0-aetherwebos #1 SMP x86_64 GNU/Linux' : 'Linux' };
 CMDS.date = { desc: '日期时间', run: () => new Date().toString() };
 CMDS.uptime = { desc: '运行时间', run: () => 'up 3 days, 22:13, 1 user, load average: 0.31, 0.24, 0.18' };
 CMDS.echo = {
@@ -373,12 +374,21 @@ CMDS.apps = {
   },
 };
 CMDS.open = {
-  desc: '启动应用(open <应用ID>)',
-  run(args) {
-    const id = args[0];
-    if (!id || !listApps().some(a => a.id === id)) throw new Error(`open: 未找到应用 "${id || ''}",试试 apps 命令`);
-    open(id);
-    return `已启动 ${id}`;
+  desc: '启动应用(open <应用ID|快捷方式>)',
+  run(args, { resolve }) {
+    const a = args[0];
+    if (!a) throw new Error('用法: open <应用ID|快捷方式路径>');
+    // .app 快捷方式:按路径解析并启动目标应用
+    const p = resolve(a);
+    if (fs.exists(p) && isAppLink(fs.basename(p))) {
+      const app = appLinkApp(p);
+      if (!app) throw new Error(`open: 快捷方式指向的应用不存在 ${p}`);
+      open(app.id);
+      return `已启动 ${app.name}`;
+    }
+    if (!listApps().some(x => x.id === a)) throw new Error(`open: 未找到应用 "${a}",试试 apps 命令`);
+    open(a);
+    return `已启动 ${a}`;
   },
 };
 CMDS.edit = {
@@ -497,7 +507,7 @@ CMDS.logout = { desc: '退出终端(同 exit)', run: (a, { state }) => { state.e
 CMDS.help = {
   desc: '列出可用命令',
   run() {
-    return `GNU Bash (WebOS) —— 可用命令:
+    return `GNU Bash (AetherWebOS) —— 可用命令:
   文件目录  ${['ls', 'cd', 'pwd', 'cat', 'mkdir', 'rm', 'touch', 'mv', 'cp', 'head', 'tail', 'grep', 'wc', 'find', 'tree'].join(' ')}
   系统      ${['whoami', 'hostname', 'uname', 'date', 'uptime', 'history', 'clear', 'exit', 'reboot'].join(' ')}
   虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh'].join(' ')}
@@ -533,12 +543,12 @@ export function createBash({ user, history, print, hooks }) {
   function paintPrompt(promptEl) {
     promptEl.innerHTML = '';
     promptEl.append(
-      el('span', 'bp-user', `${state.user}@webos`),
+      el('span', 'bp-user', `${state.user}@aetherwebos`),
       el('span', '', ':'),
       el('span', 'bp-path', shortCwd()),
       el('span', '', '$ '));
   }
-  const promptText = () => `${state.user}@webos:${shortCwd()}$ `;
+  const promptText = () => `${state.user}@aetherwebos:${shortCwd()}$ `;
 
   async function runLine(line) {
     const stages = splitPipe(line);
@@ -597,6 +607,6 @@ export function createBash({ user, history, print, hooks }) {
     promptText,
     runLine,
     complete,
-    banner: `GNU Bash 5.2 (WebOS) —— 输入 help 查看命令,man <命令> 查看用法`,
+    banner: `GNU Bash 5.2 (AetherWebOS) —— 输入 help 查看命令,man <命令> 查看用法`,
   };
 }

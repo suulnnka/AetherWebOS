@@ -112,7 +112,7 @@ register({
       el('div', { class: 'app-toolbar' },
         el('b', { style: { fontSize: '13.5px' } }, '短信'),
         el('span', { class: 'grow' }),
-        el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@webos`)),
+        el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@aetherwebos`)),
       el('div', { class: 'app-mid' }, side, pane),
       el('div', { class: 'app-status' }, statusL, el('span', { class: 'grow' }), el('span', {}, '验证码可一键复制'))));
 

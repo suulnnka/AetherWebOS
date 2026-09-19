@@ -2,7 +2,7 @@ import { $, el } from '../core/utils.js';
 import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
-import { list as listApps } from '../core/registry.js';
+import { list as listApps, prefetchOnHover } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
@@ -49,6 +49,8 @@ export function renderPinned() {
         ]);
       },
     }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, app); t.append(icon(app.icon, 14)); return t; })());
+    // 悬停预读 chunk,点击时秒开(hoverPrefetch: false 的应用内部跳过)
+    b.addEventListener('mouseenter', () => prefetchOnHover(id));
     // 应用专属霓虹色(任务栏芯片灯条消费)
     if (app.neon?.a) b.style.setProperty('--neon-a', app.neon.a);
     if (app.neon?.b) b.style.setProperty('--neon-b', app.neon.b);

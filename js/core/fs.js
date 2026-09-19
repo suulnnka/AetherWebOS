@@ -9,12 +9,13 @@
 
 import { publish } from './bus.js';
 import { debounce } from './utils.js';
+import { list as listApps } from './registry.js';
 
 const KEY = 'webos.fs.v1';
 
-const WELCOME = `欢迎使用 WebOS!
+const WELCOME = `欢迎使用 AetherWebOS!
 
-这是一个纯前端的网页操作系统,灵感来自群晖 DSM。
+这是一个纯前端的网页操作系统。
 所有数据都保存在你浏览器的 localStorage 中,无需任何后端。
 
 推荐试一试:
@@ -44,7 +45,7 @@ const DESKTOP_NOTE = `桌面便签
  · 右键开始菜单或任务栏里的应用 → 固定到任务栏
 `;
 
-const DEVGUIDE = `# WebOS 应用开发速览
+const DEVGUIDE = `# AetherWebOS 应用开发速览
 
 ## 1. 定义应用清单并注册
 
@@ -87,8 +88,38 @@ ctx.bus.notify('标题', '内容')
 ctx.bus.onSys('fs-changed', payload => ...)
 `;
 
+/* 桌面「棋类游戏」文件夹预置的快捷方式(内容 = 应用 ID 的 .app 文件) */
+const CHESS_APPS = {
+  chess3d: '国际象棋',
+  xiangqi: '中国象棋',
+  go: '围棋',
+  gomoku: '五子棋',
+  reversi: '黑白棋',
+};
+
+/* 桌面不自动生成图标:桌面上的一切都是 /home/desktop 里的真实文件,
+ * 应用入口以 .app 快捷方式存在。初始化/迁移时为各应用在桌面生成快捷
+ * 方式(棋类应用收进「棋类游戏」文件夹),用户可随意删除、改名、收纳;
+ * 完整的应用列表始终在开始菜单。 */
+function desktopShortcutSeeds() {
+  const seeds = {};
+  for (const a of listApps()) {
+    if (a.desktop === false || a.desktopIcon === false) continue;
+    seeds[a.name + '.app'] = { t: 'f', d: a.id };
+  }
+  return seeds;
+}
+
 function defaultTree() {
   const now = Date.now();
+  const chessLinks = {};
+  for (const [id, name] of Object.entries(CHESS_APPS)) {
+    chessLinks[name + '.app'] = { t: 'f', d: id, m: now };
+  }
+  const shortcuts = {};
+  for (const [fname, node] of Object.entries(desktopShortcutSeeds())) {
+    shortcuts[fname] = { ...node, m: now };
+  }
   return {
     t: 'd', m: now, c: {
       home: {
@@ -96,6 +127,8 @@ function defaultTree() {
           desktop: {
             t: 'd', m: now, c: {
               '桌面便签.txt': { t: 'f', d: DESKTOP_NOTE, m: now },
+              '棋类游戏': { t: 'd', m: now, c: chessLinks },
+              ...shortcuts,
             },
           },
           documents: {
@@ -141,6 +174,46 @@ const persist = debounce(() => {
     publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
   }
 }, 250);
+
+// 一次性内容迁移(完成标记存 localStorage,补过的东西用户删掉不会再来):
+//   chessFolder       —— 旧数据补建桌面「棋类游戏」文件夹与棋类快捷方式
+//   desktopShortcuts  —— 桌面改行「一切皆快捷方式」后,为各应用补建
+//                        桌面 .app 快捷方式(顶层级只补缺失的名字)
+(function migrateDesktop() {
+  const MIG_KEY = 'webos.fs.mig.v1';
+  let flag;
+  try { flag = JSON.parse(localStorage.getItem(MIG_KEY) || '{}'); } catch { flag = {}; }
+  const desk = node('/home/desktop');
+  if (!desk || desk.t !== 'd') return;
+  const now = Date.now();
+  let touched = false;
+
+  if (!flag.chessFolder) {
+    if (desk.c['棋类游戏']?.t !== 'd') desk.c['棋类游戏'] = { t: 'd', c: {}, m: now };
+    for (const [id, name] of Object.entries(CHESS_APPS)) {
+      const fname = name + '.app';
+      if (!desk.c['棋类游戏'].c[fname]) desk.c['棋类游戏'].c[fname] = { t: 'f', d: id, m: now };
+    }
+    touched = true;
+    flag.chessFolder = true;
+  }
+
+  if (!flag.desktopShortcuts) {
+    for (const a of listApps()) {
+      if (a.desktop === false || a.desktopIcon === false) continue;
+      const fname = a.name + '.app';
+      if (!desk.c[fname]) desk.c[fname] = { t: 'f', d: a.id, m: now };
+    }
+    touched = true;
+    flag.desktopShortcuts = true;
+  }
+
+  if (touched) {
+    desk.m = now;
+    persist();
+    try { localStorage.setItem(MIG_KEY, JSON.stringify(flag)); } catch { /* 忽略 */ }
+  }
+})();
 
 /* ---------- 路径工具 ---------- */
 export function normPath(p) {

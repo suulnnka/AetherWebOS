@@ -8,5 +8,7 @@ export default {
   width: 640, height: 720,
   min: { w: 520, h: 600 },
   singleton: true,
+  desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 /home/desktop/棋类游戏)
   order: 9.7,
+  hoverPrefetch: false,  // 引擎包后续会很大,不做悬停预读(引擎本就首次使用时才经 Worker 加载)
 };
