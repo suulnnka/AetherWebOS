@@ -16,7 +16,11 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './reversi.css';
 import { dialogs } from '../../core/dialogs.js';
-import { LEVELS } from '../../../vendor/AetherOthello/src/levels.js';
+
+/* 难度表**不 import**:两套实现(JS 参照 / Zig→wasm)的搜索算法不同,档位参数
+ * 根本不通用,所以那张表住在引擎层,由 Worker 用 {type:'levels'} 自报(见
+ * vendor/AetherOthello/docs/WORKER-PROTOCOL.md)。这里开局问一次,按回包建下拉、
+ * 按回包的 default 定初值 —— 于是「调难度」只需改引擎仓库,不用动 webos。 */
 
 /* ==================== 应用 UI ==================== */
 
@@ -98,8 +102,15 @@ register({
     let lastMove = null;
     let searchGen = 0;       // 搜索代数:作废在途搜索用的请求号(见 killWorker)
     let thinking = false;
-    let levelIdx = 2;        // 默认高级
+    /* 难度表由**引擎自报**(协议里的 {type:'levels'}):levels 存表,levelIdx 是当前
+     * 下标,初值取引擎给的 default —— 「哪一档算默认体验」是引擎的判断,UI 不猜。
+     * levelsP 是「表已到手」的闸门:AI 第一次想棋之前一定先等它,免得表还没到就
+     * 按 levelIdx=0 跑(界面显示初级、引擎却在别的档,象棋那边踩过这类不一致)。 */
+    let levels = [];
+    let levelIdx = 0;
+    let levelsP = null;      // 在 mount 末尾赋值,见那里的说明
     const aiColor = () => other(humanColor);
+    const lvName = () => levels[levelIdx]?.name ?? '—';
 
     const statusL = el('span', {}, '');
     const infoL = el('span', {
@@ -261,19 +272,43 @@ register({
         p.resolve(null);
         return;
       }
-      const lv = LEVELS[levelIdx];
+      const lv = levels[levelIdx];       // 引擎自报的表;没到就退回「不算截断」
       p.resolve({
         ...d,
         only: p.only,
         greedy: d.depth === 0 && !d.exact,
         // 进了完全求解的空格区间却没给出精确解 = 被节点预算截断
-        partial: d.empties <= lv.end && !d.exact,
-        depthMax: lv.depth,
+        partial: lv ? d.empties <= lv.end && !d.exact : false,
+        depthMax: d.depthMax ?? lv?.depth ?? 0,
+      });
+    }
+
+    /** 问引擎要难度表({type:'levels'})。表是**实现细节**,只有引擎自己知道,
+     *  所以这里不能 import 引擎仓库的文件 —— 走 Worker 才换实现不换上层。
+     *  实现上临时换掉 onmessage(与下面 ping 钩子同一套路):levels 回包不带 id,
+     *  塞进按 id 过滤的 onEngineMsg 只会更难读。 */
+    function fetchLevels(timeoutMs = 5000) {
+      return new Promise((resolve) => {
+        if (!ensureWorker()) { resolve(null); return; }
+        const w = worker;
+        const prev = w.onmessage;
+        let done = false;
+        const finish = (v) => { if (done) return; done = true; w.onmessage = prev; resolve(v); };
+        w.onmessage = (e) => {
+          const d = e.data;
+          if (d && d.type === 'levels') finish(d);
+          else if (prev) prev(e);
+        };
+        w.postMessage({ type: 'levels' });
+        setTimeout(() => finish(null), timeoutMs);
       });
     }
 
     /** 向 Worker 要一手;返回结果对象,请求被作废时返回 null */
-    function requestThink() {
+    async function requestThink() {
+      /* 先等表:表没到手就发 think,worker 会按它自己的 default 跑,而 UI 显示的
+       * 还是 levelIdx=0 —— 这种「界面一个档、引擎另一个档」正是要避免的。 */
+      if (levelsP) await levelsP;
       return new Promise((resolve) => {
         if (typeof Worker === 'undefined') {
           statusL.textContent = '当前环境不支持 Web Worker,AI 不可用';
@@ -287,7 +322,7 @@ register({
           own: halfs(board, turn), opp: halfs(board, other(turn)),
           level: levelIdx, empties: 64 - n.black - n.white,
         });
-        infoL.textContent = `搜索中…(${LEVELS[levelIdx].name})`;
+        infoL.textContent = `搜索中…(${lvName()})`;
       });
     }
 
@@ -368,11 +403,14 @@ register({
       if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 玩家执白时 AI 执黑先行
     } }, icon('refresh', 13), '新对局');
     /* 难度档:原生 <select>(同 chess 的下拉形态,比循环按钮少点几下、状态一眼可见)。
+     * 选项**等引擎报表之后再填**(见下面的 loadLevels)—— 档位名与参数都是引擎的
+     * 实现细节,UI 硬编码只会造成「表改了但界面没跟着」;空表时禁用,不给假下拉。
      * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效。 */
     const levelSel = el('select', {
       class: 'select rv-level',
-      title: 'AI 难度:' + LEVELS.map((lv) => lv.name).join(' / '),
+      title: 'AI 难度(等引擎上报)',
       'aria-label': 'AI 难度',
+      disabled: true,
       onChange: (e) => {
         killWorker();
         levelIdx = Number(e.currentTarget.value) || 0;
@@ -380,8 +418,28 @@ register({
         // 若切换发生在 AI 思考中,重新调度被打断的 AI
         if (vsAI && turn === aiColor() && !gameOver) setTimeout(aiMove, 260);
       },
-    }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-    levelSel.value = String(levelIdx);            // 默认「高级」
+    });
+
+    /** 开局问一次引擎的难度表,拿到才填下拉 —— UI 与引擎的档位认知就此对齐。
+     *  回包很快(worker 报表不等 wasm 加载),所以下拉几乎立刻就绪。 */
+    async function loadLevels() {
+      const r = await fetchLevels();
+      const table = r && Array.isArray(r.levels)
+        ? r.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
+      if (!table.length) {
+        /* 引擎没报表(Worker 建不起来 / 回包坏了):下拉保持禁用。
+         * 具体原因由 ensureWorker / onEngineMsg 那条路写到状态栏,这里不抢着写。 */
+        levelSel.title = 'AI 难度不可用(引擎未上报)';
+        return;
+      }
+      levels = table;
+      const def = Number.isInteger(r.default) && r.default >= 0 && r.default < table.length ? r.default : 0;
+      levelIdx = def;
+      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+      levelSel.value = String(def);      // 初值必须显式同步,否则显示第一档而引擎按 default 跑
+      levelSel.disabled = false;
+      levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
+    }
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
@@ -418,21 +476,30 @@ register({
 
     renderBoard();
     updateStatus();
+    /* 问引擎要难度表 —— 放在 DOM 挂好之后、钩子之前,探针一进来就能看到表。
+     * 故意不 await:mount 不该为一个消息往返卡住,下拉自己会从禁用变可用。 */
+    levelsP = loadLevels();
 
     /* 浏览器探针(tools/probe-reversi.mjs)用的钩子。
      * ping() 是唯一能证明「浏览器真的取到了 wasm 并初始化成功」的手段:
      * 它走的是与对弈完全相同的 Worker/资源路径,回包里带着权重书的元信息。 */
     window.__reversi = {
       stats: () => ({
-        level: levelIdx, vsAI, thinking, plies: moves.length, turn,
+        level: levelIdx, levelName: lvName(), vsAI, thinking, plies: moves.length, turn,
         human: humanColor, gameOver, hasWorker: !!worker,
         counts: counts(board),
       }),
       info: () => infoL.textContent,
       status: () => statusL.textContent,
-      levelSel: () => levelSel.value + ':' + levelSel.selectedOptions[0].textContent,
+      /* 引擎自报的难度表 —— 探针拿它断言「下拉是按引擎的表建的」,
+       * 而不是背下名字来对比(那就又变成硬编码了)。 */
+      levels: () => levels.map((lv) => ({ name: lv.name, depth: lv.depth, end: lv.end, budget: lv.budget })),
+      levelSel: () => {
+        const o = levelSel.selectedOptions[0];
+        return levelSel.value + ':' + (o ? o.textContent : '');
+      },
       setLevel: (i) => {
-        if (i < 0 || i >= LEVELS.length) return;
+        if (i < 0 || i >= levels.length) return;
         levelSel.value = String(i);
         levelSel.dispatchEvent(new Event('change', { bubbles: true }));
       },

@@ -3,7 +3,7 @@
  *   2. 顶栏按钮组 + 底栏只有一条(状态 + 等宽搜索信息)
  *   3. ping Worker:浏览器真的取到了 othello.wasm、engineInit 成功、权重书元信息对得上
  *   4. 点击提示点落子 → 真的翻子 → AI 用 wasm 应答 → 底栏右侧有引擎信息
- *   5. 难度下拉 4 档 + 初值同步
+ *   5. 难度下拉:选项与初值都来自引擎自报的 {type:'levels'}(断言 UI 与引擎一致)
  *   6. 悔棋把人机对战撤 2 步(且撤回的子颜色正确)
  *   7. 无控制台报错
  *
@@ -119,23 +119,35 @@ const sum = ai.counts.black + ai.counts.white;
 check('黑白计数 UI 与盘上子数一致', sum === ai.pieces, `${ai.counts.black}:${ai.counts.white} vs ${ai.pieces}`);
 console.log(`      AI 这一手 · ${ai.info}`);
 
-/* ---------- 4. 难度下拉 ---------- */
+/* ---------- 4. 难度下拉(表由引擎自报,UI 只负责渲染) ---------- */
 const lv = await c.evaluate(`(() => {
   const w = document.querySelector('${W}');
   const s = w.querySelector('select.rv-level');
+  const table = window.__reversi.levels();          // 引擎自报的表,不是探针背下来的
   const opts = [...s.options].map(o => o.value + ':' + o.textContent);
   const initial = window.__reversi.levelSel();
   window.__reversi.setLevel(0);
-  const low = window.__reversi.stats().level;
-  window.__reversi.setLevel(3);
-  return { opts, initial, low, high: window.__reversi.stats().level, sel: s.value };
+  const low = window.__reversi.stats();
+  const last = table.length - 1;
+  window.__reversi.setLevel(last);
+  const high = window.__reversi.stats();
+  const sel = s.value + ':' + s.selectedOptions[0].textContent;
+  window.__reversi.setLevel(Number(initial.split(':')[0]));   // 收回默认档,别把探针拖慢
+  return { table, opts, initial, low: low.level, high: high.level, highName: high.levelName, last, sel };
 })()`);
-check('难度下拉 4 档(初级/中级/高级/大师)',
-  lv.opts.map((o) => o.split(':')[1]).join('/') === '初级/中级/高级/大师', lv.opts.join(' '));
-check('下拉初值显式同步 = 高级(index 2)', lv.initial === '2:高级', lv.initial);
-check('setLevel 生效且下拉跟着动', lv.low === 0 && lv.high === 3 && lv.sel === '3',
-  `low=${lv.low} high=${lv.high} sel=${lv.sel}`);
-await c.evaluate(`window.__reversi.setLevel(2)`);   // 收回高级,免得跑大师档把探针拖慢
+check('难度表来自引擎(非空且字段齐全)',
+  lv.table.length >= 2 && lv.table.every((l) => typeof l.name === 'string'
+    && typeof l.depth === 'number' && typeof l.end === 'number' && typeof l.budget === 'number'),
+  JSON.stringify(lv.table));
+check('下拉选项与引擎自报的表逐项一致',
+  lv.opts.length === lv.table.length && lv.opts.every((o, i) => o === i + ':' + lv.table[i].name),
+  lv.opts.join(' '));
+check('下拉初值显式同步到引擎的档位名',
+  lv.initial === Number(lv.initial.split(':')[0]) + ':' + lv.table[Number(lv.initial.split(':')[0])]?.name,
+  lv.initial);
+check('setLevel 生效且下拉跟着动',
+  lv.low === 0 && lv.high === lv.last && lv.sel === lv.last + ':' + lv.table[lv.last].name,
+  `low=${lv.low} high=${lv.high}(${lv.highName}) sel=${lv.sel}`);
 await sleep(400);
 
 /* ---------- 5. 悔棋 ---------- */
