@@ -47,10 +47,10 @@ const ENGINES = [
   { name: '围棋', tag: 'go-engine-v1', kb: 35 },
   { name: '五子棋', tag: 'renju-engine-v1', kb: 35 },
   /* wasm 通道:wasm 字段是资源名里的可辨识片段(dist 里叫 othello-<hash>.wasm)。
-   * 预算 38 KB:权重书 2026-09 定格 4 相位(监督拟合 Egaroucid lv.17 数据;
-   * 4×9475B int8,gzip 后 wasm 约 33 KB)。档数 3~10 实测等强,取 4 是
-   * "强度等价取体积":6 档要 39 KB 且无可分辨收益。 */
-  { name: '黑白棋', tag: 'othello-engine-v1', kb: 38, wasm: 'othello' },
+   * 预算 35 KB:权重书 2026-09 定格 3 相位(监督拟合 Egaroucid lv.17 数据;
+   * 3×9475B int8,gzip 后 wasm 约 27.8 KB)。P3 与 P4 实测等强(200 盘平手),
+   * 取 3 档省 9.5KB;4 档要 33KB,若要回去这条预算得提到 38KB。 */
+  { name: '黑白棋', tag: 'othello-engine-v1', kb: 35, wasm: 'othello' },
 ];
 /** 引擎里绝不该出现的渲染指纹(出现即说明 ogl / 着色器被拖进了 worker) */
 const FORBIDDEN = ['gl_FragColor', 'WebGLRenderingContext', 'requestAnimationFrame'];
