@@ -4,12 +4,11 @@
  * 提交后按真实距离指数衰减计分,5 轮一局。
  *
  * 全程无百度依赖:
- *  - 底图:Leaflet + tile.openstreetmap.de(OSM 数据,境内可直连)
+ *  - 底图:自研内核 js/lib/minimap.js + tile.openstreetmap.de(OSM 数据,境内可直连)
  *  - 照片池:本地 ./photos/(坐标 WGS-84,见 photos/index.js 的扩充说明)
  *  - 反查城市名:Photon(Nominatim 同源数据的境内可达服务)
  * ============================================================ */
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import L from '../../lib/minimap.js';
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
@@ -274,7 +273,7 @@ register({
         if (guessMap) guessMap.invalidateSize();
         if (resultMap) resultMap.invalidateSize();
       },
-      onClose: () => { disposed = true; },
+      onClose: () => { disposed = true; guessMap?.remove(); resultMap?.remove(); },
     };
   },
 });

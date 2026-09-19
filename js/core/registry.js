@@ -12,6 +12,7 @@
  *   resizable  是否允许调整大小(默认 true)
  *   desktop    是否出现在桌面与开始菜单(默认 true)
  *   order      排序权重(小的在前)
+ *   prefetch   高频应用预读:启动空闲后在后台拉取应用 chunk,首次打开免等
  *   mount(ctx) 挂载函数:在 ctx.root 里构建界面,可返回生命周期钩子
  *
  * 惰性加载:js/apps/index.js 通过 registerLazy 只注册清单元数据,
@@ -32,6 +33,7 @@ export function register(manifest) {
     resizable: true,
     desktop: true,
     order: 100,
+    prefetch: false,
     ...manifest,
   });
 }
@@ -51,6 +53,7 @@ export function registerLazy(manifest, load) {
     resizable: true,
     desktop: true,
     order: 100,
+    prefetch: false,
     ...manifest,
     load,
   });
@@ -66,6 +69,20 @@ export async function ensureLoaded(id) {
     return apps.get(id);
   }
   return m;
+}
+
+/* 空闲时预读标记了 prefetch 的高频应用(浏览器/终端等):后台拉取并执行
+ * 其 chunk,首次打开窗口免等网络。失败只告警——预读是纯优化,
+ * 真正打开时 ensureLoaded 会再试。 */
+export function prefetchApps() {
+  const kick = () => {
+    for (const m of apps.values()) {
+      if (!m.prefetch || !m.load) continue;
+      m.load().catch((err) => console.warn(`[registry] 预读 ${m.id} 失败:`, err));
+    }
+  };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 3000 });
+  else setTimeout(kick, 1500);
 }
 
 export const get = (id) => apps.get(id);

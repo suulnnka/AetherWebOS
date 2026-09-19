@@ -3,13 +3,15 @@
  *
  * 启动时只注册各应用的清单元数据(manifest.js,纯数据、体积极小),
  * 应用代码(<id>/index.js 及其 CSS)由 Vite 拆成独立 chunk,
- * 首次打开窗口时才按需加载(wm.open → registry.ensureLoaded)。
+ * 首次打开窗口时才按需加载(wm.open → registry.ensureLoaded,
+ * 打开瞬间窗口框架先行,chunk 到位后回填内容);标记 prefetch: true
+ * 的高频应用还会在启动空闲后由 registry.prefetchApps 预读。
  *
  * 新增应用:
  *   1. 建 js/apps/<id>/ 目录:manifest.js(清单)+ index.js(实现)
  *   2. 在下方 APPS 表补一行 [manifest, () => import('./<id>/index.js')]
  * ============================================================ */
-import { registerLazy } from '../core/registry.js';
+import { registerLazy, prefetchApps } from '../core/registry.js';
 
 import browser from './browser/manifest.js';
 import files from './files/manifest.js';
@@ -72,3 +74,6 @@ const APPS = [
 ];
 
 for (const [manifest, load] of APPS) registerLazy(manifest, load);
+
+// 高频应用(清单标 prefetch: true)在启动空闲后后台预读 chunk
+prefetchApps();

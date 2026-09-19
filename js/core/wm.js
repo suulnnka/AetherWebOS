@@ -10,7 +10,7 @@
 import { el, clamp } from './utils.js';
 import { icon, paintTile } from './icons.js';
 import { publish } from './bus.js';
-import { ensureLoaded } from './registry.js';
+import { ensureLoaded, get as getApp } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
 import fs from './fs.js';
@@ -96,24 +96,66 @@ const emit = (type, payload) =>
   publish(`sys:win-${type}`, { from: 'wm', type: `win-${type}`, payload });
 
 /* ---------------- 打开窗口 ---------------- */
-/* 异步:惰性应用需先拉取其代码 chunk(本地毫秒级,重复打开走模块缓存) */
+/* 惰性应用:窗口框架(标题栏 + 骨架加载态)立即立起,代码 chunk 到位后
+ * 回填内容;已加载应用走模块缓存,同步路径无感。 */
 /* level: 0 非模态 / 2 应用模态 / 3 系统模态;缺省时 dialog 窗口为 3,普通窗口为 0 */
 export async function open(appId, { params, level, owner } = {}) {
-  const app = await ensureLoaded(appId);
-  if (!app) { console.warn('[wm] 应用不存在:', appId); return null; }
+  // 清单是纯数据,同步可得(含 singleton 等静态字段),无需等代码加载
+  const m = getApp(appId);
+  if (!m) { console.warn('[wm] 应用不存在:', appId); return null; }
 
   // 单实例:聚焦已有窗口并转发参数
-  if (app.singleton) {
+  if (m.singleton) {
     for (const w of wins.values()) {
       if (w.appId !== appId) continue;
       restoreWin(w.id);
       focus(w.id);
-      if (params) publish(`app:${appId}`, { from: 'wm', to: appId, type: 'params', payload: params });
+      if (params) {
+        // 骨架期应用还没挂载、总线上没有听众,参数先记下,挂载完成后补发
+        if (w.pending) w.pendingParams = params;
+        else publish(`app:${appId}`, { from: 'wm', to: appId, type: 'params', payload: params });
+      }
       return w;
     }
   }
 
-  return spawnWindow(app, { params, level, owner, mount: (ctx) => app.mount(ctx) });
+  // 已加载:直接挂载
+  if (!m.load) return spawnWindow(m, { params, level, owner, mount: (ctx) => m.mount(ctx) });
+
+  // 惰性应用:骨架先行,chunk 到位后在同一窗口里回填真实内容
+  const w = spawnWindow(m, { params, level, owner, mount: mountSkeleton });
+  w.pending = true;
+  try {
+    const app = await ensureLoaded(appId);
+    if (wins.get(w.id) !== w) return w;   // 加载期间窗口已被关闭
+    w.app = app;                          // 占位清单 → 含 mount 的完整清单
+    w.body.textContent = '';              // 撤下骨架
+    const hooks = app.mount(w.ctx);
+    if (hooks && typeof hooks === 'object') Object.assign(w.hooks, hooks);
+    w.pending = false;
+    if (w.pendingParams) {
+      publish(`app:${appId}`, { from: 'wm', to: appId, type: 'params', payload: w.pendingParams });
+      w.pendingParams = null;
+    }
+  } catch (err) {
+    // chunk 拉取失败或挂载抛异常:窗口内显示错误卡,不拖垮系统
+    w.pending = false;
+    if (wins.get(w.id) === w) { w.body.textContent = ''; mountFailed(w, err); }
+  }
+  return w;
+}
+
+/* 骨架占位:chunk 加载期间显示的窗口主体加载态 */
+function mountSkeleton({ root }) {
+  root.append(el('div', { class: 'win-skeleton' }, el('div', { class: 'spinner' })));
+}
+
+/* 挂载失败:窗口内错误卡(应用异常不会拖垮系统) */
+function mountFailed(w, err) {
+  console.error(`[wm] 窗口 "${w.app.id}" 挂载失败:`, err);
+  w.body.append(el('div', { class: 'win-error' },
+    el('b', {}, '应用启动失败'),
+    el('div', { class: 'mono' }, String(err?.message || err))));
 }
 
 /* ---------------- 窗口构建(应用窗口与通用弹窗共用) ---------------- */
@@ -166,6 +208,9 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     restoreRect: null,
     hooks: {},
     bus: null,
+    ctx: null,                  // 挂载上下文(惰性应用回填时复用)
+    pending: false,             // true = 骨架期,内容待代码 chunk 到位后回填
+    pendingParams: null,        // 骨架期收到的单实例转发参数,挂载后补发
     modalLevel: level ?? (app.dialog ? 3 : 0),
     ownerApp: owner || null,    // 二级弹框:锁定的目标应用
     shadeEl: null,
@@ -191,6 +236,10 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
       e.stopPropagation();
     }
   }, true);
+
+  // 窗口先进 DOM 再挂载:同步挂载与惰性回填两条路径行为一致,
+  // 应用在 mount 里即可安全测量布局
+  layerEl().append(root);
 
   // 挂载内容
   w.bus = createAppBus(app.id);
@@ -218,21 +267,18 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     /** 应用绑定通用弹窗(同 ctx.dialogs 的绑定规则),见 popup() */
     popup: (opts = {}) => popup({ owner: app.id, ...opts }),
   };
+  w.ctx = ctx;
 
   try {
     const hooks = mount(ctx);
     if (hooks && typeof hooks === 'object') w.hooks = hooks;
   } catch (err) {
-    console.error(`[wm] 窗口 "${app.id}" 挂载失败:`, err);
-    body.append(el('div', { class: 'win-error' },
-      el('b', {}, '应用启动失败'),
-      el('div', { class: 'mono' }, String(err?.message || err))));
+    mountFailed(w, err);
   }
 
   makeDraggable(w);
   if (app.resizable !== false) makeResizable(w);
 
-  layerEl().append(root);
   // .opening 保留 950ms:霓虹皮肤的三段出场(灯条→下展→内容淡入)约需 0.95s;
   // 其余风格的 winIn 动画 0.2s 已结束,类多挂一会无副作用
   setTimeout(() => root.classList.remove('opening'), 950);

@@ -78,28 +78,36 @@ check('初始状态:黑先、0 手', shape.stats?.turn === 'b' && shape.stats?.p
 const pong = await c.evaluate(`window.__reversi.ping()`);
 check('Worker 回 pong 且 tag 正确', pong?.tag === 'othello-engine-v1', JSON.stringify(pong));
 check('浏览器里 wasm 初始化成功(engineInit 返回 0 → 无 error 字段)', !pong?.error, pong?.error || '');
-check('权重书元信息对得上:9475 轨道 / 18966 字节 / scale>0',
-  pong?.orbits === 9475 && pong?.weightBytes === 18966 && pong?.scale > 0,
+// ⚠ 18970 = 20 字节头(v2:每相位一个 scale)+ 2 × 9475 int8。
+//   权重书格式升到 v2 后头从 16 涨到 20 字节,这里是唯一写死字节数的地方。
+check('权重书元信息对得上:9475 轨道 / 18970 字节 / scale>0',
+  pong?.orbits === 9475 && pong?.weightBytes === 18970 && pong?.scale > 0,
   `orbits=${pong?.orbits} weightBytes=${pong?.weightBytes} scale=${pong?.scale}`);
 
 /* ---------- 3. 落子 → AI 用 wasm 应答 ---------- */
-const moved = await c.evaluate(`(() => {
+const clickAt = await c.evaluate(`(() => {
   const w = document.querySelector('${W}');
   // 点一个提示点(e6 = 第 5 行第 4 列,按 dataset 找)
   const cell = w.querySelector('.rv-cell.hint[data-r="5"][data-c="4"]') || w.querySelector('.rv-cell.hint');
   const rc = cell.dataset.r + ',' + cell.dataset.c;
   cell.click();
-  return {
-    rc,
-    piecesAfter: w.querySelectorAll('.rv-piece').length,
+  return { rc };
+})()`);
+/* 落子经 Worker 的 legal 往回确认(~ms 级),轮询等盘面更新,别立即断言 */
+let moved = null;
+for (let i = 0; i < 40; i++) {
+  moved = await c.evaluate(`(() => ({
+    piecesAfter: document.querySelectorAll('${W} .rv-piece').length,
     counts: window.__reversi.stats().counts,
     stats: window.__reversi.stats(),
-    hints: w.querySelectorAll('.rv-cell.hint').length,
-  };
-})()`);
+    hints: document.querySelectorAll('${W} .rv-cell.hint').length,
+  }))()`);
+  if (moved.stats.plies === 1 && moved.counts.black === 4) break;   // 等 state 级联收敛(数子落地)
+  await sleep(50);
+}
 // 落一手 = 盘上多 1 子(翻面不改总数),所以 4 → 5;同时吃 1 子:黑 2+1落+1翻 = 4,白 2-1 = 1
 check('点提示点后落子(4 → 5 子,黑吃到 4:1)', moved.piecesAfter === 5 && moved.counts.black === 4 && moved.counts.white === 1,
-  `${moved.rc} 之后 ${moved.piecesAfter} 子 = 黑${moved.counts.black}:白${moved.counts.white}`);
+  `${clickAt.rc} 之后 ${moved.piecesAfter} 子 = 黑${moved.counts.black}:白${moved.counts.white}`);
 check('轮到 AI:搜索已发起', moved.stats.plies === 1 && moved.stats.turn === 'w', JSON.stringify(moved.stats));
 
 let ai = null;

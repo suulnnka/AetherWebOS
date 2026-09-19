@@ -47,19 +47,13 @@ const t = (name, ok, extra) => {
 };
 
 const chunk = findChunk();
-const code = fs.readFileSync(chunk, 'utf8')
-  // 开局库 book.bin 是独立资产,冒烟环境没有它:资产加载替换为拒绝,
-  // worker 内部 catch 后自动走"无谱"路径(搜索兜底);import.meta 一并中和
-  .replace(/fetch\(new URL\([^)]*\)\)/g, 'Promise.reject(new Error("smoke: no book.bin"))')
-  .replace(/import\.meta\.url/g, '"."');
-
+const code = fs.readFileSync(chunk, 'utf8');
+/* 开局库已内嵌进 chunk(book.js 字符串谱树,不再有 book.bin 资产):
+ *   - 起始局面 / 主流首着必然「命中谱树直接回着」(book:true,0 节点)—— r1/r2 验它;
+ *   - 搜索路径要验证就得用「必出谱」的走法序列(h3/d5/g4 这类无 ECO 谱线的组合)
+ *     —— r4/r5 验它(迭代加深 / 节点上限在产物里没坏)。 */
 const self = { postMessage: (m) => { self.__last = m; } };
-/* URL 影子类:chunk 里的开局库资产解析(new URL)在冒烟环境必然失败,
- * 用不抛错的影子类顶住,让加载失败走 worker 内部的 catch(谱外搜索兜底) */
-class ShadowURL {
-  constructor(u) { this.href = String(u); }
-}
-new Function('self', 'URL', code)(self, ShadowURL);
+new Function('self', code)(self);
 
 const ask = async (msg) => {                // worker 经 bookReady 微任务分派,异步等回包
   self.__last = null;
@@ -77,26 +71,39 @@ const pong = await ask({ type: 'ping' });
 t('ping → pong', !!pong && pong.type === 'pong');
 
 const r1 = await ask({ id: 1, moves: [], nodes: 20000, ms: 200, depth: 24 });
-t('开局面:返回着法并迭代加深到 ≥ 5 层',
-  !!r1 && !r1.error && r1.move > 0 && r1.depth >= 5,
-  r1 && !r1.error ? `${describe(r1.move)} · 深度 ${r1.depth} · ${r1.nodes} 节点 · ${r1.ms}ms · ${r1.score}` : JSON.stringify(r1));
+t('开局面:开局库命中直接回着(book:true,不进搜索)',
+  !!r1 && !r1.error && r1.book === true && r1.move > 0 && typeof r1.name === 'string',
+  r1 && !r1.error ? `${describe(r1.move)} · ${r1.name || '(无开局名)'} · 节点 ${r1.nodes}` : JSON.stringify(r1));
 
 const r2 = await ask({ id: 2, moves: [wire(6, 4, 4, 4)], nodes: 40000, ms: 500, depth: 24 });
-t('重演 1.e4 后返回黑方着法',
-  !!r2 && !r2.error && r2.move > 0,
-  r2 && !r2.error ? `${describe(r2.move)} · 深度 ${r2.depth} · ${r2.nodes} 节点` : JSON.stringify(r2));
+t('重演 1.e4 后黑方着法仍由开局库应答',
+  !!r2 && !r2.error && r2.book === true && r2.move > 0,
+  r2 && !r2.error ? `${describe(r2.move)} · ${r2.name || '(无开局名)'}` : JSON.stringify(r2));
 
 const r3 = await ask({ id: 3, moves: [wire(0, 6, 0, 4)], nodes: 5000, ms: 100 });
 t('非法走法序列被拒绝(而不是当空局面乱搜)', !!r3 && r3.error === 'illegal-sequence', JSON.stringify(r3));
 
-const r4 = await ask({ id: 4, moves: [], nodes: 30000, ms: 5000, depth: 24 });
-t('节点预算是硬上限(不超请求值 30%)', !!r4 && r4.nodes <= 30000 * 1.3, `请求 30000,实用 ${r4 && r4.nodes}`);
+/* 出谱序列:1.h3 d5 2.g4 —— ECO 谱树里没有这条线,必走搜索 */
+const OFF_BOOK = [wire(6, 7, 5, 7), wire(1, 3, 3, 3), wire(6, 6, 4, 6)];
 
-/* 大师档:确认高预算下能明显搜得更深 */
+/* think 契约:只传 level 下标,搜索参数由 Worker 按引擎自报的难度表解析。
+ * easy(0)=20k 节点 / master(3)=900k 节点 */
+const r4 = await ask({ id: 4, moves: OFF_BOOK, level: 0 });
+t('出谱后真搜索:初级档节点预算是硬上限(不超请求值 30%)',
+  !!r4 && r4.nodes > 0 && r4.nodes <= 20000 * 1.3,
+  r4 ? `实用 ${r4.nodes} 节点 · 深度 ${r4.depth}` : JSON.stringify(r4));
+
+/* 大师档:确认高预算下能明显搜得更深(同样用出谱序列) */
 const t0 = Date.now();
-const r5 = await ask({ id: 5, moves: [], nodes: 1200000, ms: 3500, depth: 24 });
+const r5 = await ask({ id: 5, moves: OFF_BOOK, level: 3 });
 t('大师档节点预算下深度 ≥ 9 层', !!r5 && r5.depth >= 9,
   r5 ? `深度 ${r5.depth} · ${r5.nodes} 节点 · ${r5.ms}ms(墙钟 ${Date.now() - t0}ms)` : JSON.stringify(r5));
+
+/* state 契约:开局局面的合法着法应为 20 手 */
+const s1 = await ask({ type: 'state', id: 6, moves: [] });
+t('state:开局局面 20 手合法着法、白方行棋、未终局',
+  !!s1 && !s1.error && s1.legal.length === 20 && s1.stm === 0 && s1.over === false,
+  s1 && !s1.error ? `legal ${s1.legal.length} · stm ${s1.stm}` : JSON.stringify(s1));
 
 console.log(`\n${fail ? '✗' : '✓'} ${pass} 项通过 / ${fail} 项失败`);
 process.exit(fail ? 1 : 0);

@@ -6,7 +6,9 @@
 ## 1. 一个应用是什么
 
 一个应用 = 一个目录 + 一份清单。应用代码**按需加载**:启动时系统只读入
-清单(纯数据),应用本体在首次打开窗口时才以独立 chunk 拉取。
+清单(纯数据),应用本体在首次打开窗口时才以独立 chunk 拉取——打开瞬间
+窗口框架先立起(骨架加载态),chunk 到位后回填内容。高频应用(浏览器/
+终端等)在清单标 `prefetch: true`,系统启动空闲后会后台预读,首次打开免等。
 
 ```
 js/apps/<id>/
@@ -26,8 +28,10 @@ js/apps/<id>/
 注册后应用自动出现在开始菜单与桌面(可用 `desktop: false` 关闭),
 并获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
 
-> **⚠️ import 边界**:应用只能 import `js/core/*` 与自身目录的文件,
-> **不要 import `js/system/*` 或其他应用**。打包时 core 是独立稳定 chunk,
+> **⚠️ import 边界**:应用只能 import `js/core/*`、`js/lib/*`(自研库,
+> 如地图内核 minimap)与自身目录的文件,
+> **不要 import `js/system/*` 或其他应用**。打包时 core 是独立稳定 chunk
+> (js/lib 也归入其中,开机引入),
 > 应用若引用了主包里的模块,该应用 chunk 就会跟着主包改名,破坏
 > "改一个应用、其余应用缓存不失效"的性质(确需引用 system 模块时,
 > 把该模块加入 vite.config.js 的 manualChunks 稳定区,像 session.js 一样)。
@@ -86,6 +90,7 @@ register({
 | `resizable` | boolean | true | 是否允许拖拽调整大小 |
 | `desktop` | boolean | true | 是否出现在桌面与开始菜单 |
 | `order` | number | 100 | 菜单排序权重,小的在前 |
+| `prefetch` | boolean | false | 高频应用预读:启动空闲后后台拉取应用 chunk,首次打开免等(browser/terminal/files 已启用) |
 | `dialog` | boolean | false | 对话框型窗口(无最小化/最大化,配合模态遮罩) |
 
 ## 4. `mount(ctx)` 上下文
@@ -299,6 +304,7 @@ await copyText(text);   // Clipboard API + execCommand 回退
 ## 8. 生命周期要点
 
 - `singleton: true` 的应用重复 `open` 只聚焦不重挂,新参数靠 `bus.on('params')`;
+- `mount` 执行时窗口框架已进入 DOM(惰性应用为骨架回填),mount 里可直接测量布局;
 - `mount` 返回的 `onClose` 里回收资源(对象 URL、定时器、事件监听);
 - `onResize(w, h)` 跟随窗口拖拽/最大化/平铺触发,canvas 类应用在这里重设尺寸;
 - 应用挂载抛异常不会拖垮系统:窗口内会显示"应用启动失败"错误卡。

@@ -86,16 +86,22 @@ const sel = await c.evaluate(`(() => {
 })()`);
 check('点红兵出现 1 个可走位置(未过河只能直进)', sel.mv === 1 && sel.sel === 1, JSON.stringify(sel));
 
-const moved = await c.evaluate(`(() => {
-  const w = document.querySelector('${W}');
-  w.querySelector('.xq-pt[data-i="47"]').click();     // (5,2)
-  return {
-    fromEmpty: !w.querySelector('.xq-pt[data-i="56"] .xq-piece'),
-    toHas: w.querySelector('.xq-pt[data-i="47"] .xq-piece')?.textContent,
-    stats: window.__xiangqi.stats(),
-    last: window.__xiangqi.lastText(),
-  };
-})()`);
+/* 走子经 Worker 的 state 往回才落地(~ms 级),轮询等回包重画,别立即断言 */
+await c.evaluate(`document.querySelector('${W} .xq-pt[data-i="47"]').click()`);   // (5,2)
+let moved = null;
+for (let i = 0; i < 40; i++) {
+  moved = await c.evaluate(`(() => {
+    const w = document.querySelector('${W}');
+    return {
+      fromEmpty: !w.querySelector('.xq-pt[data-i="56"] .xq-piece'),
+      toHas: w.querySelector('.xq-pt[data-i="47"] .xq-piece')?.textContent,
+      stats: window.__xiangqi.stats(),
+      last: window.__xiangqi.lastText(),
+    };
+  })()`);
+  if (moved.fromEmpty && moved.toHas && moved.last) break;
+  await sleep(50);
+}
 check('点落点后真的走子了', moved.fromEmpty && moved.toHas === '兵', JSON.stringify(moved));
 check('记谱正确(兵七进一)', moved.last === '兵七进一', moved.last);
 check('轮到 AI:搜索已发起', moved.stats.plies === 1 && moved.stats.turn === 1, JSON.stringify(moved.stats));
@@ -128,12 +134,20 @@ const lv = await c.evaluate(`(() => {
 check('难度下拉 4 档,setLevel 同步', lv.opts.length === 4 && lv.level === 'master', lv.opts.join(' / ') + ' → ' + lv.level);
 check('下拉初值与引擎档位一致(默认高级)', lv.initial === '2:高级|hard', lv.initial);
 
-/* ---------- 6. 悔棋 ---------- */
-const undo = await c.evaluate(`(() => {
-  const w = document.querySelector('${W}');
-  [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent === '悔棋').click();
-  return { stats: window.__xiangqi.stats(), back: !!w.querySelector('.xq-pt[data-i="56"] .xq-piece') };
-})()`);
+/* ---------- 6. 悔棋(撤 2 步经 state 往回,轮询等棋盘还原) ---------- */
+await c.evaluate(`[...document.querySelector('${W}').querySelectorAll('.app-toolbar .btn')]
+  .find(b => b.textContent === '悔棋').click()`);
+const undo = await (async () => {
+  for (let i = 0; i < 40; i++) {
+    const r = await c.evaluate(`(() => {
+      const w = document.querySelector('${W}');
+      return { stats: window.__xiangqi.stats(), back: !!w.querySelector('.xq-pt[data-i="56"] .xq-piece') };
+    })()`);
+    if (r.stats.plies === 0 && r.back) return r;
+    await sleep(50);
+  }
+  return { stats: window.__xiangqi.stats(), back: false };
+})();
 check('悔棋一次撤 2 步(人机:自己的 + AI 的)', undo.stats.plies === 0 && undo.back, JSON.stringify(undo.stats));
 
 /* ---------- 7. 换边:玩家执黑 + 棋盘翻转 + AI 执红先行 ---------- */

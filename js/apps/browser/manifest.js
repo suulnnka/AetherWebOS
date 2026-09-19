@@ -8,5 +8,6 @@ export default {
   width: 900, height: 620,
   min: { w: 520, h: 360 },
   singleton: true,
+  prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
   order: 0,
 };

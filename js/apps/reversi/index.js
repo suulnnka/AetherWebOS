@@ -5,8 +5,10 @@
  *
  * AI 引擎在独立子项目 vendor/AetherOthello(github.com/suulnnka/AetherOthello):
  * 位棋盘 + PVS/置换表 + 残局完全求解,测试与基准都在该仓库。
- * **对弈走 zig 通道**:引擎编译成 othello.wasm(原生 u64 位棋盘),跑在 Worker 里;
- * 本文件一行搜索代码都没有,只有「8×8 棋盘 ↔ 两个 u32 位板」的转换。
+ * **对弈走 zig 通道**:引擎编译成 othello.wasm(原生 u64 位棋盘),跑在 Worker 里。
+ * 本文件一行搜索/规则代码都没有:合法落点与翻转子、对方有无棋、双方子数、
+ * 空格数、终局(满盘/双方无棋)与胜者,全部经 {type:'state'} 消息问 Worker ——
+ * UI 只把回包的翻子写到自己的 8×8 数组上(纯数据变换)。
  * 主分支的 src/engine.js(纯 JS 版)仍在仓库里当参照实现给探针用,对弈路径不再用它。
  * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess)。
  * ============================================================ */
@@ -17,56 +19,19 @@ import manifest from './manifest.js';
 import './reversi.css';
 import { dialogs } from '../../core/dialogs.js';
 
-/* 难度表**不 import**:两套实现(JS 参照 / Zig→wasm)的搜索算法不同,档位参数
- * 根本不通用,所以那张表住在引擎层,由 Worker 用 {type:'levels'} 自报(见
- * vendor/AetherOthello/docs/WORKER-PROTOCOL.md)。这里开局问一次,按回包建下拉、
- * 按回包的 default 定初值 —— 于是「调难度」只需改引擎仓库,不用动 webos。 */
+/* 难度表、局面规则**都不 import**:表是引擎的实现细节({type:'levels'} 自报),
+ * 合法性 / 翻子 / 数子 / 终局 / 胜者是规则({type:'state'} 查询)——
+ * UI 只按回包画界面,见 vendor/AetherOthello/docs/WORKER-PROTOCOL.md。 */
 
 /* ==================== 应用 UI ==================== */
 
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-const inB = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
 const other = (p) => (p === 'b' ? 'w' : 'b');
 
+/** 标准开局四位(通用常数,与坐标表同类;不含任何可变规则) */
 function initBoard() {
   const b = Array.from({ length: 8 }, () => Array(8).fill(null));
   b[3][3] = 'w'; b[3][4] = 'b'; b[4][3] = 'b'; b[4][4] = 'w';
   return b;
-}
-
-/** 某格落子能翻转的所有对方子(返回坐标数组;无翻转则 []) */
-function flipsFor(b, r, c, color) {
-  if (b[r][c]) return [];
-  const flips = [];
-  for (const [dr, dc] of DIRS) {
-    const line = [];
-    let rr = r + dr, cc = c + dc;
-    while (inB(rr, cc) && b[rr][cc] && b[rr][cc] !== color) { line.push([rr, cc]); rr += dr; cc += dc; }
-    if (line.length && inB(rr, cc) && b[rr][cc] === color) flips.push(...line);
-  }
-  return flips;
-}
-
-function legalMoves(b, color) {
-  const out = [];
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    if (!b[r][c] && flipsFor(b, r, c, color).length) out.push([r, c]);
-  }
-  return out;
-}
-
-function applyMove(b, r, c, color) {
-  const flips = flipsFor(b, r, c, color);
-  const nb = b.map(row => [...row]);
-  nb[r][c] = color;
-  for (const [fr, fc] of flips) nb[fr][fc] = color;
-  return { board: nb, flipped: flips };
-}
-
-function counts(b) {
-  let black = 0, white = 0;
-  for (const row of b) for (const cell of row) { if (cell === 'b') black++; else if (cell === 'w') white++; }
-  return { black, white };
 }
 
 const moveName = (p) => 'abcdefgh'[p & 7] + ((p >> 3) + 1);
@@ -100,15 +65,20 @@ register({
     let humanColor = 'b';    // 人机模式下玩家执子方,「换边」互换
     let moves = [];          // 走子历史 { color, r, c, flips },悔棋按它还原
     let lastMove = null;
-    let searchGen = 0;       // 搜索代数:作废在途搜索用的请求号(见 killWorker)
+    let searchGen = 0;       // 搜索代数:作废在途请求用的请求号(见 killWorker)
     let thinking = false;
+    /* 局面缓存(全部来自最近一次 state 回包,按当前行棋方查询):
+     * legalNow = { cell → flips[[r,c],...] };countsCache 双方子数;empties 空格数 */
+    let legalNow = new Map();
+    let countsCache = { black: 2, white: 2 };
+    let empties = 60;
     /* 难度表由**引擎自报**(协议里的 {type:'levels'}):levels 存表,levelIdx 是当前
      * 下标,初值取引擎给的 default —— 「哪一档算默认体验」是引擎的判断,UI 不猜。
      * levelsP 是「表已到手」的闸门:AI 第一次想棋之前一定先等它,免得表还没到就
      * 按 levelIdx=0 跑(界面显示初级、引擎却在别的档,象棋那边踩过这类不一致)。 */
     let levels = [];
     let levelIdx = 0;
-    let levelsP = null;      // 在 mount 末尾赋值,见那里的说明
+    let levelsP = null;
     const aiColor = () => other(humanColor);
     const lvName = () => levels[levelIdx]?.name ?? '—';
 
@@ -146,11 +116,10 @@ register({
 
     function renderBoard() {
       boardEl.innerHTML = '';
-      const hints = legalMoves(board, turn);
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
           const piece = board[r][c];
-          const isHint = !gameOver && piece === null && flipsFor(board, r, c, turn).length > 0;
+          const isHint = !gameOver && piece === null && legalNow.has(r * 8 + c);
           const cell = el('button', {
             class: 'rv-cell' + (isHint ? ' hint' : '') + (lastMove && lastMove[0] === r && lastMove[1] === c ? ' last' : ''),
             dataset: { r: String(r), c: String(c) },
@@ -161,9 +130,8 @@ register({
           boardEl.append(cell);
         }
       }
-      const n = counts(board);
-      blackCount.textContent = String(n.black);
-      whiteCount.textContent = String(n.white);
+      blackCount.textContent = String(countsCache.black);
+      whiteCount.textContent = String(countsCache.white);
     }
 
     function updateStatus() {
@@ -171,65 +139,89 @@ register({
       setTitle('黑白棋');
     }
 
-    function finish() {
-      const { black, white } = counts(board);
+    /** 终局:胜负与原因都是 state 回包的引擎事实(winner 相对方,按查询侧映射) */
+    function finish(st) {
       gameOver = true;
-      const reason = black + white === 64 ? '棋盘已满' : '双方无棋';
+      const winnerAbs = st.winner === null ? null : st.winner === 'own' ? st.side : other(st.side);
+      const reason = st.reason === 'full' ? '棋盘已满' : '双方无棋';
+      const { black, white } = countsCache;
       let title, msg = `黑 ${black} : 白 ${white}`, line;
-      if (black === white) {
+      if (winnerAbs === null) {
         title = '平局';
         line = `${reason} — 和棋`;
       } else {
-        const winner = black > white ? '黑方' : '白方';
+        const winner = sideName(winnerAbs);
         line = `${reason} — ${winner}胜`;
         title = vsAI
-          ? (winner === sideName(humanColor) ? '🎉 你赢了!' : 'AI 获胜')
+          ? (winnerAbs === humanColor ? '🎉 你赢了!' : 'AI 获胜')
           : `🎉 ${winner}获胜`;
       }
       dialogs.info({ title, message: msg });
       statusL.textContent = line;
     }
 
-    /** 回合推进:处理跳过与终局;vsAI 时驱动 AI */
-    function advance() {
-      const n = counts(board);
-      const full = n.black + n.white === 64;
-      if (full || (legalMoves(board, 'b').length === 0 && legalMoves(board, 'w').length === 0)) {
-        finish(); renderBoard(); return;
-      }
-      if (legalMoves(board, turn).length === 0) {
-        // 当前方无棋:跳过(双方均无棋的情况已在上面终局处理)
-        bus.notify('黑白棋', `${turn === 'b' ? '黑方' : '白方'}无合法棋,跳过回合`);
-        turn = other(turn);
-      }
+    /** 用引擎给的翻子落子(纯数据变换,不含任何规则判断) */
+    function applyWithFlips(r, c, color, flips) {
+      board[r][c] = color;
+      for (const bit of flips) board[bit >> 3][bit & 7] = color;
+      moves.push({ color, r, c, flips: flips.map((bit) => [bit >> 3, bit & 7]) });
+      lastMove = [r, c];
+    }
+
+    /** state 回包落地:缓存合法表 / 子数 / 空格,终局直接以回包为准 */
+    function applyState(st) {
+      legalNow = new Map(st.moves.map((cell, i) => [cell, st.flips[i]]));
+      countsCache = st.side === 'b' ? { black: st.ownCount, white: st.oppCount } : { black: st.oppCount, white: st.ownCount };
+      empties = st.empties;
+      if (st.over) { finish(st); renderBoard(); return; }
       renderBoard();
       updateStatus();
       if (vsAI && turn === aiColor() && !gameOver) setTimeout(aiMove, 260);
     }
 
-    function humanMove(r, c) {
+    /* ---------- 回合推进:向 Worker 要当前方的局面事实 ----------
+     * moves 为空且 over=false → 对方有棋,跳过(再查一次对方);over=true → 终局。
+     * gen 守卫:级联途中若发生新对局/悔棋/换边(killWorker 会推进 searchGen),
+     * 本轮级联立即作废 —— 否则旧级联的空回包会把新对局误判成终局。 */
+    async function refresh() {
+      const gen = searchGen;
+      renderBoard();
+      updateStatus();
+      if (gameOver) return;
+      const st = await fetchState(turn);
+      if (gen !== searchGen || !st) return;
+      if (st.moves.length === 0 && !st.over) {
+        const otherSt = await fetchState(other(turn));
+        if (gen !== searchGen || !otherSt) return;
+        applyState({ ...otherSt, side: other(turn) });
+        bus.notify('黑白棋', `${sideName(turn)}无合法棋,跳过回合`);
+        return;
+      }
+      applyState({ ...st, side: turn });
+    }
+
+    /** 落子裁决:现场向 Worker 要一次新鲜局面。缓存只管提示渲染,不承担
+     *  裁决 —— 悔棋/新对局的 race 可能留下旧局面的缓存,拿它判子会落脏子。 */
+    async function humanMove(r, c) {
       if (gameOver || (vsAI && turn !== humanColor)) return;
       const color = turn;
-      const flips = flipsFor(board, r, c, color);
-      if (!flips.length) return;
-      const { board: nb, flipped } = applyMove(board, r, c, color);
-      board = nb;
-      moves.push({ color, r, c, flips: flipped });
-      lastMove = [r, c];
-      turn = other(color);
-      advance();
+      const gen = searchGen;
+      const st = await fetchState(color);
+      if (gen !== searchGen) return;               // 期间换了局
+      applyState({ ...st, side: color });          // 顺手把提示/子数缓存校准
+      const flip = st.flips[st.moves.indexOf(r * 8 + c)];
+      if (!flip) return;                           // 非法落点(界面此时已按新缓存重画)
+      applyWithFlips(r, c, color, flip);
+      turn = other(turn);
+      refresh();
     }
 
     /* ---------- AI:搜索跑在 Worker 里(zig → wasm 通道)----------
-     * 传位板而不是棋盘:结构化克隆最省(4 个 number),而且 Worker 里根本不需要
-     * 规则 —— 引擎自己就是规则。UI 与引擎各持一套规则的风险被压到最小:UI 只用
-     * 自己那套画界面/翻子,引擎只负责「给一手」,最后仍由 UI 判合法性兜底。
-     *
-     * 搜索在 Worker 里同步跑:一个 engineThink 跑完才返回,中间没有进度可报。
-     * 要真中断(新对局/悔棋/换难度/换边)只能 terminate() 再造一个 —— 光丢弃
-     * 结果的话它还会白算到结束(大师档一手可能几秒)。 */
+     * 传位板而不是棋盘:结构化克隆最省(4 个 number)。搜索在 Worker 里同步跑,
+     * 要真中断(新对局/悔棋/换难度/换边)只能 terminate() 再造一个。 */
     let worker = null;
-    let pending = null;          // 在途请求 { id, resolve, only }
+    let pending = null;          // 在途搜索请求 { id, resolve, only }
+    let statePending = new Map();// 在途 state 请求 id → resolve
     let reqId = 0;               // 请求号 —— **必须与 searchGen 分开**:
                                  // searchGen 是「作废代数」(killWorker 自增),
                                  // 若拿它当请求号,requestThink 里的自增会让调用方
@@ -240,6 +232,8 @@ register({
       thinking = false;
       searchGen++;               // 让已经进了主线程队列的旧结果作废
       if (pending) { const p = pending; pending = null; p.resolve(null); }
+      for (const res of statePending.values()) res(null);
+      statePending.clear();
     }
 
     function ensureWorker() {
@@ -263,7 +257,16 @@ register({
 
     function onEngineMsg(e) {
       const d = e.data;
-      if (!d || !pending || d.id !== pending.id) return;      // 过期结果直接丢
+      if (!d) return;
+      if (d.type === 'levels') { applyLevels(d); return; }
+      if (d.type === 'state') {
+        const res = statePending.get(d.id);
+        if (!res) return;                       // 过期(已被 killWorker 兜底)
+        statePending.delete(d.id);
+        res(d.error ? null : d);
+        return;
+      }
+      if (!pending || d.id !== pending.id) return;      // 过期结果直接丢
       const p = pending;
       pending = null;
       if (d.error) {
@@ -283,25 +286,40 @@ register({
       });
     }
 
-    /** 问引擎要难度表({type:'levels'})。表是**实现细节**,只有引擎自己知道,
-     *  所以这里不能 import 引擎仓库的文件 —— 走 Worker 才换实现不换上层。
-     *  实现上临时换掉 onmessage(与下面 ping 钩子同一套路):levels 回包不带 id,
-     *  塞进按 id 过滤的 onEngineMsg 只会更难读。 */
+    /** 开局问一次引擎的难度表,拿到才填下拉、解开 levelsP 闸门 */
+    function applyLevels(d) {
+      const table = Array.isArray(d.levels)
+        ? d.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
+      if (!table.length) {
+        levelSel.title = 'AI 难度不可用(引擎未上报)';
+        levelsResolve?.();
+        return;
+      }
+      levels = table;
+      const def = Number.isInteger(d.default) && d.default >= 0 && d.default < table.length ? d.default : 0;
+      levelIdx = def;
+      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+      levelSel.value = String(def);
+      levelSel.disabled = false;
+      levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
+      levelsResolve?.();
+    }
+    let levelsResolve = null;
+
     function fetchLevels(timeoutMs = 5000) {
+      if (!ensureWorker()) { levelsResolve?.(); return; }
+      worker.postMessage({ type: 'levels' });      // 回包经 onEngineMsg → applyLevels
+      setTimeout(() => levelsResolve?.(), timeoutMs);  // 超时也放行,别让 AI 永远等表
+    }
+
+    /** 问引擎要某方的局面事实({type:'state'},含合法落点/翻子/子数/空格/终局) */
+    function fetchState(side) {
       return new Promise((resolve) => {
         if (!ensureWorker()) { resolve(null); return; }
-        const w = worker;
-        const prev = w.onmessage;
-        let done = false;
-        const finish = (v) => { if (done) return; done = true; w.onmessage = prev; resolve(v); };
-        w.onmessage = (e) => {
-          const d = e.data;
-          if (d && d.type === 'levels') finish(d);
-          else if (prev) prev(e);
-        };
-        w.postMessage({ type: 'levels' });
-        setTimeout(() => finish(null), timeoutMs);
-      });
+        const id = ++reqId;
+        statePending.set(id, resolve);
+        worker.postMessage({ type: 'state', id, own: halfs(board, side), opp: halfs(board, other(side)) });
+      }).then((d) => (d ? { ...d, side } : null));
     }
 
     /** 向 Worker 要一手;返回结果对象,请求被作废时返回 null */
@@ -315,12 +333,11 @@ register({
           resolve(null); return;
         }
         if (!ensureWorker()) { resolve(null); return; }
-        const n = counts(board);
-        pending = { id: ++reqId, resolve, only: legalMoves(board, turn).length === 1 };
+        pending = { id: ++reqId, resolve, only: legalNow.size === 1 };
         worker.postMessage({
           type: 'think', id: pending.id,
           own: halfs(board, turn), opp: halfs(board, other(turn)),
-          level: levelIdx, empties: 64 - n.black - n.white,
+          level: levelIdx, empties,
         });
         infoL.textContent = `搜索中…(${lvName()})`;
       });
@@ -336,26 +353,28 @@ register({
       try {
         const res = await requestThink();
         if (!res || gen !== searchGen || gameOver || !root.isConnected) return;
-        if (res.move < 0) {                 // 引擎说无棋可走:交给 advance 走「跳过回合」那条路
+        /* AI 的手也按新鲜局面裁决 —— 悔棋/新对局的 race 可能留下旧缓存 */
+        const st = await fetchState(color);
+        if (!st || gen !== searchGen || gameOver || !root.isConnected) return;
+        applyState({ ...st, side: color });
+        if (res.move < 0) {                 // 引擎说无棋可走:交给 refresh 走「跳过回合」那条路
           turn = other(color);
-          advance();
+          refresh();
           return;
         }
         const r = res.move >> 3, c = res.move & 7;
-        const flips = flipsFor(board, r, c, color);
-        if (!flips.length) {                // 兜底:宁可跳过也不能往盘上落一手脏子
+        const flips = st.flips[st.moves.indexOf(res.move)];
+        if (!flips) {                       // 兜底:宁可跳过也不能往盘上落一手脏子
           console.warn('[reversi] 引擎返回非法着法', res.move);
           statusL.textContent = '引擎返回非法着法,已跳过本步';
           turn = other(color);
-          advance();
+          refresh();
           return;
         }
-        board = applyMove(board, r, c, color).board;
-        moves.push({ color, r, c, flips });
-        lastMove = [r, c];
+        applyWithFlips(r, c, color, flips);
         turn = other(color);
         showSearch(res);
-        advance();
+        refresh();
       } finally {
         if (gen === searchGen) thinking = false;
       }
@@ -363,7 +382,7 @@ register({
 
     /** 悔棋:撤到「轮到玩家重新决策」为止。人机撤两手(对方应手 + 自己那手),
      * 人人撤一手;AI 想棋中悔棋先作废在途搜索;终局后悔棋可复活对局。
-     * 历史条目自带行棋方,跳过回合不会打乱还原(轮到谁由条目颜色决定)。 */
+     * 历史条目自带行棋方与翻转子(回包数据),跳过回合不会打乱还原。 */
     function doUndo() {
       if (!moves.length) return;
       killWorker();                      // 掐掉在途搜索:terminate 才真停得住 CPU 白烧
@@ -381,7 +400,7 @@ register({
       infoL.textContent = '';
       renderBoard();
       if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 撤完轮到 AI(如执白方在起点悔棋)就让它重想
-      else updateStatus();
+      else refresh();
     }
 
     /** 换边:与 AI 互换执子方。棋盘上下对称,无需转向;中途换边作废在途搜索并立即
@@ -391,7 +410,7 @@ register({
       humanColor = other(humanColor);
       renderBoard();                     // 提示点跟「轮到的是不是人」走,执子方变了要重画
       if (!gameOver && turn === aiColor()) setTimeout(aiMove, 260);
-      else if (!gameOver) updateStatus();   // 终局后换边只改偏好,保留终局文案
+      else if (!gameOver) refresh();
     }
 
     /* 工具栏(样式与结构对齐 chess:图标按钮 + 难度下拉 + 人机/换边/悔棋) */
@@ -399,13 +418,11 @@ register({
       killWorker(); // 打断进行中的搜索
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
       infoL.textContent = '';
-      renderBoard(); updateStatus();
+      refresh();
       if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 玩家执白时 AI 执黑先行
     } }, icon('refresh', 13), '新对局');
     /* 难度档:原生 <select>(同 chess 的下拉形态,比循环按钮少点几下、状态一眼可见)。
-     * 选项**等引擎报表之后再填**(见下面的 loadLevels)—— 档位名与参数都是引擎的
-     * 实现细节,UI 硬编码只会造成「表改了但界面没跟着」;空表时禁用,不给假下拉。
-     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效。 */
+     * 选项**等引擎报表之后再填** —— 档位名与参数都是引擎的实现细节;空表时禁用。 */
     const levelSel = el('select', {
       class: 'select rv-level',
       title: 'AI 难度(等引擎上报)',
@@ -419,27 +436,6 @@ register({
         if (vsAI && turn === aiColor() && !gameOver) setTimeout(aiMove, 260);
       },
     });
-
-    /** 开局问一次引擎的难度表,拿到才填下拉 —— UI 与引擎的档位认知就此对齐。
-     *  回包很快(worker 报表不等 wasm 加载),所以下拉几乎立刻就绪。 */
-    async function loadLevels() {
-      const r = await fetchLevels();
-      const table = r && Array.isArray(r.levels)
-        ? r.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
-      if (!table.length) {
-        /* 引擎没报表(Worker 建不起来 / 回包坏了):下拉保持禁用。
-         * 具体原因由 ensureWorker / onEngineMsg 那条路写到状态栏,这里不抢着写。 */
-        levelSel.title = 'AI 难度不可用(引擎未上报)';
-        return;
-      }
-      levels = table;
-      const def = Number.isInteger(r.default) && r.default >= 0 && r.default < table.length ? r.default : 0;
-      levelIdx = def;
-      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-      levelSel.value = String(def);      // 初值必须显式同步,否则显示第一档而引擎按 default 跑
-      levelSel.disabled = false;
-      levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
-    }
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
@@ -447,8 +443,8 @@ register({
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                 // 换边只对人机模式有意义
-        if (!vsAI) { infoL.textContent = ''; renderBoard(); updateStatus(); }
-        else if (!gameOver) advance();
+        if (!vsAI) { infoL.textContent = ''; refresh(); }
+        else if (!gameOver) refresh();
         else updateStatus();
       },
     }, '人机');
@@ -474,26 +470,25 @@ register({
         el('span', { class: 'grow' }),
         infoL)));
 
-    renderBoard();
-    updateStatus();
-    /* 问引擎要难度表 —— 放在 DOM 挂好之后、钩子之前,探针一进来就能看到表。
-     * 故意不 await:mount 不该为一个消息往返卡住,下拉自己会从禁用变可用。 */
-    levelsP = loadLevels();
+    /* 问引擎要难度表与初始局面:放在 DOM 挂好之后、钩子之前,探针一进来
+     * 就能看到。故意不 await:mount 不该为一个消息往返卡住,界面自己会就绪。 */
+    levelsP = new Promise((res) => { levelsResolve = res; });
+    fetchLevels();
+    refresh();
 
-    /* 浏览器探针(tools/probe-reversi.mjs)用的钩子。
-     * ping() 是唯一能证明「浏览器真的取到了 wasm 并初始化成功」的手段:
-     * 它走的是与对弈完全相同的 Worker/资源路径,回包里带着权重书的元信息。 */
+    /* 供探针(tools/probe-reversi.mjs)用的钩子。
+     * ping() 是唯一能证明「浏览器真的取到了 wasm 并初始化成功」的手段。 */
     window.__reversi = {
       stats: () => ({
         level: levelIdx, levelName: lvName(), vsAI, thinking, plies: moves.length, turn,
         human: humanColor, gameOver, hasWorker: !!worker,
-        counts: counts(board),
+        counts: countsCache,
       }),
       info: () => infoL.textContent,
       status: () => statusL.textContent,
-      /* 引擎自报的难度表 —— 探针拿它断言「下拉是按引擎的表建的」,
-       * 而不是背下名字来对比(那就又变成硬编码了)。 */
       levels: () => levels.map((lv) => ({ name: lv.name, depth: lv.depth, end: lv.end, budget: lv.budget })),
+      /* 排障用:当前缓存的合法落点 */
+      dbg: () => ({ legalKeys: [...legalNow.keys()].sort((a, b) => a - b), levelIdx, searchGen }),
       levelSel: () => {
         const o = levelSel.selectedOptions[0];
         return levelSel.value + ':' + (o ? o.textContent : '');

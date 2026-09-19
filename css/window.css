@@ -69,6 +69,14 @@
 }
 .win-error b { color: #ef4444; font-size: 15px; }
 
+/* 惰性应用骨架:窗口框架已立起、代码 chunk 尚在加载的主体加载态
+   (.spinner 基础样式在 shell.css,按开机屏深色底写死;此处换主题变量) */
+.win-skeleton { flex: 1; display: flex; align-items: center; justify-content: center; }
+.win-skeleton .spinner {
+  width: 22px; height: 22px; border-width: 3px;
+  border-color: var(--border); border-top-color: var(--accent);
+}
+
 /* 调整大小手柄(8 方向) */
 .rz { position: absolute; z-index: 6; touch-action: none; }
 .rz-n { top: -3px; left: 10px; right: 10px; height: 7px; cursor: ns-resize; }

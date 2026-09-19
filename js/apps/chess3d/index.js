@@ -1,19 +1,23 @@
 /* ============================================================
  * 应用:国际象棋(2D/3D 双视图,默认 ogl 渲染 3D,工具栏可切 2D 平面视图)
  * - 3D:拖拽旋转视角 / 滚轮缩放;2D:平面棋盘;两视图共用同一局面与点击走子
- * - 走子规则在 rules.js,AI 搜索在 ai.js(经 ai-worker.js 跑在 Worker 里)
+ * - 棋规、难度表、终局判定全部经 Worker 消息问引擎(levels / state / think 契约,
+ *   见 vendor/AetherChess/src/worker.js)—— 本文件**不 import 引擎源码**,
+ *   规则只有引擎一份,UI 持有走法序列(state 回包驱动棋盘重画)
  * - 多档难度:初级 / 中级 / 高级 / 大师;支持换边(与 AI 互换执子方)与悔棋
  * - 开局库在引擎内(vendor/AetherChess src/book.js):Worker 查谱命中直接回着,谱外才进搜索
  *
- * 渲染原用 three.js(压缩后 116 KB),已换成 ogl(约 15 KB):
- * ogl 不带光照材质系统,这里的 Lambert 光照与阴影采样由下方自写 GLSL 承担。
+ * 渲染用第一方子模块 vendor/Aether3DLib(WebGL2 + GLSL 300 es,minified ~10 KB;ogl 同场景
+ * 要 51 KB)。软阴影回来了:深度纹理 + 硬件比较 + 3x3 PCF,边比旧的单点采样更柔。
  *
  * 本文件只负责「渲染 + 交互 + 难度档 UI」;棋规、搜索、评估一律走引擎模块 ——
  * 引擎在独立子项目 vendor/AetherChess(github.com/suulnnka/AetherChess),
  * 不 import ogl 也不碰 DOM,Node 里能直接跑 perft 与战术测试(见该仓库 test/)。
  * 将来要换 WASM 实现,只需替换这一段调用。
  * ============================================================ */
-import { Renderer, Camera, Transform, Box, Cylinder, Sphere, Geometry, Program, Mesh, Vec3, Raycast, Shadow, RenderTarget } from 'ogl';
+import {
+  Renderer, Camera, Transform, Box, Cylinder, Sphere, Geometry, Program, Mesh, Vec3, Shadow,
+} from '../../../vendor/Aether3DLib/src/index.js';
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
@@ -21,55 +25,45 @@ import manifest from './manifest.js';
 import './chess3d.css';
 import { piece2d } from './pieces2d.js';
 import { dialogs } from '../../core/dialogs.js';
-import {
-  WHITE, BLACK, QUEEN, CHARS, NAME, C_WK, C_WQ, C_BK, C_BQ,
-  mFrom, mTo, mFlag, mCap, mPromo, mkMove,
-  newPos, make, unmake, genMoves, genLegal, hasLegalMove, isLegal,
-  inCheck, isThreefold, insufficientMaterial,
-} from '../../../vendor/AetherChess/src/rules.js';
-import { LEVELS, DEFAULT_LEVEL } from '../../../vendor/AetherChess/src/ai.js';
-
+/* ---- 协议常量与显示辅助(worker 契约的一部分,不是引擎导出)----
+ * WHITE/BLACK 是回包 stm / 棋子颜色位的取值;棋子编码 p = 颜色<<3 | 型,
+ * TYPE_CHARS 把型翻成字符只服务渲染,规则语义仍全在引擎侧。 */
+const WHITE = 0, BLACK = 1;
+const TYPE_CHARS = ['', 'p', 'n', 'b', 'r', 'q', 'k'];
+const sqName = (s) => 'abcdefgh'[s & 7] + (8 - (s >> 3));
 /* ============ 引擎侧的薄适配层 ============
  * 渲染/高亮沿用 8x8 的 {t,c} 对象数组与 [r,c] 坐标(绘制代码一行不动),
- * 引擎内部是 Int8Array(64) 的 sq = r*8+c,这里做一层换算。 */
+ * 数据源是 Worker 的 state 回包(board 为 64 格数组,sq = r*8+c)。
+ * 走法一律用线格式 (from<<6|to):发给 Worker 的、state 回的 legal 都是它。 */
 const inB = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
 const otherStm = (s) => (s === WHITE ? BLACK : WHITE);
 
-/** 引擎局面 → 8x8 视图(只给渲染与 e2e 钩子看,搜索从不碰它) */
-function viewOf(pos) {
+/** 引擎棋盘数组 → 8x8 视图(只给渲染与 e2e 钩子看) */
+function viewOf(board) {
   const v = Array.from({ length: 8 }, () => Array(8).fill(null));
   for (let s = 0; s < 64; s++) {
-    const p = pos.b[s];
-    if (p) v[s >> 3][s & 7] = { t: CHARS[p & 7], c: (p >> 3) === WHITE ? 'w' : 'b' };
+    const p = board[s];
+    if (p) v[s >> 3][s & 7] = { t: TYPE_CHARS[p & 7], c: (p >> 3) === WHITE ? 'w' : 'b' };
   }
   return v;
 }
-/** 该方全部合法着法(压紧到普通数组,UI 用) */
-function allLegal(pos) {
-  const buf = new Int32Array(256);
-  const n = genLegal(pos, buf);
-  const out = [];
-  for (let i = 0; i < n; i++) out.push(buf[i]);
-  return out;
-}
 
-/* ============ 着色器(ogl 无内置光照,这里自写 Lambert + 阴影采样) ============ */
+/* ============ 着色器(GLSL 300 es;Lambert + PCF 软阴影,版本行由库补) ============ */
 const VERT = `
-attribute vec3 position;
-attribute vec3 normal;
+in vec3 position;
+in vec3 normal;
 
 uniform mat4 modelMatrix;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
-uniform mat4 shadowProjectionMatrix;
-uniform mat4 shadowViewMatrix;
+uniform mat4 uShadowMatrix;
 
-varying vec3 vNormal;
-varying vec4 vShadowCoord;
+out vec3 vNormal;
+out vec4 vShadowCoord;
 
 void main() {
   vNormal = normalize(mat3(modelMatrix) * normal);
-  vShadowCoord = shadowProjectionMatrix * shadowViewMatrix * modelMatrix * vec4(position, 1.0);
+  vShadowCoord = uShadowMatrix * modelMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -80,12 +74,15 @@ precision highp float;
 uniform vec3 uColor;
 uniform vec3 uLightDir;
 uniform float uAmbient;
-uniform sampler2D tShadow;
+uniform sampler2D uShadowMap;
 
-varying vec3 vNormal;
-varying vec4 vShadowCoord;
+in vec3 vNormal;
+in vec4 vShadowCoord;
 
-float unpackRGBA(vec4 v) {
+out vec4 fragColor;
+
+/* 与 vendor/Aether3DLib/src/shadow.js 的打包约定互逆 */
+float unpackDepth(vec4 v) {
   const vec4 bits = vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0);
   return dot(v, bits);
 }
@@ -94,21 +91,27 @@ void main() {
   vec3 n = normalize(vNormal);
   float diff = max(dot(n, normalize(uLightDir)), 0.0);
 
-  float shade = 1.0;
-  vec3 sc = vShadowCoord.xyz / vShadowCoord.w;
-  sc = sc * 0.5 + 0.5;
-  if (sc.x > 0.0 && sc.x < 1.0 && sc.y > 0.0 && sc.y < 1.0 && sc.z > 0.0 && sc.z < 1.0) {
-    float depth = unpackRGBA(texture2D(tShadow, sc.xy));
-    shade = (sc.z - 0.004 > depth) ? 0.45 : 1.0;   // 0.45 = 阴影处保留的光量
+  /* 3x3 PCF:九点硬比较取平均,阴影边缘连续过渡 = 软阴影 */
+  vec3 sc = vShadowCoord.xyz / vShadowCoord.w * 0.5 + 0.5;
+  float texel = 1.0 / 1024.0;
+  float ref = sc.z - 0.0028;
+  float lit = 0.0;
+  for (int i = -1; i <= 1; i++) {
+    for (int j = -1; j <= 1; j++) {
+      float stored = unpackDepth(texture(uShadowMap, sc.xy + vec2(float(i), float(j)) * texel));
+      lit += (ref <= stored) ? 1.0 : 0.0;
+    }
   }
+  lit /= 9.0;
+  float shade = mix(0.45, 1.0, lit);   // 全影处保留 45% 光量,边缘连续过渡 = 软阴影   // 全影处保留 45% 光量,边缘连续过渡 = 软阴影
 
   vec3 col = uColor * (uAmbient + (1.0 - uAmbient) * diff * shade);
-  gl_FragColor = vec4(col, 1.0);
+  fragColor = vec4(col, 1.0);
 }
 `;
 
 const VERT_FLAT = `
-attribute vec3 position;
+in vec3 position;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
 void main() {
@@ -117,10 +120,11 @@ void main() {
 `;
 
 const FRAG_FLAT = `
-precision highp float;
+precision mediump float;
 uniform vec3 uColor;
 uniform float uOpacity;
-void main() { gl_FragColor = vec4(uColor, uOpacity); }
+out vec4 fragColor;
+void main() { fragColor = vec4(uColor, uOpacity); }
 `;
 
 const rgb = (hex) => new Vec3(((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255);
@@ -141,17 +145,22 @@ const PIECE_SCALE = 0.8;
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
-    let pos = newPos();          // 引擎局面(棋盘 + 走子权 + 易位权 + 吃过路兵 + 历史)
-    let moves = [];              // 走过的完整着法(mkMove 编码,含旗位,悔棋要靠它 unmake);
-                                 // 发给 Worker 时再压成 (from<<6|to),replayMoves 会还原旗位
+    let board = new Array(64).fill(0);   // 引擎棋盘(state 回包驱动;0 空,p = 颜色<<3|型)
+    let stm = WHITE;                     // 行棋方
+    let legalAll = [];                   // 行棋方全部合法着法(线格式,来自 state 回包)
+    let checkNow = false;                // 行棋方是否被将军(state 回包)
+    let moves = [];                      // 走过的完整着法(**线格式** from<<6|to,悔棋/重演都靠它)
     let sel = null;              // 选中格 [r, c]
     let legal = [];              // 选中格的合法落点 [[r, c], ...](已按落点去重)
-    let legalRaw = [];           // 与 legal 并列的打包走法
     let gameOver = false;
     let vsAI = true;
     let humanColor = WHITE;      // 人机模式下玩家执子方,「换边」互换;2D 棋盘朝向与 3D 视角跟它走
-    let levelIdx = DEFAULT_LEVEL;
     let searching = false;
+    /* 难度表由**引擎自报**({type:'levels'}):levels 存表,levelIdx 是当前下标,
+     * 初值取引擎给的 default。levelsP:AI 第一次想棋之前一定先等表到手。 */
+    let levels = [];
+    let levelIdx = 0;
+    let levelsP = null;
     const aiColor = () => otherStm(humanColor);
     const sideChar = (col) => (col === WHITE ? 'w' : 'b');
     const sideName = (col) => (col === WHITE ? '白方' : '黑方');
@@ -160,8 +169,8 @@ register({
     const infoL = el('span', { class: 'mono', style: { fontSize: '11px' } }, '');
     const container = el('div', { class: 'chess3d-view' });
     const square = 1;
-    const turnChar = () => (pos.stm === WHITE ? 'w' : 'b');
-    const level = () => LEVELS[levelIdx];
+    const turnChar = () => (stm === WHITE ? 'w' : 'b');
+    const level = () => levels[levelIdx] ?? { name: '—', id: '' };
 
     /* ---------- ogl 渲染器 ---------- */
     // 某些环境(无硬件加速 / 远程桌面)拿不到 WebGL 上下文,
@@ -191,15 +200,9 @@ register({
       scene = new Transform();
       camera = new Camera(gl, { fov: 45, near: 0.1, far: 100 });
 
-      // 光源相机(正交):只用来生成阴影贴图,光照方向在片元里用 uLightDir
-      const lightCam = new Camera(gl, { left: -7.5, right: 7.5, bottom: -7.5, top: 7.5, near: 0.1, far: 30 });
-      lightCam.position.set(6, 10, 4);
-      lightCam.lookAt(new Vec3(0, 0, 0));
-      shadow = new Shadow(gl, { light: lightCam, width: 1024, height: 1024 });
-      // Shadow 自建的 RenderTarget 默认 LINEAR 过滤,会对 RGBA 打包的深度做插值,
-      // 解包出来是错值,阴影会失效或出现条纹 —— 必须换成 NEAREST。
-      shadow.target = new RenderTarget(gl, { width: 1024, height: 1024, minFilter: gl.NEAREST, magFilter: gl.NEAREST });
-      shadow.targetUniform.value = shadow.target.texture;
+      /* 软阴影:方向光 (6,10,4) 的正交深度贴图,1024² 深度纹理 + 3x3 PCF。
+       * 棋子投影到棋盘上,是立体感的主要来源,别再删了。 */
+      shadow = new Shadow(gl, { light: [6, 10, 4], extent: 7.5, mapSize: 1024 });
 
       // cullFace 关掉:自写的 lathe / extrude 几何不保证绕序统一,
       // 关掉背面剔除可以避免某个件内壁朝外导致的破面(这点几何量没有性能压力)。
@@ -209,6 +212,8 @@ register({
           uColor: { value: new Vec3(1, 1, 1) },
           uLightDir: { value: new Vec3(6, 10, 4) },
           uAmbient: { value: 0.48 },
+          uShadowMap: { value: shadow.texture },
+          uShadowMatrix: { value: shadow.vpMatrix },
         },
       });
       flatProgram = new Program(gl, {
@@ -228,9 +233,10 @@ register({
         () => new Sphere(gl, { radius: r, widthSegments: 16, heightSegments: 12, thetaLength: Math.PI * 2 }));
       const boxGeo = (w, h, d) => cached(`b|${w}|${h}|${d}`, () => new Box(gl, { width: w, height: h, depth: d }));
 
-      /** 建网格。颜色是共享 program 的 uniform,所以每次绘制前写入 */
-      const makeMesh = (geometry, colorVec) => {
-        const m = new Mesh(gl, { geometry, program });
+      /** 建网格。颜色是共享 program 的 uniform,所以每次绘制前写入;
+       *  castShadow=false 的(棋盘/边框)只接收阴影不投影 */
+      const makeMesh = (geometry, colorVec, castShadow = true) => {
+        const m = new Mesh(gl, { geometry, program, castShadow });
         m.onBeforeRender(() => { program.uniforms.uColor.value = colorVec; });
         return m;
       };
@@ -243,17 +249,15 @@ register({
       const lightV = rgb(0xd2aa6e), darkV = rgb(0x7a5233);
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
-          const m = makeMesh(boxGeo(square, 0.15, square), (r + c) % 2 === 0 ? lightV : darkV);
+          const m = makeMesh(boxGeo(square, 0.15, square), (r + c) % 2 === 0 ? lightV : darkV, false);
           m.position.set((c - 3.5) * square, -0.075, (r - 3.5) * square);
           m.setParent(boardGroup);
-          shadow.add({ mesh: m, cast: false, receive: true });
         }
       }
       // 边框(顶面略低于格子顶面,否则会整片盖住棋盘格纹)
-      const frame = makeMesh(boxGeo(8.7, 0.22, 8.7), rgb(0x3a2a1a));
+      const frame = makeMesh(boxGeo(8.7, 0.22, 8.7), rgb(0x3a2a1a), false);
       frame.position.y = -0.16;
       frame.setParent(boardGroup);
-      shadow.add({ mesh: frame, cast: false, receive: true });
 
       /* ---- 棋子造型 ----
        * 除马之外,标准棋子都是回转体 → 用 lathe(旋转成型)生成,
@@ -378,7 +382,6 @@ register({
           m.position.set(x, y, z);
           m.rotation.y = ry;
           m.setParent(g);
-          shadow.add({ mesh: m, cast: true, receive: true });
           return m;
         };
         if (t === 'p') {
@@ -424,22 +427,22 @@ register({
     const wrap2d = el('div', { class: 'chess3d-view chess2d-wrap' }, board2d);
     function render2d() {
       board2d.innerHTML = '';
-      const target = new Map(legal.map(([r, c]) => [r * 8 + c, !!pos.b[r * 8 + c]]));
+      const target = new Map(legal.map(([r, c]) => [r * 8 + c, !!board[r * 8 + c]]));
       const flip = humanColor === BLACK;    // 执黑时棋盘转 180°,自己的子永远在近处
       for (let dr = 0; dr < 8; dr++) for (let dc = 0; dc < 8; dc++) {
         const r = flip ? 7 - dr : dr, c = flip ? 7 - dc : dc;
-        const s = r * 8 + c, p = pos.b[s];
+        const s = r * 8 + c, p = board[s];
         const to = target.get(s);                     // undefined=非落点,false= quiet,true=吃子
         const cell = el('button', {
           class: 'chess2d-cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark')
             + (sel && sel[0] === r && sel[1] === c ? ' sel' : '')
             + (to === undefined ? '' : to ? ' cap' : ' mv'),
-          'aria-label': NAME(s),
+          'aria-label': sqName(s),
           onClick: () => handleSquare(r, c),
         });
         if (p) cell.append(el('span', {
           class: 'chess2d-pc ' + ((p >> 3) === WHITE ? 'w' : 'b'),
-          html: piece2d(CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b'),
+          html: piece2d(TYPE_CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b'),
         }));
         else if (to === false) cell.append(el('span', { class: 'chess2d-dot' }));
         board2d.append(cell);
@@ -459,12 +462,11 @@ register({
       if (!gl) return;
       for (const p of pieceMeshes) p.mesh.setParent(null);
       pieceMeshes.length = 0;
-      shadow.castMeshes.length = 0;            // 旧棋子的投影登记作废
       for (let s = 0; s < 64; s++) {
-        const p = pos.b[s];
+        const p = board[s];
         if (!p) continue;
         const r = s >> 3, c = s & 7;
-        const mesh = pieceMesh(CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b');
+        const mesh = pieceMesh(TYPE_CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b');
         mesh.position.set((c - 3.5) * square, 0, (r - 3.5) * square);
         mesh.setParent(boardGroup);
         pieceMeshes.push({ mesh, r, c });
@@ -484,7 +486,7 @@ register({
           geoCache.set('hl', g);
           return g;
         })();
-        const m = new Mesh(gl, { geometry: geo, program: flatProgram });
+        const m = new Mesh(gl, { geometry: geo, program: flatProgram, castShadow: false });
         // uOpacity 也是共享 uniform(悬停片每帧写不同值),这里显式写回自己的档
         m.onBeforeRender(() => {
           flatProgram.uniforms.uColor.value = color;
@@ -495,7 +497,7 @@ register({
         highlightMeshes.push(m);
       };
       if (sel) mk(sel[0], sel[1], rgb(0x22d3ee));
-      for (const [r, c] of legal) mk(r, c, pos.b[r * 8 + c] ? rgb(0xef4444) : rgb(0x22c55e));
+      for (const [r, c] of legal) mk(r, c, board[r * 8 + c] ? rgb(0xef4444) : rgb(0x22c55e));
     }
 
     /* 相机轨道(自实现)—— 支持的输入:
@@ -648,23 +650,34 @@ register({
      * 遮挡,放宽的圆柱经常截走本想点后排 / 邻格的点击,表现为「点不中棋子、
      * 吃不到想吃的子」。纯格子拾取配合悬停高亮(指针在哪格哪格亮,见下)反而
      * 可预期:点棋子底座所在格就是它本身,悬停反馈让误点在落手前就看得见。 */
-    const ray = new Raycast();
-    /** 鼠标事件 → 棋盘平面射线;画布还没布局时返回 null */
+    /** 鼠标事件 → 棋盘平面射线;画布还没布局时返回 null。
+     * NDC→世界射线不走 ogl Raycast:那会连带拖进它整条求交管线。
+     * 透视投影矩阵 [0]=f/aspect、[5]=f(f=1/tan(fov/2)),所以相机空间里
+     * NDC(mx,my) 的视线方向就是 (mx/[0], my/[5], -1),用相机 worldMatrix
+     * 左上 3x3 转到世界系即可,起点是相机的世界坐标(第 13~15 个元素)。 */
     function eventRay(e) {
       if (!camera) return null;
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
       const mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const my = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      ray.castMouse(camera, [mx, my]);
-      return [ray.origin, ray.direction];
+      const p = camera.projectionMatrix, w = camera.worldMatrix;
+      const cx = mx / p[0], cy = my / p[5];
+      let dx = w[0] * cx + w[4] * cy - w[8];
+      let dy = w[1] * cx + w[5] * cy - w[9];
+      let dz = w[2] * cx + w[6] * cy - w[10];
+      const len = Math.hypot(dx, dy, dz);
+      return [
+        [w[12], w[13], w[14]],
+        [dx / len, dy / len, dz / len],
+      ];
     }
     /** 射线 → 格子 [r, c];视线与棋盘平行或交点在板外返回 null */
     function pickSquare(o, d) {
-      if (Math.abs(d.y) < 1e-6) return null;
-      const t = -o.y / d.y;
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = -o[1] / d[1];
       if (t <= 0) return null;                        // 交点在相机背后
-      const x = o.x + d.x * t, z = o.z + d.z * t;
+      const x = o[0] + d[0] * t, z = o[2] + d[2] * t;
       const c = Math.round(x + 3.5), r = Math.round(z + 3.5);
       if (!inB(r, c)) return null;
       // 落点必须真的落在该格内(格边长 1,中心在 (c-3.5, r-3.5))
@@ -694,8 +707,8 @@ register({
       if (canvas) canvas.style.cursor = 'grab';
     }
     function isActionable(r, c) {
-      const p = pos.b[r * 8 + c];
-      if (p && (p >> 3) === pos.stm) return true;     // 可选中的己方子
+      const p = board[r * 8 + c];
+      if (p && (p >> 3) === stm) return true;         // 可选中的己方子
       return !!(sel && legal.some(([lr, lc]) => lr === r && lc === c));
     }
     function updateHover(e) {
@@ -710,7 +723,7 @@ register({
           geoCache.set('hover', g);
           return g;
         })();
-        hoverMesh = new Mesh(gl, { geometry: geo, program: flatProgram });
+        hoverMesh = new Mesh(gl, { geometry: geo, program: flatProgram, castShadow: false });
         hoverMesh.onBeforeRender(() => {
           flatProgram.uniforms.uColor.value = hoverHot ? HOVER_HOT : HOVER_COLD;
           flatProgram.uniforms.uOpacity.value = hoverHot ? 0.5 : 0.22;
@@ -729,123 +742,159 @@ register({
     }
 
     function handleSquare(r, c) {
-      if (gameOver) return;
+      if (gameOver || statePending) return;
       if (searching) return;              // AI 想棋时锁盘,免得和在途结果打架
       if (sel) {
         const m = moveTo(r, c);
         if (m) { doMove(m); return; }
       }
-      const p = pos.b[r * 8 + c];
-      if (p && (p >> 3) === pos.stm) {
+      const p = board[r * 8 + c];
+      if (p && (p >> 3) === stm) {
         const from = r * 8 + c;
         sel = [r, c];
-        legal = []; legalRaw = [];
-        const buf = new Int32Array(256);
-        const n = genLegal(pos, buf);
-        for (let i = 0; i < n; i++) {
-          const m = buf[i];
-          if (mFrom(m) !== from) continue;
-          if (mPromo(m) && mPromo(m) !== QUEEN) continue;   // 落点去重:升变只留升后
-          legalRaw.push(m);
-          legal.push([mTo(m) >> 3, mTo(m) & 7]);
+        legal = [];
+        for (const wire of legalAll) {
+          if ((wire >> 6) !== from) continue;
+          legal.push([(wire & 63) >> 3, (wire & 63) & 7]);
         }
         showHighlights();
       } else if (sel) {
-        sel = null; legal = []; legalRaw = []; showHighlights();
+        sel = null; legal = []; showHighlights();
       }
     }
 
-    /** 在选中格的合法着法里取「落到 (r,c)」的那一手(升变优先升后) */
+    /** 在选中格的合法着法里取「落到 (r,c)」的那一手(全是线格式,升变即升后) */
     function moveTo(r, c) {
-      const to = r * 8 + c;
-      let first = 0;
-      for (const m of legalRaw) {
-        if (mTo(m) !== to) continue;
-        const pr = mPromo(m);
-        if (!pr || pr === QUEEN) return m;
-        if (!first) first = m;
-      }
-      return first;
+      const from = sel[0] * 8 + sel[1], to = r * 8 + c;
+      return legalAll.includes((from << 6) | to) ? (from << 6) | to : 0;
     }
 
-    /** 升变统一成升后:Worker 靠 (from<<6|to) 重演局面,还原出来的也只可能是升后 */
-    function normalize(m) {
-      const pr = mPromo(m);
-      if (!pr || pr === QUEEN) return m;
-      return mkMove(mFrom(m), mTo(m), mFlag(m) >= 10 ? 13 : 9, mCap(m));
-    }
-
-    /** 落子:先走引擎局面,再刷视图与状态;轮到 AI 就交给 Worker */
+    /** 落子:改走法序列,然后向 Worker 要一次 state —— 棋盘重画、将军/终局
+     *  判定、AI 调度全部由回包驱动(规则只有引擎一份,UI 不复判) */
     function doMove(m) {
-      m = normalize(m);
-      make(pos, m);
       moves.push(m);
-      sel = null; legal = []; legalRaw = []; showHighlights();
-      syncPieces();
-      checkEnd();
-      if (gameOver) return;
-      if (vsAI && pos.stm === aiColor()) thinkAI();
-      else updateStatus();
+      sel = null; legal = []; showHighlights();
+      fetchState();
     }
 
     function updateStatus() {
-      const inC = inCheck(pos);
-      const who = sideChar(pos.stm) === 'w' ? '白方' : '黑方';
-      statusL.textContent = who + '行棋' + (inC ? ' — 将军!⚠' : '');
+      const who = sideChar(stm) === 'w' ? '白方' : '黑方';
+      statusL.textContent = who + '行棋' + (checkNow ? ' — 将军!⚠' : '');
       setTitle('国际象棋');
     }
 
-    /* 终局判定:将死 / 逼和 / 子力不足 / 三次重复。状态行只说哪方胜,不标 (AI) */
-    function checkEnd() {
-      const buf = new Int32Array(256);
-      const inC = inCheck(pos);
-      const wcol = otherStm(pos.stm);        // 刚走子的一方获胜(若有)
+    /* 终局判定:将死 / 逼和 / 子力不足 / 三次重复 —— 全部来自 state 回包。 */
+    function checkEnd(d) {
+      const wcol = otherStm(stm);        // 刚走子的一方获胜(若有)
       const winner = sideName(wcol) + (vsAI && wcol === aiColor() ? '(AI)' : '');
       let title = null, msg = null, line = null;
-      if (!hasLegalMove(pos, buf)) {
-        if (inC) { title = '将死'; msg = `${winner}获胜!`; line = `将死 — ${sideName(wcol)}胜`; }
-        else { title = '逼和'; msg = '和棋(无子可动)'; line = '逼和 — 和棋'; }
-      } else if (insufficientMaterial(pos)) {
-        title = '和棋'; msg = '子力不足,无法将死'; line = '子力不足 — 和棋';
-      } else if (isThreefold(pos)) {
-        title = '和棋'; msg = '三次重复局面'; line = '三次重复 — 和棋';
-      }
-      if (!title) { updateStatus(); return; }
+      if (d.result === 'mate') { title = '将死'; msg = `${winner}获胜!`; line = `将死 — ${sideName(wcol)}胜`; }
+      else if (d.result === 'stale') { title = '逼和'; msg = '和棋(无子可动)'; line = '逼和 — 和棋'; }
+      else if (d.result === 'material') { title = '和棋'; msg = '子力不足,无法将死'; line = '子力不足 — 和棋'; }
+      else if (d.result === 'threefold') { title = '和棋'; msg = '三次重复局面'; line = '三次重复 — 和棋'; }
+      if (!title) { updateStatus(); return false; }
       gameOver = true;
       abortEngine();
       dialogs.info({ title, message: msg });
       statusL.textContent = line;
       setTitle('国际象棋');
+      return true;
     }
 
     /* ---------- AI:搜索跑在 Worker 里 ----------
-     * 传的是走法序列(不是棋盘):结构化克隆更省,且 UI 与 Worker 共用同一份
-     * rules.js,走法编码天然一致,不存在第二套解析路径。
+     * 传的是走法序列(线格式,不是棋盘):结构化克隆更省,编码只有一套。
+     * 难度只传 level 下标 —— 表是引擎自报的,参数解析在 Worker 侧。
      * 每条请求带自增 id,回来的 id 对不上就当过期结果丢掉;需要立刻刹车
      * (新对局 / 换难度 / 关窗)时直接 terminate 再新建 —— Worker 里的迭代加深
      * 是同步跑的,消息只会排队,terminate 才是真中断。 */
-    let worker = null, reqSeq = 0, pendingId = 0;
+    let worker = null, reqSeq = 0, pendingId = 0, stateSeq = 0, statePending = null;
+
+    /** AI 回包的 move 是引擎打包编码(from 在低 6 位),转回线格式 (from<<6|to) */
+    const packedToWire = (m) => ((m & 63) << 6) | ((m >> 6) & 63);
+
+    /** 开局问一次引擎的难度表:表到手才解开 levelsP 的闸门(thinkAI 会先等它) */
+    let levelsResolve = null;
+    function applyLevels(d) {
+      const table = Array.isArray(d.levels)
+        ? d.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
+      if (!table.length) {
+        levelSel.title = 'AI 难度不可用(引擎未上报)';
+        levelsResolve?.();
+        return;
+      }
+      levels = table;
+      const def = Number.isInteger(d.default) && d.default >= 0 && d.default < table.length ? d.default : 0;
+      levelIdx = def;
+      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+      levelSel.value = String(def);
+      levelSel.disabled = false;
+      levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
+      levelsResolve?.();
+    }
+    function fetchLevels(timeoutMs = 5000) {
+      if (!ensureWorker()) { levelsResolve?.(); return; }
+      worker.postMessage({ type: 'levels' });
+      setTimeout(() => levelsResolve?.(), timeoutMs);   // 超时也放行,别让 AI 永远等表
+    }
+
+    /** state 回包落地:棋盘重画、将军态、终局判定、AI 调度全由它驱动 */
+    function applyState(d) {
+      board = d.board;
+      stm = d.stm;
+      legalAll = d.legal;
+      checkNow = d.check;
+      if (d.over) {
+        gameOver = true;
+        syncPieces(); showHighlights();
+        checkEnd(d);
+        return;
+      }
+      gameOver = false;
+      syncPieces();
+      if (vsAI && stm === aiColor()) thinkAI();
+      else updateStatus();
+    }
+
+    /** 向 Worker 要当前局面的规则事实(state 契约) */
+    function fetchState() {
+      if (!worker && !ensureWorker()) return;
+      const id = ++stateSeq;
+      statePending = (d) => {
+        if (!d) return;                            // 被作废(terminate / 新对局)
+        applyState(d);
+      };
+      worker.postMessage({ type: 'state', id, moves: moves.slice() });
+    }
 
     function onEngineMsg(e) {
       const d = e.data;
-      if (!d || d.type === 'pong' || d.id !== pendingId) return;      // 过期 / 无关消息
-      if (d.error || !d.move) { pendingId = 0; searching = false; infoL.textContent = 'AI 无可用着法'; checkEnd(); return; }
+      if (!d) return;
+      if (d.type === 'levels') { applyLevels(d); return; }
+      if (d.type === 'state') {
+        if (!statePending || d.id !== stateSeq) return;   // 过期局面直接丢
+        const p = statePending; statePending = null;
+        p(d.error ? null : d);
+        return;
+      }
+      if (d.type === 'pong' || d.id !== pendingId) return;      // 过期 / 无关消息
+      if (d.error || !d.move) { pendingId = 0; searching = false; infoL.textContent = 'AI 无可用着法'; fetchState(); return; }
       if (d.book) {
         // 引擎查谱命中:短暂延时落子让节奏像"想了一下";seq 快照对照 reqSeq,
         // 期间新对局 / 悔棋 / 关窗会作废这次落子
         infoL.textContent = d.name ? `开局库 · ${d.name}` : '开局库';
         const seq = reqSeq;
-        setTimeout(() => { if (seq !== reqSeq) return; searching = false; doMove(d.move); }, 350 + Math.random() * 450);
+        setTimeout(() => { if (seq !== reqSeq) return; searching = false; doMove(packedToWire(d.move)); }, 350 + Math.random() * 450);
         return;
       }
       pendingId = 0; searching = false;
       infoL.textContent = `${level().name} · 深度 ${d.depth} · ${Math.round(d.nodes / 1000)}k 节点 · ${d.ms}ms · ${fmtScore(d.score)}`;
-      doMove(d.move);
+      doMove(packedToWire(d.move));
     }
 
     function killWorker() {
       if (worker) { worker.terminate(); worker = null; }
       pendingId = 0; searching = false;
+      if (statePending) { const p = statePending; statePending = null; p(null); }
     }
 
     /** 作废在途请求(局面已变 / 窗口关闭),免得过期着法落到新对局上 */
@@ -855,11 +904,32 @@ register({
       infoL.textContent = '';
     }
 
-    function thinkAI() {
+    function ensureWorker() {
+      if (worker) return worker;
+      try {
+        worker = new Worker(new URL('../../../vendor/AetherChess/src/worker.js', import.meta.url), { type: 'module' });
+        worker.onmessage = onEngineMsg;
+        worker.onerror = (ev) => {
+          console.warn('[chess3d] AI Worker 异常:', ev.message || ev);
+          killWorker();
+          statusL.textContent = 'AI 出错,已跳过本步';
+        };
+      } catch (err) {
+        console.error('[chess3d] 无法创建 AI Worker:', err);
+        worker = null; searching = false;
+        statusL.textContent = 'AI 不可用(Worker 创建失败)';
+        return null;
+      }
+      return worker;
+    }
+
+    async function thinkAI() {
       if (gameOver || searching) return;
-      const cfg = level();
+      /* 先等难度表:表没到手就发 think,worker 会按它自己的 default 跑,而 UI
+       * 显示的还是别的档 —— 「界面一个档、引擎另一个档」正是要避免的 */
+      if (levelsP) await levelsP;
       searching = true;
-      sel = null; legal = []; legalRaw = []; showHighlights();
+      sel = null; legal = []; showHighlights();
       statusL.textContent = `${sideName(aiColor())}思考中…`;
       setTitle('国际象棋');
       infoL.textContent = '';
@@ -868,50 +938,39 @@ register({
         statusL.textContent = '当前环境不支持 Web Worker,AI 不可用';
         return;
       }
-      if (!worker) {
-        try {
-          worker = new Worker(new URL('../../../vendor/AetherChess/src/worker.js', import.meta.url), { type: 'module' });
-          worker.onmessage = onEngineMsg;
-          worker.onerror = (ev) => {
-            console.warn('[chess3d] AI Worker 异常:', ev.message || ev);
-            killWorker();
-            statusL.textContent = 'AI 出错,已跳过本步';
-          };
-        } catch (err) {
-          console.error('[chess3d] 无法创建 AI Worker:', err);
-          worker = null; searching = false;
-          statusL.textContent = 'AI 不可用(Worker 创建失败)';
-          return;
-        }
-      }
+      if (!ensureWorker()) return;
       const id = ++reqSeq;
       pendingId = id;
-      // 压成 (from<<6|to) 再发:Worker 的 replayMoves 会按合法着法还原旗位
-      worker.postMessage({ id, moves: moves.map((m) => (mFrom(m) << 6) | mTo(m)), nodes: cfg.nodes, ms: cfg.ms, depth: cfg.depth });
+      worker.postMessage({ id, moves: moves.slice(), level: levelIdx });
     }
 
     function resetGame() {
       abortEngine();
-      pos = newPos();
+      board = new Array(64).fill(0);
+      stm = WHITE; legalAll = []; checkNow = false;
       moves = [];
-      sel = null; legal = []; legalRaw = [];
+      sel = null; legal = [];
       gameOver = false;
       syncPieces(); showHighlights(); updateStatus();
-      if (vsAI && pos.stm === aiColor()) thinkAI();   // 换边后玩家执黑时,AI 执白先行
+      fetchState();                                   // 初始局面事实照问引擎
+      if (vsAI && stm === aiColor()) thinkAI();       // 换边后玩家执黑时,AI 执白先行
     }
 
     /** 悔棋:撤到「轮到玩家重新决策」为止。人机撤两手(对方应手 + 自己那手),
-     * 人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。 */
+     * 人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。
+     * 序列改完问一次 state,棋盘 / 将军 / 终局全部以回包为准。 */
     function doUndo() {
       if (!moves.length) return;
       abortEngine();
       let n = 1;
-      if (vsAI && pos.stm === humanColor && moves.length >= 2) n = 2;
-      while (n-- > 0 && moves.length) unmake(pos, moves.pop());
+      if (vsAI && stm === humanColor && moves.length >= 2) n = 2;
+      while (n-- > 0 && moves.length) moves.pop();
       gameOver = false;
-      sel = null; legal = []; legalRaw = [];
+      sel = null; legal = [];
+      stm = moves.length % 2 === 0 ? WHITE : BLACK;   // 仅作过渡,回包会再校正
       syncPieces(); showHighlights();
-      if (vsAI && pos.stm === aiColor()) thinkAI();   // 撤完轮到 AI(如执黑方在起点悔棋)就让它重想
+      fetchState();
+      if (vsAI && stm === aiColor()) thinkAI();       // 撤完轮到 AI(如执黑方在起点悔棋)就让它重想
       else updateStatus();
     }
 
@@ -921,24 +980,26 @@ register({
       abortEngine();
       humanColor = otherStm(humanColor);
       faceSide(humanColor);
-      if (!gameOver && pos.stm === aiColor()) thinkAI();
+      if (!gameOver && stm === aiColor()) thinkAI();
       else if (!gameOver) updateStatus();
     }
 
     /* 工具栏 */
     const newBtn = el('button', { class: 'btn primary', onClick: resetGame }, icon('refresh', 13), '新对局');
-    /* 难度档:原生 <select>(计划 §3.6 的首选形态,比循环按钮少点几下、状态一眼可见)。
-     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效,用户会以为下拉没反应。 */
+    /* 难度档:原生 <select>。选项**等引擎报表之后再填**(applyLevels)—— 档位名
+     * 与参数都是引擎的实现细节,UI 硬编码只会造成「表改了但界面没跟着」;
+     * 空表时禁用,不给假下拉。换档时若 AI 正在想棋就掐掉重想 —— 否则要等
+     * 旧档位的结果回来才生效,用户会以为下拉没反应。 */
     const levelSel = el('select', {
       class: 'select chess3d-level',
-      title: 'AI 难度:初级 / 中级 / 高级 / 大师',
+      title: 'AI 难度(等引擎上报)',
       'aria-label': 'AI 难度',
+      disabled: true,
       onChange: (e) => {
         levelIdx = Number(e.currentTarget.value) || 0;
         if (searching) { abortEngine(); thinkAI(); }
       },
-    }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-    levelSel.value = String(levelIdx);            // 默认「高级」
+    });
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
@@ -946,7 +1007,7 @@ register({
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                  // 换边只对人机模式有意义
         if (!vsAI) { abortEngine(); updateStatus(); }              // 关掉 AI 要把在途搜索停掉
-        else if (!gameOver && pos.stm === aiColor()) thinkAI();    // 轮到 AI 一侧就立刻接手
+        else if (!gameOver && stm === aiColor()) thinkAI();        // 轮到 AI 一侧就立刻接手
         else updateStatus();
       },
     }, '人机');
@@ -972,6 +1033,10 @@ register({
         return b;
       }));
     /** 把界面各处同步到当前 mode:容器显隐 / 分段按钮态 */
+    // 测量状态必须先于 applyMode() 声明:wm 现在是「窗口先进 DOM 再 mount」,
+    // mount 里 fit() 能量到真实尺寸、真的会执行,不能再依赖「量到 0 就提前返回、
+    // 永远碰不到 vw」的隐式顺序(let 的 TDZ 会在这里炸)
+    let vw = 0, vh = 0, frames = 0;
     function applyMode() {
       const two = mode === '2d';
       for (const [id, b] of modeBtns) {
@@ -1005,10 +1070,17 @@ register({
         infoL)));
     applyMode();    // 初始视图:WebGL 可用为 3D,失败则落在 2D(错误提示留在 container 里备用)
 
+    /* 问引擎要难度表与初始局面:放在 DOM 挂好之后,探针一进来就能看到表。
+     * levelsP 是「表已到手」的闸门 —— AI 第一次想棋之前一定先等它(见 thinkAI),
+     * 免得「界面一个档、引擎另一个档」。故意不 await:mount 不该为一个消息往返卡住。 */
+    levelsP = new Promise((res) => { levelsResolve = res; });
+    fetchLevels();
+    fetchState();
+
     /* ---------- 尺寸自适应 + 渲染循环 ----------
      * WebGL 不会自动刷新画面,必须每帧手动 render()。
+     * (vw/vh/frames 的声明在 applyMode() 之前,原因见那边的注释)
      */
-    let vw = 0, vh = 0, frames = 0;
     function fit() {
       if (!renderer) return;
       const r = container.getBoundingClientRect();
@@ -1027,14 +1099,7 @@ register({
       fit();
       stepTween(ts);
       frames++;
-      if (shadow) {
-        // 关键:阴影贴图必须清成白色(深度 1.0 = 无遮挡)。
-        // 若用场景背景色清屏,unpack 后约 0.05,会被当成"离光很近",
-        // 不在深度图里的东西(如只接收阴影的棋盘格)会被整体误判进阴影。
-        gl.clearColor(1, 1, 1, 1);
-        shadow.render({ scene });
-        gl.clearColor(0.051, 0.082, 0.149, 1);   // 恢复场景背景 0x0d1526
-      }
+      if (shadow && mode !== '2d') shadow.render({ scene });   // 软阴影深度通道
       renderer.render({ scene, camera });
     }
     tick();
@@ -1051,13 +1116,13 @@ register({
     window.__chess = {
       click: (r, c) => handleSquare(r, c),
       turn: () => turnChar(),
-      board: () => viewOf(pos),
+      board: () => viewOf(board),
       sel: () => sel,
       legal: () => legal,
       /** 引擎侧信息:已走着法数 / 搜索是否在跑 / 当前难度 id */
       moves: () => moves.length,
       searching: () => searching,
-      level: () => LEVELS[levelIdx].id,
+      level: () => levels[levelIdx]?.id,
       mode: () => mode,
       /** 测试用:切 2D / 3D 视图 */
       setMode: (m) => setMode(m),
@@ -1067,7 +1132,7 @@ register({
       undo: () => doUndo(),
       /** 测试用:直接切换难度(0 初级 … 3 大师),与下拉保持同步 */
       setLevel: (i) => {
-        if (i >= 0 && i < LEVELS.length) {
+        if (i >= 0 && i < levels.length) {
           levelIdx = i;
           levelSel.value = String(i);
         }
@@ -1084,8 +1149,8 @@ register({
       home: () => ({ theta, phi, radius,俯角: Math.round((90 - phi * 180 / Math.PI) * 10) / 10 }),
       /** 供测试/排障用:确认渲染器是否活着、画面是否真的在出帧;附引擎侧状态 */
       stats: () => (renderer ? {
-        alive: true, frames, size: [vw, vh], lib: 'ogl',
-        ai: { level: LEVELS[levelIdx].id, vsAI, searching, plies: moves.length },
+        alive: true, frames, size: [vw, vh], lib: 'mini-gl',
+        ai: { level: levels[levelIdx]?.id, vsAI, searching, plies: moves.length },
       } : { alive: false }),
     };
 

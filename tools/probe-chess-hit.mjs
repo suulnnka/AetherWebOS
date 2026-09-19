@@ -73,7 +73,11 @@ out.selBeforeDrag = selBefore;
 out.selAfterDrag = await sel();
 
 // 6. 点己方王(e1 行7列4,王高约 1.35,取 y=1.1 高处)—— 高个子最容易点不中
-//    先等 AI 走完回到白方,否则 onClick 会因"AI 执黑时禁止操作"直接返回
+//    先归正视角:纯格子拾取按「射线打棋盘平面」定格,斜视角(上一步拖拽残留)
+//    下点高处的像素,平面落点会偏出底座所在格 —— 这是设计内行为(见 index.js
+//    拾取注释),不是缺陷;本步只验证「高个子在标准视角下能点中」。
+//    再等 AI 走完回到白方,否则 onClick 会因"AI 执黑时禁止操作"直接返回
+await c.evaluate(`window.__chess.flyHome()`); await sleep(1500);
 for (let i = 0; i < 40; i++) { if (await c.evaluate(`window.__chess.turn()`) === 'w') break; await sleep(200); }
 const kingPt = await screen(7, 4, 1.1);
 await mclick(kingPt[0], kingPt[1]);

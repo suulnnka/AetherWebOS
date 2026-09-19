@@ -1,15 +1,16 @@
 /* ============================================================
  * 应用:地图
- * 基于 Leaflet + OpenStreetMap 数据生态,免密钥、免审核:
+ * 底图渲染用自研内核 js/lib/minimap.js(原 Leaflet 的轻量替代),
+ * 对外接口与 Leaflet 同名,因此这里只换了 import 一行。
+ * 数据生态仍然免密钥、免审核:
  *  - 底图:OSM 标准(tile.openstreetmap.de,失败自动切 CARTO)/
  *    Esri World Imagery 卫星 / Esri 地形(均为境内可直连服务;
  *    OSM 官方瓦片与 Nominatim 在境内不可达)
  *  - 搜索/逆地理:Photon(komoot 的 OSM 搜索服务)
  *  - 点击取坐标(WGS-84)/ 距离测量 / 浏览器定位 / 快捷城市
  * ============================================================ */
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import { el } from '../../core/utils.js';
+import L from '../../lib/minimap.js';
+import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
@@ -180,23 +181,24 @@ register({
       side.innerHTML = '';
       side.append(el('div', { class: 'mp-side-head' }, `「${kw}」· ${list.length} 个结果`));
       for (const item of list) {
-        const title = item.name || String(item.display_name || '').split(',')[0];
+        const title = item.name || String(item.display || '').split(',')[0];
         side.append(el('button', { class: 'mp-poi', onClick: () => gotoResult(item) },
           el('b', {}, title),
-          el('span', {}, item.display_name || '')));
+          el('span', {}, item.display || '')));
       }
     }
 
     function gotoResult(item) {
-      const latlng = [Number(item.lat), Number(item.lon)];
+      // 注意字段名:Photon 结果里是 lng,写成 lon 会算出 NaN 把地图拖飞
+      const latlng = [Number(item.lat), Number(item.lng)];
       map.setView(latlng, item.type === 'city' || item.type === 'state' ? 12 : 16);
       if (searchMarker) map.removeLayer(searchMarker);
       searchMarker = L.circleMarker(latlng, {
         radius: 8, color: '#0ea5e9', weight: 3, fillColor: '#0ea5e9', fillOpacity: 0.35,
       }).addTo(map);
       searchMarker.bindPopup(
-        `<b>${escapeHtml(item.name || item.display_name.split(',')[0])}</b>` +
-        `<div class="mp-iw-sub">${escapeHtml(item.display_name || '')}</div>`, { maxWidth: 260 }).openPopup();
+        `<b>${escapeHtml(item.name || String(item.display || '').split(',')[0])}</b>` +
+        `<div class="mp-iw-sub">${escapeHtml(item.display || '')}</div>`, { maxWidth: 260 }).openPopup();
     }
 
     /* ---------------- 底图切换(标准图连续瓦片失败时自动切 CARTO) ---------------- */
@@ -307,12 +309,17 @@ register({
 
       renderSideDefault();
       setTitle('地图');
+      window.__map = map;            // 浏览器探针 tools/probe-map.mjs 用(与 reversi 的 __reversi 同约定)
       setTimeout(() => { if (map) map.invalidateSize(); }, 300);
     }
 
     return {
       onResize: () => { if (map) map.invalidateSize(); },
-      onClose: () => { closed = true; },
+      onClose: () => {
+        closed = true;
+        map?.remove();
+        if (window.__map === map) window.__map = null;   // 探针句柄别留已关闭的旧地图
+      },
     };
   },
 });

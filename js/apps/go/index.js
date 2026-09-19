@@ -3,12 +3,13 @@
  * 玩家执黑先行(可换边),AI 执白。规则:气尽提子、禁自杀、单劫禁回提、
  * 停一手合法,连续两手停即终局,按中国规则数子(黑贴 5.5 目)。
  *
- * AI 引擎在独立子项目 vendor/AetherGo(github.com/suulnnka/AetherGo):
- * 规则、数子、MCTS 都在 src/engine.js(单文件,零依赖),搜索跑在 src/worker.js 里。
- * 主线程只 import 规则部分(判合法、数子、记谱),搜索代码由 Vite 打进 worker chunk。
+ * AI 引擎在独立子项目 vendor/AetherGo(github.com/suulnnka/AetherGo)。
+ * 本文件**一行引擎代码都不 import**:难度表、棋盘事实(合法着法 / 劫点 /
+ * 提子数 / 双停终局 / 数子结果)全部经 Worker 消息问引擎(见该仓库
+ * src/worker.js 的 levels / state / think 契约)—— 规则只有引擎一份,UI 只是渲染层。
  *
- * 走法编码只有一套:交叉点 0..80,PASS=81。UI 把**走法序列**发给 Worker,
- * Worker 自己从初始局面重演 —— 结构化克隆最省,也不存在两份规则实现。
+ * UI 持有的唯一对局状态是**走法序列**(交叉点 0..80 或 PASS=81):落子 / 悔棋 /
+ * 新对局都只是改序列再向 Worker 要一次 state 回包,拿回棋盘与数子重画。
  *
  * 顶栏/底栏沿用中国象棋应用的做法:顶栏一组对局级按钮,
  * 底栏**只有一条** —— 左边行棋状态与提子数、右边等宽字体的引擎搜索信息。
@@ -19,11 +20,10 @@ import manifest from './manifest.js';
 import './go.css';
 import { dialogs } from '../../core/dialogs.js';
 import { icon } from '../../core/icons.js';
-import {
-  BLACK, WHITE, PASS, LEVELS, DEFAULT_LEVEL,
-  newBoard, genLegal, isLegal, make, unmake, capturedOf, koPoint,
-  scoreGame, moveToText,
-} from '../../../vendor/AetherGo/src/engine.js';
+
+/* 协议常量(worker 契约的一部分,不是引擎导出) */
+const BLACK = 0, WHITE = 1;
+const PASS = 81;
 
 /* 格距(px)。与 go.css 里的 --cs / --pad 必须一致 */
 const CS = 52, PAD = 26;
@@ -34,6 +34,8 @@ const COLS = 'ABCDEFGHJ';                     // 列标(跳过 I)
 const sideName = (s) => (s === BLACK ? '黑方' : '白方');
 const fmtRate = (w) => Math.round(w * 100) + '%';
 const fmtVisits = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v));
+/** 记谱(显示用):交叉点 → 列字母 + 行号;PASS → 停 */
+const moveText = (mv) => (mv === PASS ? '停' : COLS[mv % 9] + (9 - ((mv / 9) | 0)));
 
 /** 棋盘线(SVG):9×9 线 + 五个星位 + 边缘坐标(下 A~J、左 9~1) */
 function boardSvg() {
@@ -57,19 +59,22 @@ function boardSvg() {
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
-    let bd = newBoard();
-    let turn = BLACK;          // 黑先
-    let humanSide = BLACK;     // 玩家执子方(换边可改);不翻盘,坐标恒定
-    let hist = [];             // { mv, side, tok, text } —— 走法序列,也给 Worker 重演用
+    let board = new Array(81).fill(0);   // 引擎棋盘(state 回包驱动;0 空 / 1 黑 / 2 白)
+    let legal = new Set();               // 行棋方合法着法(state 回包;点击校验以它为准)
+    let ko = -1;                         // 劫点(回包;提示「先找劫材」用)
+    let captures = [0, 0];               // 黑提 / 白提(state 回包)
+    let turn = BLACK;                    // 黑先
+    let humanSide = BLACK;               // 玩家执子方(换边可改);不翻盘,坐标恒定
+    let hist = [];                       // 走法序列 —— UI 持有的唯一对局状态
     let lastMove = null;
     let gameOver = false;
     let vsAI = true;
-    let levelIdx = DEFAULT_LEVEL;
     let searching = false;
+    let levels = [];                     // 难度表由**引擎自报**({type:'levels'})
+    let levelIdx = 0;
 
     const aiSide = () => humanSide ^ 1;
-    const lastIsPass = () => hist.length > 0 && hist[hist.length - 1].mv === PASS;
-    const capsOf = (s) => hist.reduce((n, h) => n + (h.side === s ? capturedOf(h.tok) : 0), 0);
+    const lvName = () => levels[levelIdx]?.name ?? '—';
 
     const statusL = el('span', {}, '黑方行棋');
     const infoL = el('span', {
@@ -79,28 +84,28 @@ register({
     const layerEl = el('div', { class: 'go-layer' });
     const boardEl = el('div', { class: 'go-board' }, layerEl);
 
-    /* ---------- 渲染 ---------- */
+    /* ---------- 渲染(全部基于最近一次 state 回包的缓存) ---------- */
     function render() {
       layerEl.innerHTML = boardSvg();
       /* 虚影与可点光标只在「轮到玩家」时出现 */
       const humanTurn = !gameOver && (!vsAI || turn === humanSide);
       boardEl.classList.toggle('turn-b', humanTurn && turn === BLACK);
       boardEl.classList.toggle('turn-w', humanTurn && turn === WHITE);
-      const legal = humanTurn ? new Set(genLegal(bd, turn)) : null;
+      const hint = humanTurn ? legal : null;
       for (let p = 0; p < 81; p++) {
         const btn = el('button', {
-          class: 'go-pt' + (legal && !bd[p] && legal.has(p) ? ' can' : ''),
+          class: 'go-pt' + (hint && !board[p] && hint.has(p) ? ' can' : ''),
           style: { left: X(p % 9) + 'px', top: Y((p / 9) | 0) + 'px' },
           dataset: { i: String(p) },
           onClick: () => onPoint(p),
         });
-        if (bd[p]) {
+        if (board[p]) {
           const st = el('div', {
-            class: `go-stone ${bd[p] === 1 ? 'black' : 'white'}${p === lastMove ? ' last' : ''}`,
+            class: `go-stone ${board[p] === 1 ? 'black' : 'white'}${p === lastMove ? ' last' : ''}`,
           });
           if (p === lastMove) st.classList.add('drop');
           btn.append(st);
-        } else if (legal) {
+        } else if (hint) {
           btn.append(el('div', { class: 'go-ghost' }));
         }
         layerEl.append(btn);
@@ -110,18 +115,18 @@ register({
 
     function updateStatus() {
       if (gameOver) return;
-      const caps = `黑提 ${capsOf(BLACK)} · 白提 ${capsOf(WHITE)}`;
+      const caps = `黑提 ${captures[BLACK]} · 白提 ${captures[WHITE]}`;
       statusL.textContent = `${sideName(turn)}行棋 · ${caps}`;
-      const last = hist.length ? ` · 上一手 ${hist[hist.length - 1].text}` : '';
+      const last = hist.length ? ` · 上一手 ${moveText(hist[hist.length - 1])}` : '';
       setTitle(`围棋 — ${sideName(turn)}行棋${last}`);
     }
 
-    /* ---------- 落子 ---------- */
+    /* ---------- 落子:合法性以缓存 state 为准,走子 = 改序列 + 再问一次引擎 ---------- */
     function onPoint(p) {
-      if (gameOver || bd[p]) return;
+      if (gameOver || board[p] || statePending) return;
       if (vsAI && turn !== humanSide) return;    // AI 回合/思考中不响应点击
-      if (!isLegal(bd, turn, p)) {
-        bus.notify('围棋', p === koPoint()
+      if (!legal.has(p)) {
+        bus.notify('围棋', p === ko
           ? '打劫:需先在别处找一手劫材'
           : '禁着点:落子后无气(自杀)');
         return;
@@ -130,54 +135,51 @@ register({
     }
 
     function doMove(mv) {
-      const text = moveToText(bd, mv);
-      const tok = make(bd, mv, turn);
-      hist.push({ mv, side: turn, tok, text });
+      hist.push(mv);
       if (mv !== PASS) lastMove = mv;
       turn ^= 1;
-      afterMove();
+      fetchState();
     }
 
-    /** 落子后的公共收尾:判双停终局、轮到 AI 就调度 */
-    function afterMove() {
+    /** state 回包落地:重画 + 按回包事实终局(双停数子)/ 调度 AI */
+    function applyState(d) {
+      board = d.board;
+      legal = new Set(d.legal);
+      ko = d.ko;
+      captures = d.captures;
+      turn = d.stm;
+      if (d.over) { endGame(d.score); return; }
       render();
-      if (hist.length >= 2 && hist[hist.length - 1].mv === PASS && hist[hist.length - 2].mv === PASS) {
-        endGame();                               // 连续两手停 = 终局
-        return;
-      }
-      const capN = capturedOf(hist[hist.length - 1].tok);
-      if (capN > 0) bus.notify('围棋', `${sideName(turn ^ 1)}提 ${capN} 子`);
       if (!gameOver && vsAI && turn === aiSide()) setTimeout(thinkAI, 260);
       else updateStatus();
     }
 
-    function endGame() {
+    function endGame(score) {
       gameOver = true;
       abortEngine();
-      const s = scoreGame(bd);
-      const win = s.margin > 0 ? '黑胜' : s.margin < 0 ? '白胜' : '和棋';
-      const diff = Math.abs(s.margin).toFixed(1);
+      const win = score.margin > 0 ? '黑胜' : score.margin < 0 ? '白胜' : '和棋';
+      const diff = Math.abs(score.margin).toFixed(1);
       const line = `终局 · ${win === '和棋' ? win : win + ' ' + diff + ' 目'}`;
       dialogs.info({
         title: '终局(双停)',
-        message: `黑 ${s.black} · 白 ${s.white} —— ${win === '和棋' ? '和棋' : win + ' ' + diff + ' 目'}`,
+        message: `黑 ${score.black} · 白 ${score.white} —— ${win === '和棋' ? '和棋' : win + ' ' + diff + ' 目'}`,
       });
       statusL.textContent = line;
       setTitle('围棋 — 终局');
       bus.notify('围棋', line);
     }
 
-    /* ---------- AI:搜索跑在 Worker 里 ----------
-     * 传走法序列而不是棋盘(结构化克隆最省,且两边共用同一份规则)。
+    /* ---------- Worker:难度表 / 局面事实 / 搜索都经它 ----------
      * Worker 里搜索是同步的,新消息只会排队 —— 需要立刻刹车(新对局 / 换难度 /
      * 关窗)时直接 terminate 再造一个。 */
-    let worker = null, reqSeq = 0;
+    let worker = null, reqSeq = 0, stateSeq = 0, statePending = null;
 
     function killWorker() {
       if (worker) { worker.terminate(); worker = null; }
       searching = false;
+      if (statePending) { const p = statePending; statePending = null; p(null); }
       /* 请求号自增:terminate() 拦不住「已经进了主线程消息队列」的那条结果,
-       * 新对局/换档后它要是被当成当前结果应用,就会把旧局面的着法落到新局面上 */
+       * 新对局/换档后它要是被当成当前结果应用,就会把旧局面的着法落到新对局上 */
       reqSeq++;
     }
 
@@ -203,13 +205,63 @@ register({
       return worker;
     }
 
+    function onEngineMsg(e) {
+      const d = e.data;
+      if (!d) return;
+      if (d.type === 'levels') { applyLevels(d); return; }
+      if (d.type === 'state') {
+        if (!statePending || d.id !== stateSeq) return;   // 过期局面直接丢
+        const p = statePending; statePending = null;
+        p(d.error ? null : d);
+        return;
+      }
+      /* ---- 以下是搜索回包(progress / 最终结果)---- */
+      if (d.id !== reqSeq) return;               // 过期结果(换难度/新对局)直接丢
+      if (d.type === 'progress') { showInfo(d); return; }
+      searching = false;
+      if (d.error) { statusL.textContent = '引擎异常:' + d.error; return; }
+      if (!d.move && d.move !== 0) { fetchState(); return; }  // AI 无着法 = 判终局,事实以 state 为准
+      hist.push(d.move);
+      if (d.move !== PASS) lastMove = d.move;
+      turn ^= 1;
+      showInfo(d);
+      fetchState();
+    }
+
+    /** 向 Worker 要当前局面的规则事实(state 契约) */
+    function fetchState() {
+      if (!ensureWorker()) return;
+      const id = ++stateSeq;
+      statePending = (d) => {
+        if (!d) return;                           // 被作废(terminate / 新对局)
+        applyState(d);
+      };
+      worker.postMessage({ type: 'state', id, moves: hist.slice() });
+    }
+
+    /** 开局问一次引擎的难度表,拿到才填下拉 —— UI 与引擎的档位认知就此对齐 */
+    function applyLevels(d) {
+      const table = Array.isArray(d.levels)
+        ? d.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
+      if (!table.length) {
+        levelSel.title = 'AI 难度不可用(引擎未上报)';
+        return;
+      }
+      levels = table;
+      const def = Number.isInteger(d.default) && d.default >= 0 && d.default < table.length ? d.default : 0;
+      levelIdx = def;
+      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+      levelSel.value = String(def);
+      levelSel.disabled = false;
+      levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
+    }
+
     function thinkAI() {
       if (gameOver || searching) return;
-      const cfg = LEVELS[levelIdx];
       searching = true;
       render();
       statusL.textContent = `${sideName(aiSide())}思考中…`;
-      setTitle(`围棋 — AI 思考中(${cfg.name})`);
+      setTitle(`围棋 — AI 思考中(${lvName()})`);
       infoL.textContent = '';
       if (typeof Worker === 'undefined') {
         searching = false;
@@ -217,64 +269,45 @@ register({
         return;
       }
       if (!ensureWorker()) return;
-      worker.postMessage({
-        id: ++reqSeq,
-        moves: hist.map((h) => h.mv),
-        playouts: cfg.playouts, ms: cfg.ms, jitter: cfg.jitter,
-      });
-    }
-
-    function onEngineMsg(e) {
-      const d = e.data;
-      if (!d || d.id !== reqSeq) return;          // 过期结果(换难度/新对局)直接丢
-      if (d.type === 'progress') { showInfo(d); return; }
-      searching = false;
-      if (d.error) { statusL.textContent = '引擎异常:' + d.error; return; }
-      if (!d.move && d.move !== 0) { endGame(); return; }   // AI 无着法 = 引擎判终局
-      const text = moveToText(bd, d.move);
-      const tok = make(bd, d.move, aiSide());
-      hist.push({ mv: d.move, side: aiSide(), tok, text });
-      if (d.move !== PASS) lastMove = d.move;
-      turn = humanSide;
-      showInfo(d);
-      afterMove();
+      worker.postMessage({ id: ++reqSeq, moves: hist.slice(), level: levelIdx });
     }
 
     /** 底栏右侧的引擎信息行(等宽字体,与象棋应用同一套写法) */
     function showInfo(d) {
-      infoL.textContent = `${LEVELS[levelIdx].name} · ${fmtVisits(d.visits)} 演棋 · ${d.ms}ms · 胜率 ${fmtRate(d.winRate)}`;
+      infoL.textContent = `${lvName()} · ${fmtVisits(d.visits)} 演棋 · ${d.ms}ms · 胜率 ${fmtRate(d.winRate)}`;
     }
 
     /* ---------- 工具栏动作 ---------- */
     function resetGame() {
       abortEngine();
-      bd = newBoard(); turn = BLACK; hist = []; lastMove = null;
+      turn = BLACK; hist = []; lastMove = null;
       gameOver = false;
+      board = new Array(81).fill(0);
+      legal = new Set(); ko = -1; captures = [0, 0];
       render();
-      if (vsAI && turn === aiSide()) thinkAI();   // 玩家执白时 AI 执黑先行
+      fetchState();                                // 初始局面事实照问引擎
+      if (vsAI && turn === aiSide()) thinkAI();    // 玩家执白时 AI 执黑先行
       else updateStatus();
     }
 
     /** 悔棋:撤到「轮到玩家重新决策」为止。人机撤两手(AI 应手 + 自己那手),
-     *  人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。 */
+     *  人人撤一手;AI 想棋中悔棋先掐掉在途搜索;终局后悔棋可复活对局。
+     *  序列改完问一次 state,棋盘 / 提子 / 数子全部以回包为准。 */
     function doUndo() {
       if (!hist.length) return;
       abortEngine();
       let n = 1;
       if (vsAI && turn === humanSide && hist.length >= 2) n = 2;
-      while (n-- > 0 && hist.length) {
-        const h = hist.pop();
-        unmake(bd, h.mv, h.tok);
-        turn = h.side;
-      }
+      while (n-- > 0 && hist.length) hist.pop();
+      turn = hist.length % 2 === 0 ? BLACK : WHITE;
       gameOver = false;
       lastMove = null;
       for (let i = hist.length - 1; i >= 0; i--) {
-        if (hist[i].mv !== PASS) { lastMove = hist[i].mv; break; }
+        if (hist[i] !== PASS) { lastMove = hist[i]; break; }
       }
-      render();
-      if (vsAI && turn === aiSide()) thinkAI();   // 撤完轮到 AI(玩家执黑的起点)就让它重想
-      else updateStatus();
+      fetchState();
+      if (vsAI && turn === aiSide()) thinkAI();    // 撤完轮到 AI(玩家执黑的起点)就让它重想
+      else { render(); updateStatus(); }
     }
 
     /** 换边:与 AI 互换执子方。围棋不翻盘(坐标恒定),中途换边作废在途搜索并立即接手。 */
@@ -288,19 +321,18 @@ register({
 
     /* ---------- 界面 ---------- */
     const newBtn = el('button', { class: 'btn primary', onClick: resetGame }, icon('refresh', 13), '新对局');
-    /* 难度档:原生 <select>(比循环按钮少点几下、状态一眼可见)。
-     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效,
-     * 用户会以为下拉没反应。 */
+    /* 难度档:原生 <select>。选项**等引擎报表之后再填**;空表时禁用,不给假下拉。
+     * 换档时若 AI 正在想棋就掐掉重想 —— 否则要等旧档位的结果回来才生效。 */
     const levelSel = el('select', {
       class: 'select go-level',
-      title: 'AI 难度:初级 / 中级 / 高级 / 大师',
+      title: 'AI 难度(等引擎上报)',
       'aria-label': 'AI 难度',
+      disabled: true,
       onChange: (e) => {
         levelIdx = Number(e.currentTarget.value) || 0;
         if (searching) { abortEngine(); thinkAI(); }
       },
-    }, ...LEVELS.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-    levelSel.value = String(levelIdx);            // 默认「高级」
+    });
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对弈',
       onClick: (e) => {
@@ -338,21 +370,28 @@ register({
 
     /* 供探针/排障:确认窗口活着、引擎档位与对局进度 */
     window.__go = {
-      level: () => LEVELS[levelIdx].id,
+      level: () => levels[levelIdx]?.id,
       setLevel: (i) => {
-        if (i < 0 || i >= LEVELS.length) return;
+        if (i < 0 || i >= levels.length) return;
         levelSel.value = String(i);
         levelSel.dispatchEvent(new Event('change', { bubbles: true }));
       },
       stats: () => ({
-        level: LEVELS[levelIdx].id, vsAI, searching, plies: hist.length,
+        level: levels[levelIdx]?.id, vsAI, searching, plies: hist.length,
         turn, human: humanSide, gameOver,
       }),
-      lastText: () => (hist.length ? hist[hist.length - 1].text : ''),
+      lastText: () => (hist.length ? moveText(hist[hist.length - 1]) : ''),
     };
 
     render();
     updateStatus();
+    fetchLevels();
+    fetchState();                                  // 初始局面的合法点等事实也要问引擎
+
+    function fetchLevels() {
+      if (!ensureWorker()) return;
+      worker.postMessage({ type: 'levels' });      // 回包经 onEngineMsg → applyLevels
+    }
 
     return {
       onClose() {

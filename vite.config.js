@@ -24,14 +24,19 @@ export default defineConfig({
       output: {
         /* 共享内核独立成 chunk:应用只依赖内核,不依赖主包,
          * 改单个应用的代码不会级联改名其它应用(浏览器缓存友好)。
-         * 归入 core 的三类模块:
+         * 归入 core 的四类模块:
          * 1. js/core 下的内核模块
-         * 2. 各应用的清单文件(装配表(主包)与各应用都要用,放 core
+         * 2. js/lib 下的自研库(如地图内核 minimap):跟着 core 开机引入
+         *    是刻意的——体量小,换稳定 chunk 名对缓存友好
+         * 3. 各应用的清单文件(装配表(主包)与各应用都要用,放 core
          *    才能避免应用 chunk 反向引用主包)
-         * 3. system/session.js(被设置应用引用,同理归入稳定区)
-         * 注意:应用只能 import js/core 与自身目录,否则会重新引入级联 */
+         * 4. system/session.js(被设置应用引用,同理归入稳定区)
+         * 注意:应用只能 import js/core、js/lib、自身目录与 vendor 下各第一方
+         * 子模块的 src(AetherChess/Aether3DLib 等都跟随引用方 chunk,
+         * 不进 core——否则开机就要下载所有应用的引擎与渲染库),
+         * 否则会重新引入级联 */
         manualChunks(id) {
-          if (/[\\/]js[\\/]core[\\/]/.test(id)) return 'core';
+          if (/[\\/]js[\\/](core|lib)[\\/]/.test(id)) return 'core';
           if (/[\\/]apps[\\/]\w+[\\/]manifest\.js/.test(id)) return 'core';
           if (/[\\/]system[\\/]session\.js/.test(id)) return 'core';
           if (id.includes('preload-helper')) return 'core';   // Vite 动态 import 辅助函数

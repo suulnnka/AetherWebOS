@@ -83,10 +83,11 @@ const play = await c.evaluate(`(async () => {
     window.__chess.click(fr, fc);
     await new Promise(r => setTimeout(r, 120));
     window.__chess.click(tr, tc);
-    // 等 AI 想完
+    // 等本回合彻底结束:人机各一手(plies +2)、搜索收尾、轮回白方。
+    // 人走子 → state 回包 → thinkAI 有异步间隙,只等 !searching 会在间隙里误判。
     const t0 = Date.now();
     while (Date.now() - t0 < 8000) {
-      if (!window.__chess.searching()) break;
+      if (window.__chess.moves() % 2 === 0 && !window.__chess.searching() && window.__chess.turn() === 'w') break;
       await new Promise(r => setTimeout(r, 80));
     }
     trace.push({ turn: window.__chess.turn(), plies: window.__chess.moves(), info: info.textContent });
@@ -95,12 +96,22 @@ const play = await c.evaluate(`(async () => {
 })()`);
 check('连续 3 步白方走子后都回到白方行棋', play.trace.every((r) => r.turn === 'w'), JSON.stringify(play.trace.map((r) => r.turn + '/' + r.plies)));
 check('每步后 plies 递增 2', play.trace.map((r) => r.plies).join(',') === '2,4,6', play.trace.map((r) => r.plies).join(','));
-check('状态栏有搜索信息(深度/节点/评分)', play.trace.every((r) => /深度 \d+ · \d+k 节点 · \d+ms · [+-]/.test(r.info)), play.trace[0].info);
+/* 状态栏两种合法显示:引擎搜索(深度/节点/评分)或开局库命中(开局名,
+ * 见 index.js 的 infoL 两处赋值;库几乎必然覆盖前几步,只认搜索会稳定误报) */
+check('状态栏有 AI 信息(搜索数据或开局库命中)',
+  play.trace.every((r) => /深度 \d+ · \d+k 节点 · \d+ms · [+-]/.test(r.info) || /开局库/.test(r.info)),
+  play.trace[0].info);
 
 /* ---------- 4. 大师档思考时画面仍在出帧 ----------
  * 只统计「searching 为 true 期间的 rAF 回调数」:搜索若跑在主线程,这个数会≈0。 */
 const frames = await c.evaluate(`(async () => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  /* 先等上一节的对局静默(plies 偶数、白方回合、无搜索),否则点击会被锁盘丢掉 */
+  let q0 = Date.now();
+  while (Date.now() - q0 < 8000) {
+    if (window.__chess.moves() % 2 === 0 && !window.__chess.searching() && window.__chess.turn() === 'w') break;
+    await sleep(80);
+  }
   window.__chess.setLevel(3);                      // 大师:节点多,思考久
   const p0 = window.__chess.moves();
   let during = 0;
@@ -110,9 +121,13 @@ const frames = await c.evaluate(`(async () => {
   await sleep(120);
   window.__chess.click(5,2);                       // c3
   const moved = window.__chess.moves() > p0;
-  const t0 = Date.now();
+  /* 人走子 → state 回包 → thinkAI 有异步间隙:先等搜索真起来,再等它结束 */
+  let t0 = Date.now();
+  while (!window.__chess.searching() && Date.now() - t0 < 5000) await sleep(50);
   let sawSearching = false;
+  t0 = Date.now();
   while (window.__chess.searching() && Date.now() - t0 < 20000) { sawSearching = true; await sleep(50); }
+  while (window.__chess.turn() !== 'w' && Date.now() - t0 < 5000) await sleep(50);
   return { moved, sawSearching, during, ms: Date.now() - t0, turn: window.__chess.turn(), stats: window.__chess.stats() };
 })()`);
 check('大师档:走子触发了 AI 搜索且搜索期间主线程仍在出帧',
@@ -134,10 +149,18 @@ const drag = await c.evaluate(`(async () => {
   }));
 
   window.__chess.setLevel(3);
+  /* 先等对局静默,再走 a2-a3;人走子 → state → thinkAI 有异步间隙,轮询等搜索起来 */
+  let qs = Date.now();
+  while (Date.now() - qs < 8000) {
+    if (window.__chess.moves() % 2 === 0 && !window.__chess.searching() && window.__chess.turn() === 'w') break;
+    await sleep(80);
+  }
   const before = window.__chess.home();
   window.__chess.click(6,0);                       // a2
   await sleep(120);
   window.__chess.click(5,0);                       // a3,触发大师档搜索
+  let sw = Date.now();
+  while (!window.__chess.searching() && Date.now() - sw < 5000) await sleep(50);
   if (!window.__chess.searching()) return { noSearch: true };
 
   // 在搜索进行中拖拽(横向→改 theta)+ 滚轮(→改 radius)

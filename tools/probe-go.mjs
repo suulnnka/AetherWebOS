@@ -75,15 +75,18 @@ check('难度下拉带「难度」文字标签', shape.levelLabel === '难度', 
 check('底栏左边是行棋状态', shape.status === '黑方行棋 · 黑提 0 · 白提 0', shape.status);
 
 /* ---------- 3. 落子与 AI 应答 ---------- */
-const moved = await c.evaluate(`(() => {
-  const w = document.querySelector('${W}');
-  w.querySelector('.go-pt[data-i="40"]').click();    // 天元 (4,4)
-  return {
-    stone: !!w.querySelector('.go-pt[data-i="40"] .go-stone.black'),
+await c.evaluate(`document.querySelector('${W} .go-pt[data-i="40"]').click()`);   // 天元 (4,4)
+/* 落子经 Worker 的 state 往回才落地(~ms 级),轮询等回包重画,别立即断言 */
+let moved = null;
+for (let i = 0; i < 40; i++) {
+  moved = await c.evaluate(`(() => ({
+    stone: !!document.querySelector('${W} .go-pt[data-i="40"] .go-stone.black'),
     stats: window.__go.stats(),
     last: window.__go.lastText(),
-  };
-})()`);
+  }))()`);
+  if (moved.stone) break;
+  await sleep(50);
+}
 check('点天元真的落子了(黑)', moved.stone, JSON.stringify(moved));
 check('记谱正确(E5)', moved.last === 'E5', moved.last);
 check('轮到 AI:搜索已发起', moved.stats.plies === 1 && moved.stats.turn === 1, JSON.stringify(moved.stats));
