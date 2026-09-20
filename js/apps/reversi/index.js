@@ -130,14 +130,16 @@ register({
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
           const piece = board[r][c];
-          const isHint = !gameOver && piece === null && legalNow.has(r * 8 + c);
+          /* 提示只属于行棋方:人机模式轮到 AI 时,legalNow 缓存的是对方的合法
+           * 着法 —— 高亮类和点都不给(曾经的「对方行棋也亮提示格」观感就是它)。 */
+          const isHint = !gameOver && piece === null && (!vsAI || turn === humanColor) && legalNow.has(r * 8 + c);
           const cell = el('button', {
             class: 'rv-cell' + (isHint ? ' hint' : '') + (lastMove && lastMove[0] === r && lastMove[1] === c ? ' last' : ''),
             dataset: { r: String(r), c: String(c) },
             onClick: () => humanMove(r, c),
           });
           if (piece) cell.append(el('div', { class: `rv-piece ${piece}${lastMove && lastMove[0] === r && lastMove[1] === c ? ' just' : ''}` }));
-          else if (isHint && (!vsAI || turn === humanColor)) cell.append(el('div', { class: 'rv-hint-dot' }));
+          else if (isHint) cell.append(el('div', { class: 'rv-hint-dot' }));
           boardEl.append(cell);
         }
       }
@@ -380,10 +382,7 @@ register({
       try {
         const res = await requestThink();
         if (!res || gen !== searchGen || gameOver || !root.isConnected) return;
-        if (res.book) {   // 书着秒回:垫点延迟让节奏像「想了一下」(同 chess),期间作废靠 gen 失配
-          await new Promise((ok) => setTimeout(ok, 350 + Math.random() * 450));
-          if (gen !== searchGen || gameOver || !root.isConnected) return;
-        }
+        // 书着秒回,不再垫延迟(曾经的 350~800ms「像想了一下」被判定为 bug)
         /* AI 的手也按新鲜局面裁决 —— 悔棋/新对局的 race 可能留下旧缓存 */
         const st = await fetchState(color);
         if (!st || gen !== searchGen || gameOver || !root.isConnected) return;
@@ -428,6 +427,7 @@ register({
       const last = moves[moves.length - 1];
       lastMove = last ? [last.r, last.c] : null;
       gameOver = false;
+      legalNow = new Map();   // 旧局面的提示缓存作废:renderBoard 读它画点,不清就残留到新状态回包(killWorker 后冷启动,窗口还不短)
       infoL.textContent = '';
       renderBoard();
       if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 撤完轮到 AI(如执白方在起点悔棋)就让它重想
@@ -449,6 +449,7 @@ register({
       killWorker(); // 打断进行中的搜索
       gameSeed = 1 + Math.floor(Math.random() * 2 ** 47); // 换一局换一套开局变化
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
+      legalNow = new Map();   // 清旧提示缓存:refresh 首帧就渲染,别拿上一局的点画新局
       infoL.textContent = '';
       refresh();
       if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 玩家执白时 AI 执黑先行
