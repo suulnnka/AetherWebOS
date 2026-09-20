@@ -123,17 +123,22 @@ for (let i = 0; i < 80; i++) {
 }
 check('AI 用 wasm 应答,回到黑方回合', ai.stats.plies === 2 && ai.stats.turn === 'b', JSON.stringify(ai.stats));
 check('AI 落子后盘上子数涨到 6 以上', ai.pieces >= 6, `${ai.pieces} 子`);
-check('底栏右侧有引擎信息(开局书/档位/深度/节点/耗时/评估)',
-  /(开局书|深度 \d+\/\d+|残局完全求解|残局求解未跑完|贪心选点|唯一合法步)/.test(ai.info)
-    && (ai.info.startsWith('开局书') || /节点/.test(ai.info)), ai.info);
+check('底栏右侧有引擎信息(两种文案:开局库行 / 评估行,无着法描述)',
+  (/^开局库( · .+)? · [黑白]方 [+-]/.test(ai.info) || /评估 [黑白]方 [+-]/.test(ai.info))
+    && (ai.info.startsWith('开局库') || /节点/.test(ai.info))
+    && !/^(最佳|唯一合法步) /.test(ai.info), ai.info);
 check('底栏左边回到「黑方行棋」', ai.status === '黑方行棋', ai.status);
 const sum = ai.counts.black + ai.counts.white;
 check('黑白计数 UI 与盘上子数一致', sum === ai.pieces, `${ai.counts.black}:${ai.counts.white} vs ${ai.pieces}`);
 console.log(`      AI 这一手 · ${ai.info}`);
 /* 默认档(宗师 d12 ≥ 书的 4 层门槛)且 ≤14 子 ⇒ 必走书,书着确定(rng 未播种);
- * 这条把「开局书来源显示」整个链路(zig book 标志 → worker book 字段 → UI 行)钉住 */
-check('开局书行格式(估值,无节点段)',
-  /^开局书 · [黑白]方 [+-]/.test(ai.info), ai.info);
+ * 这条把「开局库来源显示」整个链路(zig book 标志 → worker book/name 字段 →
+ * UI 行)钉住。首手后的 5 子局面必带名(Diagonal/Parallel/Perpendicular 三条
+ * 命名开局换位汇成),名字段透传到行里才算数 */
+check('开局库行格式(名字 · 估值,无节点段)',
+  /^开局库( · [^·]+)? · [黑白]方 [+-]/.test(ai.info), ai.info);
+check('开局库行带开局名(引擎名字池 → 回包 name → UI)',
+  /^开局库 · .+ · [黑白]方 [+-]/.test(ai.info), ai.info);
 
 /* ---------- 4. 难度下拉(表由引擎自报,UI 只负责渲染) ---------- */
 const lv = await c.evaluate(`(() => {

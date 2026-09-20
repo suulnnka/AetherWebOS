@@ -11,8 +11,9 @@
  * UI 只把回包的翻子写到自己的 8×8 数组上(纯数据变换)。
  * 主分支的 src/engine.js(纯 JS 版)仍在仓库里当参照实现给探针用,对弈路径不再用它。
  * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess);
- * 开局书命中的手显示「开局书 · 估值」(回包 book 字段,样式同 chess 的
- * 「开局库 · 族名」—— 黑白棋的书无族名,有名字时会替估值显示名字)。
+ * 开局库命中的手显示「开局库 · 名字 · 估值」(回包 book/name 字段,样式同
+ * chess 的「开局库 · 族名」—— 名字是引擎 blob 名字池的 ASCII 串,同局面多名
+ * 「 / 」拼接;无名局面退回只显估值)。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -20,6 +21,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './reversi.css';
 import { dialogs } from '../../core/dialogs.js';
+import { pickOthelloMove } from '../../../vendor/AetherOthello/src/policy.js';
 
 /* 难度表、局面规则**都不 import**:表是引擎的实现细节({type:'levels'} 自报),
  * 合法性 / 翻子 / 数子 / 终局 / 胜者是规则({type:'state'} 查询)——
@@ -36,11 +38,15 @@ function initBoard() {
   return b;
 }
 
-const moveName = (p) => 'abcdefgh'[p & 7] + ((p >> 3) + 1);
 const fmtN = (n) => (n >= 10000 ? (n / 10000).toFixed(1) + '万' : String(n));
 const fmtT = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms');
 const fmtNps = (res) => (res.ms > 0 ? ` · ${fmtN(Math.round(res.nodes / res.ms * 1000))}节点/s` : '');
 const sideName = (p) => (p === 'b' ? '黑方' : '白方');
+
+/** AI 应手节奏下限(ms):不是「先垫再想」,而是「立即开想、落子前补足差额」——
+ *  搜索慢(深算)时全额占用、一点不叠垫;秒回(开局库/残局秒解)时补足下限再落,
+ *  AI 的手不与玩家的手同一拍闪现,玩家也不白等。 */
+const AI_PACE_MS = 260;
 
 /** 棋盘 + 行棋方 → 位板的两半(lo = 第 1–4 行,hi = 第 5–8 行)。
  *  wasm 的 i64 在 JS 侧是 BigInt,边界上容易写错,所以 ABI 统一拆两个 u32;
@@ -69,11 +75,6 @@ register({
     let lastMove = null;
     let searchGen = 0;       // 搜索代数:作废在途请求用的请求号(见 killWorker)
     let thinking = false;
-    /* 每局种子:开局书容差选着(值好多占)+ 根同分随机化都吃它(0 = 引擎完全
-     * 确定,别用)。2^47 < 2^53,JS number 精确;新对局重掷 —— 同一局内悔棋/
-     * 换边不换种子,AI 重想同局面仍可复现(种子随 think 消息传 worker,不落
-     * 引擎状态,worker 缺省/无 seed 字段时引擎自动回到确定模式)。 */
-    let gameSeed = 1 + Math.floor(Math.random() * 2 ** 47);
     /* 局面缓存(全部来自最近一次 state 回包,按当前行棋方查询):
      * legalNow = { cell → flips[[r,c],...] };countsCache 双方子数;empties 空格数 */
     let legalNow = new Map();
@@ -94,53 +95,68 @@ register({
       class: 'mono', style: { fontSize: '11px', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
     }, '');
     const boardEl = el('div', { class: 'rv-board' });
+    /* 64 个格子按钮只建一次,renderBoard 就地更新(keyed 渲染):全量重建会让
+     * 所有棋子重新入场(每个子都重播一遍落下/翻面动画,看着就是「整盘都动了」);
+     * 就地更新后,只有新落的子落下、被翻的子翻面,其余一概不动。 */
+    const cells = Array.from({ length: 8 }, (_, r) =>
+      Array.from({ length: 8 }, (_, c) => el('button', {
+        class: 'rv-cell', dataset: { r: String(r), c: String(c) }, onClick: () => humanMove(r, c),
+      })));
+    for (const row of cells) for (const cell of row) boardEl.append(cell);
     const blackCount = el('span', { class: 'rv-count black' }, '2');
     const whiteCount = el('span', { class: 'rv-count white' }, '2');
 
     /** 把搜索结果写入状态栏右侧(样式同 chess 的 infoL:mono 11px)。
-     *  wasm 通道是一锤子买卖:没有逐层/预热/待定那些中间态,只有最后一轮的结果 ——
-     *  所以这里看不到「深度一层层涨」,但每个数字都是真的跑完了的。 */
+     *  只有两种文案(2026-09-20 用户决策):开局库行 / 评估行。评估行 =
+     *  深度 · 评估 · 节点/耗时,不带任何着法描述(最佳/唯一合法步都不要,
+     *  2026-09-20 用户决策)—— 唯一着法引擎也会真搜一遍,显示与常规手无异。 */
     function showSearch(res) {
       const me = sideName(aiColor()), opp = sideName(other(aiColor()));
       const sc = (s) => (s >= 0 ? `${me} +${s.toFixed(1)}` : `${opp} +${(-s).toFixed(1)}`);
-      if (res.only) { infoL.textContent = `唯一合法步 ${moveName(res.move)},无需搜索`; return; }
-      /* 开局书命中:没搜索(depth=0、nodes=0),来源只能信回包的 book 字段 ——
-       * 书着与贪心在 depth 上同形,显示上别混(参照 chess 的开局库行)。书有
-       * 名字显示名字(回包多带的字段经 ...d 自动透传),黑白棋的书无族名,显示估值 */
-      if (res.book) { infoL.textContent = res.name ? `开局书 · ${res.name}` : `开局书 · ${sc(res.score)}`; return; }
-      const tail = ` · 节点 ${fmtN(res.nodes)} · ${fmtT(res.ms)}${fmtNps(res)}`;
-      if (res.greedy) {
-        infoL.textContent = `初级 贪心选点 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
-        return;
-      }
-      if (res.exact) {
-        const d = Math.round(res.score);
-        const verdict = d > 0 ? `${me}胜 ${d} 子` : d < 0 ? `${opp}胜 ${-d} 子` : '和棋';
-        infoL.textContent = `残局完全求解(${res.empties} 空):${verdict} · 最佳 ${moveName(res.move)}${tail}`;
-        return;
-      }
-      /* 进了完全求解的空格区间却没跑完(节点预算截断):明说,别把前置中层
-       * 迭代的启发式估值当成终局判决报出去 —— 那会显示一场凭空的胜负。 */
-      const head = res.partial ? `残局求解未跑完(${res.empties} 空)` : `深度 ${res.depth}/${res.depthMax}`;
-      infoL.textContent = `${head} · 最佳 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
+      /* 开局库命中:没搜索(depth=0、nodes=0),来源只能信回包的 book 字段。
+       * 回包带 name(blob 名字池的 ASCII 串,同局面多名「 / 」拼接)就带上名字 */
+      if (res.book) { infoL.textContent = res.name ? `开局库 · ${res.name} · ${sc(res.score)}` : `开局库 · ${sc(res.score)}`; return; }
+      /* 深度只报一个数(2026-09-20 用户决策):实搜到的最大深度。残局完全求解
+       * 解到盘尾会超过标称(如 16 > 12),预算截断则不到标称 —— 都如实报。
+       * 贪心档(depthMax=0)是「落子后静态评估」,等于看一步,按深度 1 报。 */
+      const dep = `深度 ${res.depthMax === 0 ? 1 : res.depth}`;
+      infoL.textContent = `${dep} · 评估 ${sc(res.score)} · 节点 ${fmtN(res.nodes)} · ${fmtT(res.ms)}${fmtNps(res)}`;
     }
 
     function renderBoard() {
-      boardEl.innerHTML = '';
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
+          const cell = cells[r][c];
           const piece = board[r][c];
+          const isLast = !!lastMove && lastMove[0] === r && lastMove[1] === c;
           /* 提示只属于行棋方:人机模式轮到 AI 时,legalNow 缓存的是对方的合法
            * 着法 —— 高亮类和点都不给(曾经的「对方行棋也亮提示格」观感就是它)。 */
           const isHint = !gameOver && piece === null && (!vsAI || turn === humanColor) && legalNow.has(r * 8 + c);
-          const cell = el('button', {
-            class: 'rv-cell' + (isHint ? ' hint' : '') + (lastMove && lastMove[0] === r && lastMove[1] === c ? ' last' : ''),
-            dataset: { r: String(r), c: String(c) },
-            onClick: () => humanMove(r, c),
-          });
-          if (piece) cell.append(el('div', { class: `rv-piece ${piece}${lastMove && lastMove[0] === r && lastMove[1] === c ? ' just' : ''}` }));
-          else if (isHint) cell.append(el('div', { class: 'rv-hint-dot' }));
-          boardEl.append(cell);
+          cell.classList.toggle('hint', isHint);
+          cell.classList.toggle('last', isLast);
+          /* 格子内容要么棋子外壳要么提示点,互斥;同色棋子保留原元素(动画不重播) */
+          const child = cell.firstElementChild;
+          const box = child?.classList.contains('rv-box') ? child : null;
+          const dot = child?.classList.contains('rv-hint-dot') ? child : null;
+          if (piece) {
+            dot?.remove();
+            if (box) {
+              /* 已有子:换色 = 原地翻面 —— 外壳保留,内芯类切换驱动 CSS 过渡
+               * (正反两面异色,转 180° 换面);同色只动 just 标记,别的什么都不做 */
+              const p = box.firstElementChild;
+              if (p.classList.contains(piece)) p.classList.toggle('just', isLast);
+              else p.className = `rv-piece ${piece}${isLast ? ' just' : ''}`;
+            } else {
+              /* 新落的子:外壳播 rvDrop 直接落下,内芯两面直接就位为该色,不播翻面 */
+              cell.append(el('div', { class: 'rv-box' },
+                el('div', { class: `rv-piece ${piece}${isLast ? ' just' : ''}` },
+                  el('div', { class: 'rv-pf b' }), el('div', { class: 'rv-pf w' }))));
+            }
+          } else {
+            box?.remove();
+            if (!isHint) dot?.remove();
+            else if (!dot) cell.append(el('div', { class: 'rv-hint-dot' }));
+          }
         }
       }
       blackCount.textContent = String(countsCache.black);
@@ -189,7 +205,7 @@ register({
       if (st.over) { finish(st); renderBoard(); return; }
       renderBoard();
       updateStatus();
-      if (vsAI && turn === aiColor() && !gameOver) setTimeout(aiMove, 260);
+      if (vsAI && turn === aiColor() && !gameOver) aiMove(AI_PACE_MS);
     }
 
     /* ---------- 回合推进:向 Worker 要当前方的局面事实 ----------
@@ -366,23 +382,39 @@ register({
         worker.postMessage({
           type: 'think', id: pending.id,
           own: halfs(board, turn), opp: halfs(board, other(turn)),
-          level: levelIdx, empties, seed: gameSeed,
+          level: levelIdx, empties,
         });
         infoL.textContent = `搜索中…(${lvName()})`;
+      }).then((d) => {
+        /* 选着策略在 UI 层:书 ±2 加权 / 终局严格同值 / 中盘真值 ±1
+         * (src/policy.js,与独立对弈页共用);清单不可用时沿用引擎最优。 */
+        if (d) {
+          const picked = pickOthelloMove(d.root, d.book);
+          if (picked >= 0) d.move = picked;
+        }
+        return d;
       });
     }
 
-    async function aiMove() {
+    async function aiMove(paceMs = 0) {
       const color = aiColor();
       if (gameOver || !vsAI || turn !== color) return;
       if (!root.isConnected) { killWorker(); return; }
-      if (thinking) { setTimeout(aiMove, 260); return; } // 上一轮搜索尚未结束,稍后重试
+      if (thinking) { setTimeout(aiMove, 260); return; } // 上一轮搜索尚未结束,稍后重试(重试无节奏下限)
       thinking = true;
       const gen = searchGen;
+      const t0 = performance.now();   // 节奏下限从此起算:含等表与搜索耗时,不含事后裁决
       try {
         const res = await requestThink();
         if (!res || gen !== searchGen || gameOver || !root.isConnected) return;
-        // 书着秒回,不再垫延迟(曾经的 350~800ms「像想了一下」被判定为 bug)
+        /* 节奏下限补足:想得慢(深算超过下限)就全额占用、不再叠垫;秒回(开局库/
+         * 残局秒解)就补足差额再落 —— 取代旧日的「先垫 260 再想」与 350~800ms
+         * 书着垫延迟,观感下限不变,墙钟时间只减不增 */
+        const pace = paceMs - (performance.now() - t0);
+        if (pace > 0) {
+          await new Promise((wake) => setTimeout(wake, pace));
+          if (gen !== searchGen || gameOver || !root.isConnected) return; // 补等途中换局/悔棋 → 作废
+        }
         /* AI 的手也按新鲜局面裁决 —— 悔棋/新对局的 race 可能留下旧缓存 */
         const st = await fetchState(color);
         if (!st || gen !== searchGen || gameOver || !root.isConnected) return;
@@ -430,7 +462,7 @@ register({
       legalNow = new Map();   // 旧局面的提示缓存作废:renderBoard 读它画点,不清就残留到新状态回包(killWorker 后冷启动,窗口还不短)
       infoL.textContent = '';
       renderBoard();
-      if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 撤完轮到 AI(如执白方在起点悔棋)就让它重想
+      if (vsAI && turn === aiColor()) aiMove(AI_PACE_MS);   // 撤完轮到 AI(如执白方在起点悔棋)就让它重想
       else refresh();
     }
 
@@ -440,19 +472,18 @@ register({
       killWorker();
       humanColor = other(humanColor);
       renderBoard();                     // 提示点跟「轮到的是不是人」走,执子方变了要重画
-      if (!gameOver && turn === aiColor()) setTimeout(aiMove, 260);
+      if (!gameOver && turn === aiColor()) aiMove(AI_PACE_MS);
       else if (!gameOver) refresh();
     }
 
     /* 工具栏(样式与结构对齐 chess:图标按钮 + 难度下拉 + 人机/换边/悔棋) */
     const newBtn = el('button', { class: 'btn primary', title: '重新开始一局', onClick: () => {
       killWorker(); // 打断进行中的搜索
-      gameSeed = 1 + Math.floor(Math.random() * 2 ** 47); // 换一局换一套开局变化
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
       legalNow = new Map();   // 清旧提示缓存:refresh 首帧就渲染,别拿上一局的点画新局
       infoL.textContent = '';
       refresh();
-      if (vsAI && turn === aiColor()) setTimeout(aiMove, 260);   // 玩家执白时 AI 执黑先行
+      if (vsAI && turn === aiColor()) aiMove(AI_PACE_MS);   // 玩家执白时 AI 执黑先行
     } }, icon('refresh', 13), '新对局');
     /* 难度档:原生 <select>(同 chess 的下拉形态,比循环按钮少点几下、状态一眼可见)。
      * 选项**等引擎报表之后再填** —— 档位名与参数都是引擎的实现细节;空表时禁用。 */
@@ -466,7 +497,7 @@ register({
         levelIdx = Number(e.currentTarget.value) || 0;
         infoL.textContent = '';
         // 若切换发生在 AI 思考中,重新调度被打断的 AI
-        if (vsAI && turn === aiColor() && !gameOver) setTimeout(aiMove, 260);
+        if (vsAI && turn === aiColor() && !gameOver) aiMove(AI_PACE_MS);
       },
     });
     const aiBtn = el('button', {
