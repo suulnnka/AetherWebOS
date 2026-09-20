@@ -78,10 +78,11 @@ check('初始状态:黑先、0 手', shape.stats?.turn === 'b' && shape.stats?.p
 const pong = await c.evaluate(`window.__reversi.ping()`);
 check('Worker 回 pong 且 tag 正确', pong?.tag === 'othello-engine-v1', JSON.stringify(pong));
 check('浏览器里 wasm 初始化成功(engineInit 返回 0 → 无 error 字段)', !pong?.error, pong?.error || '');
-// ⚠ 18970 = 20 字节头(v2:每相位一个 scale)+ 2 × 9475 int8。
+// ⚠ 28449 = 24 字节头(v3:相位数由头声明)+ 3 × 9475 int8(P3 定格)。
+//   旧值 18970 是 v2 双相位时代的断言,权重书改 3 相位后没跟上(失效多时)。
 //   权重书格式升到 v2 后头从 16 涨到 20 字节,这里是唯一写死字节数的地方。
-check('权重书元信息对得上:9475 轨道 / 18970 字节 / scale>0',
-  pong?.orbits === 9475 && pong?.weightBytes === 18970 && pong?.scale > 0,
+check('权重书元信息对得上:9475 轨道 / 28449 字节 / scale>0',
+  pong?.orbits === 9475 && pong?.weightBytes === 28449 && pong?.scale > 0,
   `orbits=${pong?.orbits} weightBytes=${pong?.weightBytes} scale=${pong?.scale}`);
 
 /* ---------- 3. 落子 → AI 用 wasm 应答 ---------- */
