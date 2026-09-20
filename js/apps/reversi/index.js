@@ -10,7 +10,9 @@
  * 空格数、终局(满盘/双方无棋)与胜者,全部经 {type:'state'} 消息问 Worker ——
  * UI 只把回包的翻子写到自己的 8×8 数组上(纯数据变换)。
  * 主分支的 src/engine.js(纯 JS 版)仍在仓库里当参照实现给探针用,对弈路径不再用它。
- * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess)。
+ * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess);
+ * 开局书命中的手显示「开局书 · 估值」(回包 book 字段,样式同 chess 的
+ * 「开局库 · 族名」—— 黑白棋的书无族名,有名字时会替估值显示名字)。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -97,6 +99,10 @@ register({
       const me = sideName(aiColor()), opp = sideName(other(aiColor()));
       const sc = (s) => (s >= 0 ? `${me} +${s.toFixed(1)}` : `${opp} +${(-s).toFixed(1)}`);
       if (res.only) { infoL.textContent = `唯一合法步 ${moveName(res.move)},无需搜索`; return; }
+      /* 开局书命中:没搜索(depth=0、nodes=0),来源只能信回包的 book 字段 ——
+       * 书着与贪心在 depth 上同形,显示上别混(参照 chess 的开局库行)。书有
+       * 名字显示名字(回包多带的字段经 ...d 自动透传),黑白棋的书无族名,显示估值 */
+      if (res.book) { infoL.textContent = res.name ? `开局书 · ${res.name}` : `开局书 · ${sc(res.score)}`; return; }
       const tail = ` · 节点 ${fmtN(res.nodes)} · ${fmtT(res.ms)}${fmtNps(res)}`;
       if (res.greedy) {
         infoL.textContent = `初级 贪心选点 ${moveName(res.move)} · 评估 ${sc(res.score)}${tail}`;
@@ -181,8 +187,13 @@ register({
 
     /* ---------- 回合推进:向 Worker 要当前方的局面事实 ----------
      * moves 为空且 over=false → 对方有棋,跳过(再查一次对方);over=true → 终局。
+     * 跳过必须把 turn 真正翻给对方:状态栏、提示点归属、applyState 里的 AI 调度
+     * 全都读 turn,不翻就是「缓存按新方、行棋方停在旧方」—— 轮到谁谁点不动,
+     * 该 AI 接手时又没人调度,棋局直接卡死(踩过)。
      * gen 守卫:级联途中若发生新对局/悔棋/换边(killWorker 会推进 searchGen),
-     * 本轮级联立即作废 —— 否则旧级联的空回包会把新对局误判成终局。 */
+     * 本轮级联立即作废 —— 否则旧级联的空回包会把新对局误判成终局。
+     * turn 翻在第二次查询之前:即使级联被作废中断,「旧方无棋」已是既成事实,
+     * 翻过的 turn 恰是新对局/换边想要的真实行棋方。 */
     async function refresh() {
       const gen = searchGen;
       renderBoard();
@@ -191,10 +202,12 @@ register({
       const st = await fetchState(turn);
       if (gen !== searchGen || !st) return;
       if (st.moves.length === 0 && !st.over) {
-        const otherSt = await fetchState(other(turn));
+        const skipped = turn;
+        turn = other(turn);
+        const otherSt = await fetchState(turn);
         if (gen !== searchGen || !otherSt) return;
-        applyState({ ...otherSt, side: other(turn) });
-        bus.notify('黑白棋', `${sideName(turn)}无合法棋,跳过回合`);
+        applyState({ ...otherSt, side: turn });
+        bus.notify('黑白棋', `${sideName(skipped)}无合法棋,跳过回合`);
         return;
       }
       applyState({ ...st, side: turn });
@@ -279,7 +292,7 @@ register({
       p.resolve({
         ...d,
         only: p.only,
-        greedy: d.depth === 0 && !d.exact,
+        greedy: d.depth === 0 && !d.exact && !d.book,
         // 进了完全求解的空格区间却没给出精确解 = 被节点预算截断
         partial: lv ? d.empties <= lv.end && !d.exact : false,
         depthMax: d.depthMax ?? lv?.depth ?? 0,
@@ -353,6 +366,10 @@ register({
       try {
         const res = await requestThink();
         if (!res || gen !== searchGen || gameOver || !root.isConnected) return;
+        if (res.book) {   // 书着秒回:垫点延迟让节奏像「想了一下」(同 chess),期间作废靠 gen 失配
+          await new Promise((ok) => setTimeout(ok, 350 + Math.random() * 450));
+          if (gen !== searchGen || gameOver || !root.isConnected) return;
+        }
         /* AI 的手也按新鲜局面裁决 —— 悔棋/新对局的 race 可能留下旧缓存 */
         const st = await fetchState(color);
         if (!st || gen !== searchGen || gameOver || !root.isConnected) return;

@@ -5,7 +5,9 @@
  *   4. 点击提示点落子 → 真的翻子 → AI 用 wasm 应答 → 底栏右侧有引擎信息
  *   5. 难度下拉:选项与初值都来自引擎自报的 {type:'levels'}(断言 UI 与引擎一致)
  *   6. 悔棋把人机对战撤 2 步(且撤回的子颜色正确)
- *   7. 无控制台报错
+ *   7. 双人模式回放一条确定性「必跳过」线:一方无合法棋被跳过,行棋方真交给
+ *      对方(状态栏/turn 更新、弹系统通知、对方能继续落子 —— 卡死过)
+ *   8. 无控制台报错
  *
  * 为什么这条必须跑真浏览器:check-size 只量字节,probe-wasm.mjs 在 Node 里
  * 直接读 zig-out 的文件 —— 而线上的路径是
@@ -121,12 +123,17 @@ for (let i = 0; i < 80; i++) {
 }
 check('AI 用 wasm 应答,回到黑方回合', ai.stats.plies === 2 && ai.stats.turn === 'b', JSON.stringify(ai.stats));
 check('AI 落子后盘上子数涨到 6 以上', ai.pieces >= 6, `${ai.pieces} 子`);
-check('底栏右侧有引擎信息(档位/深度/节点/耗时/评估)',
-  /(深度 \d+\/\d+|残局完全求解|贪心选点|唯一合法步)/.test(ai.info) && /节点/.test(ai.info), ai.info);
+check('底栏右侧有引擎信息(开局书/档位/深度/节点/耗时/评估)',
+  /(开局书|深度 \d+\/\d+|残局完全求解|残局求解未跑完|贪心选点|唯一合法步)/.test(ai.info)
+    && (ai.info.startsWith('开局书') || /节点/.test(ai.info)), ai.info);
 check('底栏左边回到「黑方行棋」', ai.status === '黑方行棋', ai.status);
 const sum = ai.counts.black + ai.counts.white;
 check('黑白计数 UI 与盘上子数一致', sum === ai.pieces, `${ai.counts.black}:${ai.counts.white} vs ${ai.pieces}`);
 console.log(`      AI 这一手 · ${ai.info}`);
+/* 默认档(宗师 d12 ≥ 书的 4 层门槛)且 ≤14 子 ⇒ 必走书,书着确定(rng 未播种);
+ * 这条把「开局书来源显示」整个链路(zig book 标志 → worker book 字段 → UI 行)钉住 */
+check('开局书行格式(估值,无节点段)',
+  /^开局书 · [黑白]方 [+-]/.test(ai.info), ai.info);
 
 /* ---------- 4. 难度下拉(表由引擎自报,UI 只负责渲染) ---------- */
 const lv = await c.evaluate(`(() => {
@@ -186,7 +193,82 @@ for (let i = 0; i < 80; i++) {
 check('AI 执黑先行,走完轮到玩家(白)', first.stats.plies === 1 && first.stats.turn === 'w',
   JSON.stringify(first.stats) + ' · ' + first.info);
 
-/* ---------- 7. 控制台 ---------- */
+/* ---------- 7. 跳过回合(双人模式回放确定性「必跳过」线) ----------
+ * 从标准开局 BFS 搜出的最短必跳过线(规则事实,不会随引擎变化):
+ *   黑d3→白c3→黑b3→白b2→黑f5→白a3→黑a1→白c1 之后黑方无合法棋,该跳过,轮白方。
+ * 双人模式两侧落子都由探针驱动,跳过路径确定可达。断言三件事:
+ *   a. 行棋方真的交给白方(turn 与状态栏都更新 —— 修复前 turn 停在被跳过的
+ *      黑方,白方点不动、也无从推进,棋局卡死);
+ *   b. 弹了系统通知「黑白棋 / 黑方无合法棋,跳过回合」;
+ *   c. 白方提示点可点,棋局继续推进(第 9 手落得下去)。 */
+const PASS_LINE = [
+  { color: 'b', r: 2, c: 3 }, { color: 'w', r: 2, c: 2 },   // 黑d3 白c3
+  { color: 'b', r: 2, c: 1 }, { color: 'w', r: 1, c: 1 },   // 黑b3 白b2
+  { color: 'b', r: 4, c: 5 }, { color: 'w', r: 2, c: 0 },   // 黑f5 白a3
+  { color: 'b', r: 0, c: 0 }, { color: 'w', r: 0, c: 2 },   // 黑a1 白c1
+];
+const passPrep = await c.evaluate(`(() => {
+  const w = document.querySelector('${W}');
+  const btn = (t) => [...w.querySelectorAll('.app-toolbar .btn')].find((b) => b.textContent === t);
+  btn('人机').click();                    // 切到双人:无 AI 参与,回放完全确定
+  btn('新对局').click();
+  return window.__reversi.stats();
+})()`);
+check('双人模式新对局回到黑先 0 手', passPrep.vsAI === false && passPrep.turn === 'b' && passPrep.plies === 0, JSON.stringify(passPrep));
+
+let replayed = null;
+for (let i = 0; i < PASS_LINE.length; i++) {
+  const m = PASS_LINE[i];
+  // 等该手提示点出现(state 回包落地),再点
+  let ok = false;
+  for (let t = 0; t < 40 && !ok; t++) {
+    ok = await c.evaluate(`!!document.querySelector('${W} .rv-cell.hint[data-r="${m.r}"][data-c="${m.c}"]')`);
+    if (!ok) await sleep(50);
+  }
+  if (!ok) break;
+  await c.evaluate(`document.querySelector('${W} .rv-cell[data-r="${m.r}"][data-c="${m.c}"]').click()`);
+  for (let t = 0; t < 40; t++) {
+    replayed = await c.evaluate(`window.__reversi.stats()`);
+    if (replayed.plies >= i + 1) break;
+    await sleep(50);
+  }
+  if (replayed?.plies < i + 1) break;
+}
+check('必跳过线回放完成(8 手全落)', replayed?.plies === PASS_LINE.length, `plies=${replayed?.plies}`);
+
+/* 第 8 手(白 c1)之后黑方被跳过:轮询等跳过级联完全收敛。
+ * 注意不能只等 turn:修复后 turn 在最终 state 回包落地前就翻过去了,
+ * 只等 turn 会抓到级联中途的快照(状态栏/toast 还没落地)。 */
+let pass = null;
+for (let t = 0; t < 100; t++) {
+  pass = await c.evaluate(`(() => ({
+    stats: window.__reversi.stats(), status: window.__reversi.status(),
+    toasts: [...document.querySelectorAll('#toasts .toast')].map((n) =>
+      (n.querySelector('.ni-title')?.textContent || '') + '|' + (n.querySelector('.ni-body')?.textContent || '')),
+    hints: document.querySelectorAll('${W} .rv-cell.hint').length,
+  }))()`);
+  if (pass.stats.turn === 'w' && pass.status === '白方行棋'
+    && pass.toasts.some((s) => s === '黑白棋|黑方无合法棋,跳过回合')) break;
+  await sleep(50);
+}
+check('黑方被跳过,行棋方交给白方(turn 更新)', pass.stats.turn === 'w', JSON.stringify(pass.stats));
+check('状态栏显示「白方行棋」', pass.status === '白方行棋', pass.status);
+check('弹了跳过系统通知', pass.toasts.some((s) => s === '黑白棋|黑方无合法棋,跳过回合'), JSON.stringify(pass.toasts));
+check('白方有提示点可走', pass.hints > 0, String(pass.hints));
+const resume = await c.evaluate(`(() => {
+  document.querySelector('${W} .rv-cell.hint').click();
+  return window.__reversi.stats();
+})()`);
+let after = null;
+for (let t = 0; t < 40; t++) {
+  after = await c.evaluate(`({ stats: window.__reversi.stats(), pieces: document.querySelectorAll('${W} .rv-piece').length })`);
+  if (after.stats.plies >= 9) break;
+  await sleep(50);
+}
+check('跳过后白方能继续落子(第 9 手推进,棋局未卡死)', after.stats.plies === 9 && after.pieces === 13,
+  `plies=${after.stats.plies} / ${after.pieces} 子`);
+
+/* ---------- 8. 控制台 ---------- */
 check('无控制台报错', errors.length === 0, errors.slice(0, 3).join(' | '));
 
 const bad = results.filter((r) => !r.ok);
