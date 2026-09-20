@@ -8,9 +8,13 @@
  * ============================================================ */
 
 import fs from './fs.js';
+import { publish } from './bus.js';
 import { get, list, prefetchOnHover } from './registry.js';
 
 export const APPEXT = '.app';
+
+/** 桌面目录:快捷方式「发送到桌面」的落点(桌面即此目录) */
+export const DESKTOP_DIR = '/home/desktop';
 
 /** 文件名是否为应用快捷方式 */
 export const isAppLink = (name) => String(name).toLowerCase().endsWith(APPEXT);
@@ -41,6 +45,16 @@ export function createAppLink(dir, appId) {
   }
   const p = fs.joinPath(dir, name);
   return fs.write(p, appId) ? p : null;
+}
+
+/** 「发送到桌面」:把应用快捷方式放到桌面并弹系统通知(重名自动追加序号) */
+export function sendAppToDesktop(appId) {
+  const app = get(appId);
+  const p = createAppLink(DESKTOP_DIR, appId);
+  if (p && app) {
+    publish('sys:notify', { from: 'applink', type: 'notify', payload: { title: '已发送到桌面', body: displayName(fs.basename(p)) } });
+  }
+  return p;
 }
 
 /** 「新建应用快捷方式」的应用选择菜单项(配合 showMenu 使用) */

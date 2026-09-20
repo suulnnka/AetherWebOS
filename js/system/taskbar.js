@@ -3,6 +3,7 @@ import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
@@ -44,6 +45,7 @@ export function renderPinned() {
         e.preventDefault();
         showMenu(e.clientX, e.clientY, [
           { label: `打开 ${app.name}`, icon: 'chevronR', fn: () => wm.open(app.id) },
+          { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(app.id) },
           { sep: true },
           { label: '从任务栏取消固定', icon: 'close', danger: true, fn: () => togglePin(app.id) },
         ]);
@@ -77,6 +79,7 @@ export function renderTasks() {
         const pinned = pinnedApps().includes(w.appId);
         showMenu(e.clientX, e.clientY, [
           { label: w.state === 'min' ? '还原' : '最小化', icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
+          { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
           { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(w.appId) },
           { sep: true },
           { label: '关闭窗口', icon: 'close', danger: true, fn: () => wm.close(w.id) },

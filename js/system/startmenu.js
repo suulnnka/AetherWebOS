@@ -4,6 +4,7 @@ import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
 import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { logoutSession } from './session.js';
@@ -31,7 +32,7 @@ export function renderStartMenu() {
     }, tile, el('span', { class: 'name' }, app.name));
     // 悬停预读 chunk,点击时秒开(hoverPrefetch: false 的应用内部跳过)
     item.addEventListener('mouseenter', () => prefetchOnHover(app.id));
-    // 开始菜单右键:打开 / 新窗口 / 固定到任务栏
+    // 开始菜单右键:打开 / 新窗口 / 发送到桌面 / 固定到任务栏
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -40,6 +41,7 @@ export function renderStartMenu() {
         { label: '打开', icon: 'chevronR', fn: () => { toggleStartMenu(false); wm.open(app.id); } },
         ...(app.singleton ? [] : [{ label: '打开新窗口', icon: 'plus', fn: () => { toggleStartMenu(false); wm.open(app.id); } }]),
         { sep: true },
+        { label: '发送到桌面', icon: 'monitor', fn: () => { toggleStartMenu(false); sendAppToDesktop(app.id); } },
         { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(app.id) },
       ]);
     });
