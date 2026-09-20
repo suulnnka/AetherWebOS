@@ -69,6 +69,11 @@ register({
     let lastMove = null;
     let searchGen = 0;       // 搜索代数:作废在途请求用的请求号(见 killWorker)
     let thinking = false;
+    /* 每局种子:开局书容差选着(值好多占)+ 根同分随机化都吃它(0 = 引擎完全
+     * 确定,别用)。2^47 < 2^53,JS number 精确;新对局重掷 —— 同一局内悔棋/
+     * 换边不换种子,AI 重想同局面仍可复现(种子随 think 消息传 worker,不落
+     * 引擎状态,worker 缺省/无 seed 字段时引擎自动回到确定模式)。 */
+    let gameSeed = 1 + Math.floor(Math.random() * 2 ** 47);
     /* 局面缓存(全部来自最近一次 state 回包,按当前行棋方查询):
      * legalNow = { cell → flips[[r,c],...] };countsCache 双方子数;empties 空格数 */
     let legalNow = new Map();
@@ -217,10 +222,19 @@ register({
      *  裁决 —— 悔棋/新对局的 race 可能留下旧局面的缓存,拿它判子会落脏子。 */
     async function humanMove(r, c) {
       if (gameOver || (vsAI && turn !== humanColor)) return;
+      /* 按下的瞬间就撤提示点:裁决要等 state 回包(首手还含引擎冷启动),旧提示
+       * 点会一直亮到回包落地,看着像还能同时落别处。只对提示格生效 —— 误点非法
+       * 格时提示点随后照常回来,不闪断。 */
+      if (legalNow.has(r * 8 + c)) {
+        for (const cell of boardEl.querySelectorAll('.rv-cell.hint')) cell.classList.remove('hint');
+        for (const dot of boardEl.querySelectorAll('.rv-hint-dot')) dot.remove();
+      }
       const color = turn;
       const gen = searchGen;
       const st = await fetchState(color);
-      if (gen !== searchGen) return;               // 期间换了局
+      /* turn 复查:await 期间若另一手已落地(连点两格,两次裁决都带着旧盘面),
+       * 这一次必须作废 —— 否则同一方能连落两手脏子。gen 只盯新对局/悔棋/换边。 */
+      if (gen !== searchGen || turn !== color) return;
       applyState({ ...st, side: color });          // 顺手把提示/子数缓存校准
       const flip = st.flips[st.moves.indexOf(r * 8 + c)];
       if (!flip) return;                           // 非法落点(界面此时已按新缓存重画)
@@ -350,7 +364,7 @@ register({
         worker.postMessage({
           type: 'think', id: pending.id,
           own: halfs(board, turn), opp: halfs(board, other(turn)),
-          level: levelIdx, empties,
+          level: levelIdx, empties, seed: gameSeed,
         });
         infoL.textContent = `搜索中…(${lvName()})`;
       });
@@ -433,6 +447,7 @@ register({
     /* 工具栏(样式与结构对齐 chess:图标按钮 + 难度下拉 + 人机/换边/悔棋) */
     const newBtn = el('button', { class: 'btn primary', title: '重新开始一局', onClick: () => {
       killWorker(); // 打断进行中的搜索
+      gameSeed = 1 + Math.floor(Math.random() * 2 ** 47); // 换一局换一套开局变化
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
       infoL.textContent = '';
       refresh();
