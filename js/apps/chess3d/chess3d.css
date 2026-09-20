@@ -41,6 +41,9 @@
 /* 棋子:classic 赛用 SVG(pieces2d.js),尺寸随格子,投影让白子在浅格上有分量 */
 .chess2d-pc { user-select: none; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45)); }
 .chess2d-pc svg { display: block; width: calc(var(--cell) * 0.86); height: calc(var(--cell) * 0.86); }
+/* 落子入场:render2d 只给刚落位的那枚加 .appear,整盘重画也只播这一次 */
+.chess2d-pc.appear { animation: chess2d-appear .24s ease-out; }
+@keyframes chess2d-appear { from { opacity: 0; } to { opacity: 1; } }
 .chess2d-dot {
   width: calc(var(--cell) * 0.26); height: calc(var(--cell) * 0.26); border-radius: 50%;
   background: rgba(34, 197, 94, 0.85);

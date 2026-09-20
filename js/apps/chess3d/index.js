@@ -5,6 +5,7 @@
  *   见 vendor/AetherChess/src/worker.js)—— 本文件**不 import 引擎源码**,
  *   规则只有引擎一份,UI 持有走法序列(state 回包驱动棋盘重画)
  * - 多档难度:初级 / 中级 / 高级 / 大师;支持换边(与 AI 互换执子方)与悔棋
+ * - AI 应手垫到最少 260ms(秒回的开局书/浅搜也不瞬移);棋子入场淡入(落子 / 新对局全体,2D/3D 两视图)
  * - 开局库在引擎内(vendor/AetherChess src/book.js):Worker 查谱命中直接回着,谱外才进搜索
  *
  * 渲染用第一方子模块 vendor/Aether3DLib(WebGL2 + GLSL 300 es,minified ~10 KB;ogl 同场景
@@ -74,6 +75,7 @@ precision highp float;
 uniform vec3 uColor;
 uniform vec3 uLightDir;
 uniform float uAmbient;
+uniform float uAlpha;
 uniform sampler2D uShadowMap;
 
 in vec3 vNormal;
@@ -106,7 +108,7 @@ void main() {
   float shade = mix(0.45, 1.0, lit);   // 全影处保留 45% 光量,边缘连续过渡 = 软阴影   // 全影处保留 45% 光量,边缘连续过渡 = 软阴影
 
   vec3 col = uColor * (uAmbient + (1.0 - uAmbient) * diff * shade);
-  fragColor = vec4(col, 1.0);
+  fragColor = vec4(col, uAlpha);   // 不透明 program 恒为 1;淡入克隆 program 由入场动画驱动
 }
 `;
 
@@ -138,6 +140,12 @@ const fmtScore = (s) => {
 /* 棋子整体缩放系数(1 = 底座直径 0.88,几乎填满 1.0 的格子) */
 const PIECE_SCALE = 0.8;
 
+/* AI 应手最短节奏(ms):引擎秒回(开局书命中 / 浅层秒算)也垫足这个时长再落子,
+ * 观感上 AI「想了那么一下」而不是机械瞬移。2D/3D 共用 doMove,天然两视图一致。 */
+const MIN_AI_MS = 260;
+/* 棋子入场淡入时长(ms):2D 走 CSS animation,3D 走 fadeProgram 的 uAlpha,两边一致 */
+const APPEAR_MS = 240;
+
 /* 2D 视图的棋子:classic 赛用造型 SVG(见 pieces2d.js),
  * 白子深描边、黑子剪影加浅色细节,不再依赖系统字体的 Unicode 字形。 */
 
@@ -152,6 +160,10 @@ register({
     let moves = [];                      // 走过的完整着法(**线格式** from<<6|to,悔棋/重演都靠它)
     let sel = null;              // 选中格 [r, c]
     let legal = [];              // 选中格的合法落点 [[r, c], ...](已按落点去重)
+    let appearSq = null;         // 刚落位棋子的格 + 有效窗口:窗口内的整盘重画会重挂入场淡入
+    let appearUntil = 0;         // (2D 的 thinkAI→showHighlights 会立刻重画一次,单次消费会被抹掉)
+    let appearAll = false;       // 全体入场(新对局/开局):窗口内每个棋子都淡入,而不止落点一枚
+    let appearAllPending = false;  // resetGame 已挂起:下一次 state 回包落地时开窗(冷启动 Worker 慢也不会错过)
     let gameOver = false;
     let vsAI = true;
     let humanColor = WHITE;      // 人机模式下玩家执子方,「换边」互换;2D 棋盘朝向与 3D 视角跟它走
@@ -190,8 +202,9 @@ register({
         el('span', { class: 'mono', style: { fontSize: '12px' } }, String(err?.message || err))));
     }
 
-    let scene = null, camera = null, shadow = null, program = null, flatProgram = null, boardGroup = null;
+    let scene = null, camera = null, shadow = null, program = null, flatProgram = null, fadeProgram = null, boardGroup = null;
     const pieceMeshes = [];     // { mesh, r, c }
+    const fadeAnims = [];       // 入场淡入中的棋子:{ kids: 子网格数组, t0 },同一时刻至多一个(整盘重摆即清)
     const highlightMeshes = [];
     const geoCache = new Map();
     let pieceMesh = null;       // 棋子工厂(需要 gl,成功初始化后才有)
@@ -212,6 +225,7 @@ register({
           uColor: { value: new Vec3(1, 1, 1) },
           uLightDir: { value: new Vec3(6, 10, 4) },
           uAmbient: { value: 0.48 },
+          uAlpha: { value: 1 },
           uShadowMap: { value: shadow.texture },
           uShadowMatrix: { value: shadow.vpMatrix },
         },
@@ -220,6 +234,21 @@ register({
         vertex: VERT_FLAT, fragment: FRAG_FLAT,
         uniforms: { uColor: { value: new Vec3(0, 1, 1) }, uOpacity: { value: 0.55 } },
         transparent: true, depthWrite: false,
+      });
+      /* 棋子入场淡入专用 program:与主 program 同源 shader,但登记为半透明 ——
+       * renderer 把它排到全部不透明网格之后绘制(混合开、不写深度),淡入中的
+       * 棋子与身后不透明棋子的合成顺序天然正确。uAlpha 由 stepFades 每帧驱动;
+       * 静态 uniform 直接共享主 program 的 {value} 容器,光照/阴影只有一处真身。 */
+      fadeProgram = new Program(gl, {
+        vertex: VERT, fragment: FRAG, cullFace: false, transparent: true, depthWrite: false,
+        uniforms: {
+          uColor: { value: new Vec3(1, 1, 1) },
+          uLightDir: program.uniforms.uLightDir,
+          uAmbient: program.uniforms.uAmbient,
+          uAlpha: { value: 0 },
+          uShadowMap: program.uniforms.uShadowMap,
+          uShadowMatrix: program.uniforms.uShadowMatrix,
+        },
       });
 
       // 几何体缓存:同参数只建一份,所有网格复用
@@ -233,11 +262,13 @@ register({
         () => new Sphere(gl, { radius: r, widthSegments: 16, heightSegments: 12, thetaLength: Math.PI * 2 }));
       const boxGeo = (w, h, d) => cached(`b|${w}|${h}|${d}`, () => new Box(gl, { width: w, height: h, depth: d }));
 
-      /** 建网格。颜色是共享 program 的 uniform,所以每次绘制前写入;
-       *  castShadow=false 的(棋盘/边框)只接收阴影不投影 */
+      /** 建网格。颜色是共享 program 的 uniform,所以每次绘制前写入 ——
+       *  注意写进「该 mesh 当前的 program」:入场淡入期间子网格挂着
+       *  fadeProgram,颜色写错门就白写了;castShadow=false 的(棋盘/边框)
+       *  只接收阴影不投影 */
       const makeMesh = (geometry, colorVec, castShadow = true) => {
         const m = new Mesh(gl, { geometry, program, castShadow });
-        m.onBeforeRender(() => { program.uniforms.uColor.value = colorVec; });
+        m.onBeforeRender(() => { m.program.uniforms.uColor.value = colorVec; });
         return m;
       };
 
@@ -441,7 +472,8 @@ register({
           onClick: () => handleSquare(r, c),
         });
         if (p) cell.append(el('span', {
-          class: 'chess2d-pc ' + ((p >> 3) === WHITE ? 'w' : 'b'),
+          class: 'chess2d-pc ' + ((p >> 3) === WHITE ? 'w' : 'b')
+            + ((appearAll || s === appearSq) && performance.now() < appearUntil ? ' appear' : ''),
           html: piece2d(TYPE_CHARS[p & 7], (p >> 3) === WHITE ? 'w' : 'b'),
         }));
         else if (to === false) cell.append(el('span', { class: 'chess2d-dot' }));
@@ -458,8 +490,10 @@ register({
     }
 
     function syncPieces() {
+      fadeAnims.length = 0;                        // 整盘重摆,在途的入场淡入一并作废
       if (mode === '2d') { render2d(); return; }      // 2D:整盘重画,棋子与高亮一并刷新
       if (!gl) return;
+      const fading = performance.now() < appearUntil;
       for (const p of pieceMeshes) p.mesh.setParent(null);
       pieceMeshes.length = 0;
       for (let s = 0; s < 64; s++) {
@@ -470,9 +504,31 @@ register({
         mesh.position.set((c - 3.5) * square, 0, (r - 3.5) * square);
         mesh.setParent(boardGroup);
         pieceMeshes.push({ mesh, r, c });
+        if (fading && (appearAll || s === appearSq)) startFade(mesh);   // 刚落位那枚 / 全体入场
       }
     }
     syncPieces();
+
+    /** 3D 入场淡入:棋子的全部子网格换到 fadeProgram(半透明通道),alpha 由
+     *  渲染循环的 stepFades 驱动,播完换回共享的不透明 program。 */
+    function startFade(mesh) {
+      if (!fadeProgram) return;
+      const kids = [...mesh.children];
+      for (const k of kids) k.program = fadeProgram;
+      fadeProgram.uniforms.uAlpha.value = 0;       // 建立马透明,第一帧就从 0 淡起
+      fadeAnims.push({ kids, t0: performance.now() });
+    }
+    function stepFades(now) {
+      for (let i = fadeAnims.length - 1; i >= 0; i--) {
+        const a = fadeAnims[i];
+        const k = Math.min(1, (now - a.t0) / APPEAR_MS);
+        fadeProgram.uniforms.uAlpha.value = 1 - Math.pow(1 - k, 3);   // ease-out:先快后慢
+        if (k >= 1) {
+          for (const kid of a.kids) kid.program = program;
+          fadeAnims.splice(i, 1);
+        }
+      }
+    }
 
     // 高亮标记
     function showHighlights() {
@@ -770,10 +826,15 @@ register({
     }
 
     /** 落子:改走法序列,然后向 Worker 要一次 state —— 棋盘重画、将军/终局
-     *  判定、AI 调度全部由回包驱动(规则只有引擎一份,UI 不复判) */
+     *  判定、AI 调度全部由回包驱动(规则只有引擎一份,UI 不复判)。
+     *  落点那枚棋子入场淡入(2D/3D 都有):appearSq 在 showHighlights 之后才设,
+     *  清选中那次 2D 重画不会提前把动画播在旧局面上。 */
     function doMove(m) {
       moves.push(m);
       sel = null; legal = []; showHighlights();
+      appearSq = m & 63;
+      appearAll = false;
+      appearUntil = performance.now() + APPEAR_MS;
       fetchState();
     }
 
@@ -808,6 +869,7 @@ register({
      * (新对局 / 换难度 / 关窗)时直接 terminate 再新建 —— Worker 里的迭代加深
      * 是同步跑的,消息只会排队,terminate 才是真中断。 */
     let worker = null, reqSeq = 0, pendingId = 0, stateSeq = 0, statePending = null;
+    let thinkT0 = 0, moveTimer = 0;   // 应手节奏:thinkAI 发出请求的时刻 / 垫延迟定时器句柄
 
     /** AI 回包的 move 是引擎打包编码(from 在低 6 位),转回线格式 (from<<6|to) */
     const packedToWire = (m) => ((m & 63) << 6) | ((m >> 6) & 63);
@@ -843,6 +905,12 @@ register({
       stm = d.stm;
       legalAll = d.legal;
       checkNow = d.check;
+      if (appearAllPending) {            // 新对局的初始局面到手:全体入场在此刻开窗
+        appearAllPending = false;
+        appearAll = true;
+        appearSq = null;
+        appearUntil = performance.now() + APPEAR_MS;
+      }
       if (d.over) {
         gameOver = true;
         syncPieces(); showHighlights();
@@ -878,22 +946,37 @@ register({
       }
       if (d.type === 'pong' || d.id !== pendingId) return;      // 过期 / 无关消息
       if (d.error || !d.move) { pendingId = 0; searching = false; infoL.textContent = 'AI 无可用着法'; fetchState(); return; }
+      const wire = packedToWire(d.move);
+      pendingId = 0;
       if (d.book) {
-        // 引擎查谱命中:秒回立即落子(曾经的 350~800ms 垫延迟被判定为 bug);
-        // 作废防护同普通着法 —— id 过期即丢,seq 快照不需要了
+        // 引擎查谱命中:信息先亮,落子照走 holdMove 的最短应答节奏;
+        // 作废防护同普通着法 —— id 过期即丢
         infoL.textContent = d.name ? `开局库 · ${d.name}` : '开局库';
-        pendingId = 0; searching = false;
-        doMove(packedToWire(d.move));
+        holdMove(d.id, wire);
         return;
       }
-      pendingId = 0; searching = false;
       infoL.textContent = `${level().name} · 深度 ${d.depth} · ${Math.round(d.nodes / 1000)}k 节点 · ${d.ms}ms · ${fmtScore(d.score)}`;
-      doMove(packedToWire(d.move));
+      holdMove(d.id, wire);
+    }
+
+    /** AI 应手落子前的节奏垫:引擎秒回(开局书命中 / 浅层秒算)时不足 MIN_AI_MS
+     *  的补足再落。等待期间 searching 保持 true(锁盘、状态行仍是思考中);
+     *  作废防护与在途搜索同一套 —— abortEngine 会 reqSeq++,迟到回调对不上号就整着丢弃。 */
+    function holdMove(id, wire) {
+      const rest = MIN_AI_MS - (performance.now() - thinkT0);
+      if (rest <= 0) { searching = false; doMove(wire); return; }
+      moveTimer = setTimeout(() => {
+        moveTimer = 0;
+        if (id !== reqSeq) return;
+        searching = false;
+        doMove(wire);
+      }, rest);
     }
 
     function killWorker() {
       if (worker) { worker.terminate(); worker = null; }
       pendingId = 0; searching = false;
+      if (moveTimer) { clearTimeout(moveTimer); moveTimer = 0; }   // 正在垫的应手一并作废
       if (statePending) { const p = statePending; statePending = null; p(null); }
     }
 
@@ -941,6 +1024,7 @@ register({
       if (!ensureWorker()) return;
       const id = ++reqSeq;
       pendingId = id;
+      thinkT0 = performance.now();     // 应手节奏从这里计时,holdMove 垫的就是这段
       worker.postMessage({ id, moves: moves.slice(), level: levelIdx });
     }
 
@@ -951,8 +1035,10 @@ register({
       moves = [];
       sel = null; legal = [];
       gameOver = false;
+      appearAll = false; appearSq = null;   // 清干净:待初始局面回包后再开窗(见 applyState)
+      appearAllPending = true;
       syncPieces(); showHighlights(); updateStatus();
-      fetchState();                                   // 初始局面事实照问引擎
+      fetchState();                                   // 初始局面事实照问引擎,回来时 32 枚全体淡入
       if (vsAI && stm === aiColor()) thinkAI();       // 换边后玩家执黑时,AI 执白先行
     }
 
@@ -1075,6 +1161,7 @@ register({
      * 免得「界面一个档、引擎另一个档」。故意不 await:mount 不该为一个消息往返卡住。 */
     levelsP = new Promise((res) => { levelsResolve = res; });
     fetchLevels();
+    appearAllPending = true;      // 开局同新对局:初始局面回包时全体淡入
     fetchState();
 
     /* ---------- 尺寸自适应 + 渲染循环 ----------
@@ -1098,6 +1185,7 @@ register({
       if (!renderer || mode === '2d') return;   // 2D 期间画面由 DOM 承担,跳过 3D 出帧
       fit();
       stepTween(ts);
+      stepFades(ts);
       frames++;
       if (shadow && mode !== '2d') shadow.render({ scene });   // 软阴影深度通道
       renderer.render({ scene, camera });
