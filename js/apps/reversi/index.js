@@ -12,8 +12,8 @@
  * 主分支的 src/engine.js(纯 JS 版)仍在仓库里当参照实现给探针用,对弈路径不再用它。
  * 搜索过程(深度/最佳步/评分/节点数/耗时)实时写入状态栏右侧(样式同 chess);
  * 开局库命中的手显示「开局库 · 名字 · 估值」(回包 book/name 字段,样式同
- * chess 的「开局库 · 族名」—— 名字是引擎 blob 名字池的 ASCII 串,同局面多名
- * 「 / 」拼接;无名局面退回只显估值)。
+ * chess 的「开局库 · 族名」—— 名字是引擎 blob 名字池的 ASCII 单名(生成器
+ * 已单一化:并列局面不展示、无名局面继承最近单名祖先);无名局面退回只显估值)。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -114,7 +114,7 @@ register({
       const me = sideName(aiColor()), opp = sideName(other(aiColor()));
       const sc = (s) => (s >= 0 ? `${me} +${s.toFixed(1)}` : `${opp} +${(-s).toFixed(1)}`);
       /* 开局库命中:没搜索(depth=0、nodes=0),来源只能信回包的 book 字段。
-       * 回包带 name(blob 名字池的 ASCII 串,同局面多名「 / 」拼接)就带上名字 */
+       * 回包带 name(blob 名字池的 ASCII 单名;并列局面引擎侧就不带)就带上名字 */
       if (res.book) { infoL.textContent = res.name ? `开局库 · ${res.name} · ${sc(res.score)}` : `开局库 · ${sc(res.score)}`; return; }
       /* 深度只报一个数(2026-09-20 用户决策):实搜到的最大深度。残局完全求解
        * 解到盘尾会超过标称(如 16 > 12),预算截断则不到标称 —— 都如实报。

@@ -168,6 +168,7 @@ register({
     let vsAI = true;
     let humanColor = WHITE;      // 人机模式下玩家执子方,「换边」互换;2D 棋盘朝向与 3D 视角跟它走
     let searching = false;
+    let bookName = '';   // 本局最近一次带名书着的族名;无名谱着沿用它显示(见 thinkAI 回包)
     /* 难度表由**引擎自报**({type:'levels'}):levels 存表,levelIdx 是当前下标,
      * 初值取引擎给的 default。levelsP:AI 第一次想棋之前一定先等表到手。 */
     let levels = [];
@@ -950,8 +951,10 @@ register({
       pendingId = 0;
       if (d.book) {
         // 引擎查谱命中:信息先亮,落子照走 holdMove 的最短应答节奏;
-        // 作废防护同普通着法 —— id 过期即丢
-        infoL.textContent = d.name ? `开局库 · ${d.name}` : '开局库';
+        // 作废防护同普通着法 —— id 过期即丢。
+        // 无名谱着(谱树深处 ECO 未再细分)沿用本局最近族名:无名 ≠ 离开该开局
+        if (d.name) bookName = d.name;
+        infoL.textContent = bookName ? `开局库 · ${bookName}` : '开局库';
         holdMove(d.id, wire);
         return;
       }
@@ -1035,6 +1038,7 @@ register({
       moves = [];
       sel = null; legal = [];
       gameOver = false;
+      bookName = '';           // 上局的开局族名不带进新局
       appearAll = false; appearSq = null;   // 清干净:待初始局面回包后再开窗(见 applyState)
       appearAllPending = true;
       syncPieces(); showHighlights(); updateStatus();
@@ -1053,6 +1057,7 @@ register({
       while (n-- > 0 && moves.length) moves.pop();
       gameOver = false;
       sel = null; legal = [];
+      bookName = '';           // 撤回后名字可能已细化过头,清掉等带名书着重建
       stm = moves.length % 2 === 0 ? WHITE : BLACK;   // 仅作过渡,回包会再校正
       syncPieces(); showHighlights();
       fetchState();
