@@ -74,24 +74,13 @@ function load() {
 }
 
 let state = { ...DEFAULTS, ...load() };
-// 老版本迁移:原先静态/动态混存于单一 wallpaper 字段,现在拆为类型 + 两组各自的选择
-if (state.wallpaper) {
-  const old = state.wallpaper;
-  if (DYNAMIC_WALLPAPERS.some(w => w.id === old)) {
-    state.wallpaperDynamic = old;
-    state.wallpaperType = 'dynamic';
-  } else {
-    state.wallpaperStatic = old;
-    state.wallpaperType = 'static';
-  }
-  delete state.wallpaper;
-  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* 忽略 */ }
-}
-// 注:老用户存储里若没有 style 字段,上面的 DEFAULTS 合并会自动给它们
-// 新的默认风格(霓虹未来);显式选过风格的用户不受影响。
+
 let persistTimer;
+let wiped = false;   // 完全重置后置位:persist 不再写盘,防止 reload 前防抖定时器把旧数据写回
+export const storageWiped = () => wiped;
 
 function persist() {
+  if (wiped) return;
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -129,25 +118,7 @@ export const settings = {
   get: (k) => (k == null ? state : state[k]),
   /** set({ volume: 30 }) —— 自动持久化并广播 */
   set(patch) {
-    // 兼容旧调用方 { wallpaper: id }:归一化为分组字段,避免旧键混入状态
-    let extra = null;
-    if (patch && 'wallpaper' in patch) {
-      const { wallpaper: legacy, ...rest } = patch;
-      extra = { type: 'static', id: legacy };
-      if (DYNAMIC_WALLPAPERS.some(w => w.id === legacy)) extra = { type: 'dynamic', id: legacy };
-      if (legacy === 'custom') extra = { type: 'static', id: 'custom' };
-      patch = rest;
-    }
     const changed = Object.keys(patch).filter(k => patch[k] !== state[k]);
-    if (extra) {
-      if (extra.type === 'dynamic' && state.wallpaperDynamic !== extra.id) changed.push('wallpaperDynamic');
-      if (extra.type === 'static' && state.wallpaperStatic !== extra.id) changed.push('wallpaperStatic');
-      if (state.wallpaperType !== extra.type) changed.push('wallpaperType');
-      Object.assign(state, {
-        wallpaperType: extra.type,
-        [extra.type === 'dynamic' ? 'wallpaperDynamic' : 'wallpaperStatic']: extra.id,
-      });
-    }
     if (!changed.length) return;
     Object.assign(state, patch);
     persist();
@@ -161,9 +132,13 @@ export const settings = {
       });
     }
   },
-  /** 清空全部系统数据并重载 */
+  /** 完全重置此电脑:删除浏览器中保存的全部数据(设置、文件、账号、应用数据)并重启 */
   reset() {
-    localStorage.clear();
+    wiped = true;
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch { /* 忽略 */ }
     location.reload();
   },
   resolvedTheme,

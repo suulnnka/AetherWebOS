@@ -340,17 +340,17 @@ function renderSection(root, sec, bus) {
               if (result !== undefined) dialogs.info({ level: 1, title: '游戏结束', message: result ? '通关!五颗弹珠全部接住 🎉' : '再接再厉,下次一定。' });
             },
           }, '游戏弹窗(三级)'))),
-      row('重置系统', '清空浏览器中保存的全部系统数据(不可恢复)',
+      row('完全重置此电脑', '删除浏览器中保存的一切数据:设置、文件、用户账号与各应用数据全部清空,恢复到刚安装时的初始状态(不可恢复)',
         el('button', {
           class: 'btn danger',
           onClick: async () => {
             const ok = await modal(root, {
-              title: '重置系统', danger: true, confirmText: '全部清除',
-              body: '将删除所有设置、文件与笔记数据,系统随后会重新启动。确定继续吗?',
+              title: '完全重置此电脑', danger: true, confirmText: '删掉一切,重置',
+              body: '此操作将删除此电脑上的全部内容:所有设置、文件、用户账号与应用数据都会被永久清除,无法恢复。系统随后会恢复初始状态并重新启动。确定继续吗?',
             });
             if (ok) settings.reset();
           },
-        }, icon('trash', 13), '清除数据')),
+        }, icon('trash', 13), '完全重置')),
     ));
   }
 }

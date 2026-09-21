@@ -10,6 +10,7 @@
 import { publish } from './bus.js';
 import { debounce } from './utils.js';
 import { list as listApps } from './registry.js';
+import { storageWiped } from './store.js';
 
 const KEY = 'webos.fs.v1';
 
@@ -98,7 +99,7 @@ const CHESS_APPS = {
 };
 
 /* 桌面不自动生成图标:桌面上的一切都是 /home/desktop 里的真实文件,
- * 应用入口以 .app 快捷方式存在。初始化/迁移时为各应用在桌面生成快捷
+ * 应用入口以 .app 快捷方式存在。初始化时为各应用在桌面生成快捷
  * 方式(棋类应用收进「棋类游戏」文件夹),用户可随意删除、改名、收纳;
  * 完整的应用列表始终在开始菜单。 */
 function desktopShortcutSeeds() {
@@ -157,63 +158,14 @@ function load() {
 
 let root = load() || defaultTree();
 
-// 升级迁移:保证桌面目录存在(旧版本数据兼容)
-(function ensureDesktop() {
-  let n = root;
-  for (const seg of ['home', 'desktop']) {
-    if (n.t !== 'd') return;
-    if (!n.c[seg]) { n.c[seg] = { t: 'd', c: {}, m: Date.now() }; }
-    n = n.c[seg];
-  }
-})();
-
 const persist = debounce(() => {
+  if (storageWiped()) return;   // 完全重置后不再写盘,防止 reload 前防抖定时器把旧数据写回
   try { localStorage.setItem(KEY, JSON.stringify(root)); }
   catch (e) {
     console.warn('[fs] 持久化失败:', e);
     publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
   }
 }, 250);
-
-// 一次性内容迁移(完成标记存 localStorage,补过的东西用户删掉不会再来):
-//   chessFolder       —— 旧数据补建桌面「棋类游戏」文件夹与棋类快捷方式
-//   desktopShortcuts  —— 桌面改行「一切皆快捷方式」后,为各应用补建
-//                        桌面 .app 快捷方式(顶层级只补缺失的名字)
-(function migrateDesktop() {
-  const MIG_KEY = 'webos.fs.mig.v1';
-  let flag;
-  try { flag = JSON.parse(localStorage.getItem(MIG_KEY) || '{}'); } catch { flag = {}; }
-  const desk = node('/home/desktop');
-  if (!desk || desk.t !== 'd') return;
-  const now = Date.now();
-  let touched = false;
-
-  if (!flag.chessFolder) {
-    if (desk.c['棋类游戏']?.t !== 'd') desk.c['棋类游戏'] = { t: 'd', c: {}, m: now };
-    for (const [id, name] of Object.entries(CHESS_APPS)) {
-      const fname = name + '.app';
-      if (!desk.c['棋类游戏'].c[fname]) desk.c['棋类游戏'].c[fname] = { t: 'f', d: id, m: now };
-    }
-    touched = true;
-    flag.chessFolder = true;
-  }
-
-  if (!flag.desktopShortcuts) {
-    for (const a of listApps()) {
-      if (a.desktop === false || a.desktopIcon === false) continue;
-      const fname = a.name + '.app';
-      if (!desk.c[fname]) desk.c[fname] = { t: 'f', d: a.id, m: now };
-    }
-    touched = true;
-    flag.desktopShortcuts = true;
-  }
-
-  if (touched) {
-    desk.m = now;
-    persist();
-    try { localStorage.setItem(MIG_KEY, JSON.stringify(flag)); } catch { /* 忽略 */ }
-  }
-})();
 
 /* ---------- 路径工具 ---------- */
 export function normPath(p) {
