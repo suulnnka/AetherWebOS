@@ -103,6 +103,17 @@ register({
     const lvName = () => levels[levelIdx]?.name ?? '—';
     const flipped = () => humanSide === BLACK;    // 玩家执黑就把整盘翻过来
 
+    /* 终局弹窗缓冲(600ms):终局画面先落地,给玩家一点反应时间再弹结算。
+     * 缓冲期里的新对局 / 悔棋 / 换边 / 人机切换 / 关窗都调 cancelEndDlg 取消 ——
+     * 不然这些操作之后还会蹦出上一局的结算框,关窗后更是弹无主的系统对话框。 */
+    const END_DLG_MS = 600;
+    let endDlgTimer = 0;
+    const cancelEndDlg = () => { clearTimeout(endDlgTimer); endDlgTimer = 0; };
+    const popEndDlg = (show) => {
+      cancelEndDlg();
+      endDlgTimer = setTimeout(() => { endDlgTimer = 0; show(); }, END_DLG_MS);
+    };
+
     const statusL = el('span', {}, '红方行棋');
     const infoL = el('span', {
       class: 'mono', style: { fontSize: '11px' },
@@ -188,10 +199,13 @@ register({
     function endGame(winner, byMate) {
       gameOver = true;
       abortEngine();
+      render();   // 终局分支跳过了 applyState 的 render:先画上最后一手(含被将死的将高亮)再弹结算,别让棋盘停在走子前
       const who = sideName(winner) + (vsAI && winner === aiSide() ? '(AI)' : '');
       const title = byMate ? '将死' : '困毙';
       const line = `${title} — ${sideName(winner)}胜`;   // 状态行不标 (AI),只说哪方胜
-      dialogs.info({ title, message: `${who}获胜!` });
+      /* 结算弹窗缓一拍:让玩家看清最后一手再弹;缓冲期里的操作(见各动作里的
+       * cancelEndDlg)会取消它 —— 不然新对局/关窗之后还会蹦出过期的结算框 */
+      popEndDlg(() => dialogs.info({ title, message: `${who}获胜!` }));
       statusL.textContent = line;
       setTitle('中国象棋 — 终局');
       bus.notify('中国象棋', line);
@@ -309,6 +323,7 @@ register({
     /* ---------- 工具栏动作 ---------- */
     function resetGame() {
       abortEngine();
+      cancelEndDlg();
       turn = RED; hist = []; sel = -1; lastMove = null;
       gameOver = false;
       board = new Array(90).fill(0); legalAll = []; checked = [false, false];
@@ -324,6 +339,7 @@ register({
     function doUndo() {
       if (!hist.length) return;
       abortEngine();
+      cancelEndDlg();
       let n = 1;
       if (vsAI && turn === humanSide && hist.length >= 2) n = 2;
       while (n-- > 0 && hist.length) hist.pop();
@@ -338,6 +354,7 @@ register({
     /** 换边:与 AI 互换执子方,棋盘随之翻转。中途换边作废在途搜索并立即接手。 */
     function switchSide() {
       abortEngine();
+      cancelEndDlg();
       humanSide ^= 1;
       sel = -1;
       render();
@@ -362,6 +379,7 @@ register({
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
+        cancelEndDlg();
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                 // 换边只对人机模式有意义
@@ -421,6 +439,7 @@ register({
 
     return {
       onClose() {
+        cancelEndDlg();
         killWorker();
         delete window.__xiangqi;
       },

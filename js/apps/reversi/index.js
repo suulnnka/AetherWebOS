@@ -92,6 +92,17 @@ register({
     const aiColor = () => other(humanColor);
     const lvName = () => levels[levelIdx]?.name ?? '—';
 
+    /* 终局弹窗缓冲(600ms):终局画面先落地,给玩家一点反应时间再弹结算。
+     * 缓冲期里的新对局 / 悔棋 / 换边 / 人机切换 / 关窗都调 cancelEndDlg 取消 ——
+     * 不然这些操作之后还会蹦出上一局的结算框,关窗后更是弹无主的系统对话框。 */
+    const END_DLG_MS = 600;
+    let endDlgTimer = 0;
+    const cancelEndDlg = () => { clearTimeout(endDlgTimer); endDlgTimer = 0; };
+    const popEndDlg = (show) => {
+      cancelEndDlg();
+      endDlgTimer = setTimeout(() => { endDlgTimer = 0; show(); }, END_DLG_MS);
+    };
+
     const statusL = el('span', {}, '');
     const infoL = el('span', {
       class: 'mono', style: { fontSize: '11px', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -187,7 +198,8 @@ register({
           ? (winnerAbs === humanColor ? '🎉 你赢了!' : 'AI 获胜')
           : `🎉 ${winner}获胜`;
       }
-      dialogs.info({ title, message: msg });
+      /* 结算弹窗缓一拍:让玩家看清终局盘面再弹;缓冲期里的操作会取消它 */
+      popEndDlg(() => dialogs.info({ title, message: msg }));
       statusL.textContent = line;
     }
 
@@ -450,6 +462,7 @@ register({
     function doUndo() {
       if (!moves.length) return;
       killWorker();                      // 掐掉在途搜索:terminate 才真停得住 CPU 白烧
+      cancelEndDlg();
       let n = 1;
       if (vsAI && turn === humanColor && moves.length >= 2) n = 2;
       while (n-- > 0 && moves.length) {
@@ -472,6 +485,7 @@ register({
      * 接手/交出;终局后换边只改偏好,下局(含新对局)生效。双人模式下按钮禁用。 */
     function switchSide() {
       killWorker();
+      cancelEndDlg();
       humanColor = other(humanColor);
       renderBoard();                     // 提示点跟「轮到的是不是人」走,执子方变了要重画
       if (!gameOver && turn === aiColor()) aiMove(AI_PACE_MS);
@@ -481,6 +495,7 @@ register({
     /* 工具栏(样式与结构对齐 chess:图标按钮 + 难度下拉 + 人机/换边/悔棋) */
     const newBtn = el('button', { class: 'btn primary', title: '重新开始一局', onClick: () => {
       killWorker(); // 打断进行中的搜索
+      cancelEndDlg();
       board = initBoard(); turn = 'b'; gameOver = false; lastMove = null; moves = [];
       legalNow = new Map();   // 清旧提示缓存:refresh 首帧就渲染,别拿上一局的点画新局
       infoL.textContent = '';
@@ -506,6 +521,7 @@ register({
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
         killWorker();
+        cancelEndDlg();
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                 // 换边只对人机模式有意义
@@ -583,6 +599,7 @@ register({
 
     return {
       onClose() {
+        cancelEndDlg();
         killWorker();
         delete window.__reversi;
       },

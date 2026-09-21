@@ -184,6 +184,17 @@ register({
     const sideChar = (col) => (col === WHITE ? 'w' : 'b');
     const sideName = (col) => (col === WHITE ? '白方' : '黑方');
 
+    /* 终局弹窗缓冲(600ms):终局画面先落地,给玩家一点反应时间再弹结算。
+     * 缓冲期里的新对局 / 悔棋 / 换边 / 人机切换 / 关窗都调 cancelEndDlg 取消 ——
+     * 不然这些操作之后还会蹦出上一局的结算框,关窗后更是弹无主的系统对话框。 */
+    const END_DLG_MS = 600;
+    let endDlgTimer = 0;
+    const cancelEndDlg = () => { clearTimeout(endDlgTimer); endDlgTimer = 0; };
+    const popEndDlg = (show) => {
+      cancelEndDlg();
+      endDlgTimer = setTimeout(() => { endDlgTimer = 0; show(); }, END_DLG_MS);
+    };
+
     const statusL = el('span', {}, '白方行棋');
     const infoL = el('span', { class: 'mono', style: { fontSize: '11px' } }, '');
     const container = el('div', { class: 'chess3d-view' });
@@ -863,7 +874,8 @@ register({
       if (!title) { updateStatus(); return false; }
       gameOver = true;
       abortEngine();
-      dialogs.info({ title, message: msg });
+      /* 结算弹窗缓一拍:让玩家看清终局盘面(入场动画走完)再弹;缓冲期里的操作会取消它 */
+      popEndDlg(() => dialogs.info({ title, message: msg }));
       statusL.textContent = line;
       setTitle('国际象棋');
       return true;
@@ -1039,6 +1051,7 @@ register({
 
     function resetGame() {
       abortEngine();
+      cancelEndDlg();
       board = new Array(64).fill(0);
       stm = WHITE; legalAll = []; checkNow = false;
       moves = [];
@@ -1058,6 +1071,7 @@ register({
     function doUndo() {
       if (!moves.length) return;
       abortEngine();
+      cancelEndDlg();
       let n = 1;
       if (vsAI && stm === humanColor && moves.length >= 2) n = 2;
       while (n-- > 0 && moves.length) moves.pop();
@@ -1075,6 +1089,7 @@ register({
      * 3D 视角飞向新一侧,2D 棋盘由 render2d 按 humanColor 翻转。终局后换边只改偏好,下局生效。 */
     function switchSide() {
       abortEngine();
+      cancelEndDlg();
       humanColor = otherStm(humanColor);
       faceSide(humanColor);
       if (!gameOver && stm === aiColor()) thinkAI();
@@ -1100,6 +1115,7 @@ register({
     const aiBtn = el('button', {
       class: 'btn', title: '切换人机 / 双人对战',
       onClick: (e) => {
+        cancelEndDlg();
         vsAI = !vsAI;
         e.currentTarget.textContent = vsAI ? '人机' : '双人';
         sideBtn.disabled = !vsAI;                                  // 换边只对人机模式有意义
@@ -1262,6 +1278,7 @@ register({
       onResize: fit,
       onClose() {
         disposed = true;
+        cancelEndDlg();
         abortEngine();                  // 停掉在途的 AI 搜索并释放 Worker
         cancelAnimationFrame(raf);
         window.removeEventListener('resize', onWinResize);
