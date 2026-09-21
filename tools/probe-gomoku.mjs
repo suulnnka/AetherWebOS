@@ -69,16 +69,23 @@ check('底栏左边是行棋状态', shape.status === '黑方行棋 · 第 1 手
 
 /* ---------- 2. 落子与 AI 应答 ---------- */
 await c.evaluate(`document.querySelector('${W} .gk-pt[data-i="112"]').click()`);   // H8 天元
-await sleep(400);
-const moved = await c.evaluate(`(() => {
-  const w = document.querySelector('${W}');
-  return {
-    black: w.querySelectorAll('.gk-stone.black').length,
-    last: !!w.querySelector('.gk-stone.last'),
-    stats: window.__gomoku.stats(),
-    lastText: window.__gomoku.lastText(),
-  };
-})()`);
+/* 黑子出现 = 己方这手的 state 回包落地,记谱回填与渲染同帧;AI 应手有 ≥260ms
+ * 节奏垫底,轮询原子读必能拿到 H8 —— 固定 sleep 会睡过 AI 应手,记谱被覆盖
+ * (高级档 ~110ms 就搜完,400ms 后读到的已是 AI 那手,踩过)。 */
+let moved = null;
+for (let i = 0; i < 80; i++) {
+  moved = await c.evaluate(`(() => {
+    const w = document.querySelector('${W}');
+    return {
+      black: w.querySelectorAll('.gk-stone.black').length,
+      last: !!w.querySelector('.gk-stone.last'),
+      stats: window.__gomoku.stats(),
+      lastText: window.__gomoku.lastText(),
+    };
+  })()`);
+  if (moved.black === 1) break;
+  await sleep(25);
+}
 check('点天元落子(黑子 1 颗,上一手 H8)', moved.black === 1 && moved.last && moved.lastText === 'H8',
   JSON.stringify(moved));
 

@@ -196,16 +196,29 @@ const reset = await c.evaluate(`(async () => {
   const w = document.querySelector('.win[data-app=chess3d]');
   const nb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('新对局'));
   nb.click();
-  await new Promise(r => setTimeout(r, 300));
-  const b = window.__chess.board();
-  const pieces = b.flat().filter(Boolean).length;
-  return { plies: window.__chess.moves(), turn: window.__chess.turn(), pieces, searching: window.__chess.searching(), board: JSON.stringify(b).length };
+  /* resetGame 把棋子入场推迟到初始 state 回包(appearAllPending);新对局先掐了
+   * Worker,首包要等冷启动,固定短睡会数到 0 子(踩过)—— 轮询等入场完成 */
+  const t0 = Date.now();
+  let pieces = -1;
+  while (Date.now() - t0 < 8000) {
+    pieces = window.__chess.board().flat().filter(Boolean).length;
+    if (pieces === 32) break;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return { plies: window.__chess.moves(), turn: window.__chess.turn(), pieces, searching: window.__chess.searching() };
 })()`);
 check('新对局回到 32 子 / 0 步 / 白方行棋', reset.pieces === 32 && reset.plies === 0 && reset.turn === 'w' && !reset.searching, JSON.stringify(reset));
 
 /* ---------- 6. 关掉人机后黑方不自动应答 ---------- */
 const noai = await c.evaluate(`(async () => {
   const w = document.querySelector('.win[data-app=chess3d]');
+  /* 先等上一节的初始 state 回包落地:回包未到时 handleSquare 会被 statePending
+   * 全吞,人人模式又没有 AI 帮着重发请求,棋子永远点不上(踩过) */
+  const t0 = Date.now();
+  while (Date.now() - t0 < 8000) {
+    if (window.__chess.board().flat().filter(Boolean).length === 32 && !window.__chess.searching()) break;
+    await new Promise(r => setTimeout(r, 80));
+  }
   const ab = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('人机'));
   ab.click();                                  // 人机 → 人人
   await new Promise(r => setTimeout(r, 100));
