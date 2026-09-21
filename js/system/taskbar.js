@@ -99,3 +99,14 @@ for (const ev of ['open', 'close', 'focus', 'min', 'restore', 'max', 'unmax', 't
     renderTasks();
   });
 }
+
+/* 三级(系统模态)弹框期间任务栏一并锁定:遮罩挂在窗口层,物理上盖不到任务栏,
+ * 由 inert 挡掉指针与键盘焦点(含已开的开始菜单/托盘入口),sys-locked 供 CSS 压暗;
+ * 解锁后恢复(见 wm.js raiseShade / shell.css) */
+subscribe('sys:modal', (p) => {
+  const tb = $('#taskbar');
+  const locked = !!p?.locked;
+  tb.classList.toggle('sys-locked', locked);
+  if (locked) tb.setAttribute('inert', '');
+  else tb.removeAttribute('inert');
+});

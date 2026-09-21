@@ -59,7 +59,6 @@ const DEFAULTS = {
   wallpaperUrl: '',         // 自定义壁纸 URL / dataURL(属于静态壁纸)
   iconSize: 'medium',       // small | medium | large
   clockSeconds: false,      // 任务栏时钟显示秒
-  singleActive: false,      // 单活动窗口模式:非活动窗口首次点击仅激活
   pinnedApps: ['files', 'notes', 'terminal'],   // 任务栏固定应用
   volume: 65,
   muted: false,
@@ -106,7 +105,6 @@ export function applyAll() {
   if (icons) icons.dataset.size = state.iconSize;
   const br = document.getElementById('brightness');
   if (br) br.style.opacity = String((100 - state.brightness) / 100 * 0.8);
-  document.body.classList.toggle('single-active', !!state.singleActive);
 }
 
 function publishTheme() {

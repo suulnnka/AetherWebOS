@@ -25,7 +25,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './chess3d.css';
 import { piece2d } from './pieces2d.js';
-import { dialogs } from '../../core/dialogs.js';
+import { reportBoardMin } from '../../core/wm.js';
 /* ---- 协议常量与显示辅助(worker 契约的一部分,不是引擎导出)----
  * WHITE/BLACK 是回包 stm / 棋子颜色位的取值;棋子编码 p = 颜色<<3 | 型,
  * TYPE_CHARS 把型翻成字符只服务渲染,规则语义仍全在引擎侧。 */
@@ -146,13 +146,19 @@ const MIN_AI_MS = 260;
 /* 棋子入场淡入时长(ms):2D 走 CSS animation,3D 走 fadeProgram 的 uAlpha,两边一致 */
 const APPEAR_MS = 240;
 
+/* 棋盘格距下限(px):2D/3D 都按容器缩放,缩到这个以下手指就点不准了。
+ * 窗口最小尺寸由它反推(见 reportBoardMin),不在清单里另写一份。 */
+const MIN_CELL = 34;
+
 /* 2D 视图的棋子:classic 赛用造型 SVG(见 pieces2d.js),
  * 白子深描边、黑子剪影加浅色细节,不再依赖系统字体的 Unicode 字形。 */
 
 /* ============ 注册应用 ============ */
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  mount(ctx) {
+    /* dialogs = ctx.dialogs:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+    const { root, setTitle, bus, dialogs } = ctx;
     let board = new Array(64).fill(0);   // 引擎棋盘(state 回包驱动;0 空,p = 颜色<<3|型)
     let stm = WHITE;                     // 行棋方
     let legalAll = [];                   // 行棋方全部合法着法(线格式,来自 state 回包)
@@ -1148,7 +1154,7 @@ register({
       showHighlights();
     }
 
-    root.append(el('div', { class: 'app' },
+    const appEl = el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         newBtn,
         el('label', { class: 'chess3d-level-wrap', title: 'AI 难度' },
@@ -1158,8 +1164,12 @@ register({
       wrap2d,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        infoL)));
+        infoL));
+    root.append(appEl);
     applyMode();    // 初始视图:WebGL 可用为 3D,失败则落在 2D(错误提示留在 container 里备用)
+    /* 2D/3D 都会按容器缩放,但缩到 MIN_CELL 以下就点不准了 —— 按这个格距反推内容区
+     * 下限报给 WM(+28 是 .chess2d-wrap 的四周 padding),520 是工具栏的兜底宽。 */
+    reportBoardMin(ctx, appEl, { w: MIN_CELL * 8 + 28, h: MIN_CELL * 8 + 28 }, 520);
 
     /* 问引擎要难度表与初始局面:放在 DOM 挂好之后,探针一进来就能看到表。
      * levelsP 是「表已到手」的闸门 —— AI 第一次想棋之前一定先等它(见 thinkAI),

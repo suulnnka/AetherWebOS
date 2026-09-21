@@ -18,8 +18,8 @@ import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './go.css';
-import { dialogs } from '../../core/dialogs.js';
 import { icon } from '../../core/icons.js';
+import { reportBoardMin } from '../../core/wm.js';
 
 /* 协议常量(worker 契约的一部分,不是引擎导出) */
 const BLACK = 0, WHITE = 1;
@@ -58,7 +58,9 @@ function boardSvg() {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  mount(ctx) {
+    /* dialogs = ctx.dialogs:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+    const { root, setTitle, bus, dialogs } = ctx;
     let board = new Array(81).fill(0);   // 引擎棋盘(state 回包驱动;0 空 / 1 黑 / 2 白)
     let legal = new Set();               // 行棋方合法着法(state 回包;点击校验以它为准)
     let ko = -1;                         // 劫点(回包;提示「先找劫材」用)
@@ -357,7 +359,7 @@ register({
       onClick: doUndo,
     }, icon('reply', 13), '悔棋');
 
-    root.append(el('div', { class: 'app' },
+    const appEl = el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         newBtn,
         el('label', { class: 'go-level-wrap', title: 'AI 难度' },
@@ -366,7 +368,11 @@ register({
       el('div', { class: 'app-body', style: { display: 'grid', placeItems: 'center' } }, boardEl),
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        infoL)));
+        infoL));
+    root.append(appEl);
+    /* 棋盘是固定像素的(CS 52 × 9 路 + 边距),窗口再小它也不缩 —— 按实测棋盘报
+     * 最小窗口尺寸给 WM;520 是工具栏(让子/停一手等按钮)挤不下时的兜底宽。 */
+    reportBoardMin(ctx, appEl, boardEl, 520);
 
     /* 供探针/排障:确认窗口活着、引擎档位与对局进度 */
     window.__go = {

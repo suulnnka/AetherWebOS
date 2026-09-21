@@ -11,8 +11,14 @@ import { logoutSession } from '../../system/session.js';
 import { beep } from '../../core/audio.js';
 import { modal } from '../../core/ui.js';
 import fs from '../../core/fs.js';
-import { dialogs } from '../../core/dialogs.js';
+import { forApp } from '../../core/dialogs.js';
 import { openConfigPopup, openGamePopup } from './popup-demo.js';
+
+/* 应用内弹框走应用绑定实例(与 mount ctx 的 ctx.dialogs 完全同语义):
+ * 默认二级 · 应用模态,owner=settings,只锁设置自己的窗口;
+ * renderSection 是模块级函数拿不到 ctx,故在此绑定。个别调用点
+ * 仍可用 { level: 1 / 3 } 显式覆盖(见弹框分级演示按钮)。 */
+const dialogs = forApp('settings');
 
 const SECTIONS = [
   { id: 'appearance', name: '外观', icon: 'palette' },
@@ -189,7 +195,6 @@ function renderSection(root, sec, bus) {
     root.append(el('div', { class: 'set-body' }, title,
       row('桌面图标大小', '调整桌面与开始菜单中应用磁贴的尺寸', seg),
       row('时钟显示秒', '任务栏右侧时间显示到秒', switchBox(() => s.clockSeconds, v => settings.set({ clockSeconds: v }))),
-      row('单活动窗口模式', '同一时刻只有一个活动窗口:非活动窗口首次点击仅激活(不穿透)且内容变暗;Alt+Q 循环切换活动窗口', switchBox(() => s.singleActive, v => settings.set({ singleActive: v }))),
     ));
   }
 

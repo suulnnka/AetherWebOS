@@ -17,7 +17,6 @@ import { list as listApps } from '../../core/registry.js';
 import { isAppLink, appLinkApp } from '../../core/applink.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
-import { dialogs } from '../../core/dialogs.js';
 import { httpGet, dnsResolve } from '../../core/vnet.js';
 
 /* ---------- 词法:引号与注释 ---------- */
@@ -460,10 +459,12 @@ CMDS.reboot = {
   },
 };
 
-/* ---- 系统对话框 ---- */
+/* ---- 对话框命令(alert/ask/progress)----
+ * dialogs 由 createBash 注入(宿主从 mount ctx 传入的应用绑定实例,
+ * 二级 · 应用模态,只锁终端自己的窗口),命令表保持模块纯净。 */
 CMDS.alert = {
   desc: '错误对话框演示(alert <文本>)',
-  run(args) {
+  run(args, { dialogs }) {
     if (!args.length) throw new Error('用法: alert <文本>');
     dialogs.error({ title: '系统错误', message: args.join(' '), detail: 'ERROR_DEMO (终端 alert 命令)' });
     return '已弹出系统错误对话框';
@@ -471,14 +472,14 @@ CMDS.alert = {
 };
 CMDS.ask = {
   desc: '输入对话框演示(ask <问题>)',
-  async run(args) {
+  async run(args, { dialogs }) {
     const v = await dialogs.prompt({ title: '终端询问', message: args.join(' ') || '请输入内容:' });
     return `输入结果: ${v === null ? '(已取消)' : v}`;
   },
 };
 CMDS.progress = {
   desc: '进度对话框演示(progress)',
-  async run(args, { print }) {
+  async run(args, { print, dialogs }) {
     print('启动进度对话框演示…', 't-dim');
     const h = dialogs.progress({ title: '下载系统更新', message: '正在连接更新服务器…', cancelable: true });
     let v = 0;
@@ -524,7 +525,7 @@ man <命令> 查看用法;支持管道 |、重定向 > >>、引号、# 注释、
  * print 由终端 UI 提供;hooks.beginSsh 由 UI 提供(密码掩码与远程会话
  * 是终端层状态);exit / 清屏的收尾由宿主在 runLine 之后检查 state。
  */
-export function createBash({ user, history, print, hooks }) {
+export function createBash({ user, history, print, hooks, dialogs }) {
   const state = { cwd: '/home', user, history, clear: false, exit: false };
 
   const resolve = (p) => {
@@ -564,7 +565,7 @@ export function createBash({ user, history, print, hooks }) {
       const piped = stages.length > 1 || !!file;   // 处于管道中或重定向到文件
       let result;
       try {
-        result = await impl.run(tokens.slice(1), { stdin, resolve, state, piped, print, hooks });
+        result = await impl.run(tokens.slice(1), { stdin, resolve, state, piped, print, hooks, dialogs });
       } catch (e) {
         print(String(e.message || e), 't-err');
         return;

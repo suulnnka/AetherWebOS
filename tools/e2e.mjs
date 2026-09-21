@@ -907,8 +907,8 @@ group('T21', '本地资源 + 文件预览', async () => {
 
 });
 
-group('T22', '多窗口模式:平铺/层叠/贴边/单活动', async () => {
-  /* ---- T22 多窗口模式:平铺/层叠/贴边/单活动 ---- */
+group('T22', '多窗口模式:平铺/层叠/贴边/焦点', async () => {
+  /* ---- T22 多窗口模式:平铺/层叠/贴边/焦点 ---- */
   // 准备三个窗口(wm.open 是 async —— 顺序 await,保证 monitor 最后打开并持有焦点)
   await ev(`[...document.querySelectorAll('.win')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(500);
@@ -949,45 +949,29 @@ group('T22', '多窗口模式:平铺/层叠/贴边/单活动', async () => {
   const afterFocus = await ev(`document.querySelector('.win.focused').dataset.app`);
   t('T22.2 Alt+Q 切换活动窗口', beforeFocus !== afterFocus, `${beforeFocus} → ${afterFocus}`);
 
-  // 严格单活动:非活动窗口首次点击仅激活(关闭按钮点一次不关,点两次才关)
-  await ev(`WebOS.settings.set({ singleActive: true })`);
-  await sleep(300);
-  const target = await ev(`(() => {
-    const unfocused = [...document.querySelectorAll('.win:not(.focused)')].find(w => w.dataset.app === 'monitor');
-    return unfocused.dataset.app;
-  })()`);
-  const firstClick = await ev(`(() => {
+  // 焦点:非活动窗口任意一次点击既激活又穿透到内容(关闭按钮一下就关)
+  const targetApp = 'monitor';
+  const oneClick = await ev(`(() => {
     const w = document.querySelector('.win[data-app=monitor]');
     const btn = w.querySelector('.wbtn.close');
     btn.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
     btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     return {
-      stillOpen: !!document.querySelector('.win[data-app=monitor]'),
-      nowFocused: w.classList.contains('focused'),
-      dimmed: getComputedStyle(w.querySelector('.win-body')).opacity,
+      activated: w.classList.contains('focused'),
+      bodies: [...document.querySelectorAll('.win .win-body')]
+        .map(b => +getComputedStyle(b).opacity),
     };
   })()`);
-  t('T22.3 首次点击仅激活(不穿透)', firstClick.stillOpen && firstClick.nowFocused,
-    JSON.stringify(firstClick));
-  const dimOther = await ev(`(() => {
+  t('T22.3 一次点击既激活又穿透', oneClick.activated, JSON.stringify(oneClick));
+  await sleep(400);
+  const closedNow = await ev(`!document.querySelector('.win[data-app=monitor]')`);
+  t('T22.4 一次点击即关闭窗口', closedNow === true, `target=${targetApp}`);
+  const noDim = await ev(`(() => {
     const other = document.querySelector('.win[data-app=files]');
     return { opacity: getComputedStyle(other.querySelector('.win-body')).opacity };
   })()`);
-  t('T22.4 非活动窗口变暗', parseFloat(dimOther.opacity) < 0.8, dimOther.opacity);
-  // 第二次点击真正关闭(窗口有 170ms 退场动画,延迟后检查)
-  await ev(`(() => {
-    const btn = document.querySelector('.win[data-app=monitor] .wbtn.close');
-    btn.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    return true;
-  })()`);
-  await sleep(400);
-  const secondClick = await ev(`!document.querySelector('.win[data-app=monitor]')`);
-  t('T22.5 第二次点击生效', secondClick === true);
-
-  await ev(`WebOS.settings.set({ singleActive: false })`);
-  await sleep(300);
+  t('T22.5 非活动窗口不变暗', parseFloat(noDim.opacity) > 0.95, noDim.opacity);
 
   // 拖拽贴边分屏:把 files 窗口拖到左边缘 → 左半屏
   await ev(`(async () => {
@@ -3147,6 +3131,137 @@ group('T44', '五子棋(双规则 / 禁手标记 / AI 应答)', async () => {
   const errs = await ev(`window.__errs.length`);
   t('T44.9 全程无错误', errs === 0, `errs=${errs}`);
   await c.shot('t44-gomoku');
+});
+
+group('T45', '三级弹窗锁定任务栏', async () => {
+  /* ---- T45 三级(系统模态)弹框期间,任务栏一并锁定 ----
+   * 遮罩挂在窗口层盖不到任务栏,锁定由 sys:modal 事件驱动:
+   * taskbar 加 sys-locked + inert,startmenu 收起。 */
+  await fresh();
+  await ev(`WebOS.wm.open('calc')`);   // 对照窗口:解锁后系统应恢复
+  await sleep(500);
+
+  // 预置:先打开开始菜单,弹框一出应立即收起
+  await ev(`document.getElementById('start-btn').click()`);
+  await sleep(300);
+  const smBefore = await ev(`document.getElementById('start-menu').classList.contains('open')`);
+  t('T45.0 预置:开始菜单已打开', smBefore === true, `open=${smBefore}`);
+
+  // confirm() 返回的 Promise 在弹框关闭前不兑现,而 evaluate 是 awaitPromise:true,
+  // 所以必须包在 async IIFE 里发出去,不能裸 evaluate 这个 Promise
+  await ev(`(async () => { WebOS.dialogs.confirm({ level: 3, title: '锁定任务栏测试', message: '系统模态' }); })()`);
+  await waitFor(`!!document.querySelector('.modal-shade')`);
+  const locked = await ev(`(() => {
+    const tb = document.getElementById('taskbar');
+    const r = document.getElementById('start-btn').getBoundingClientRect();
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return {
+      cls: tb.classList.contains('sys-locked'),
+      inert: tb.hasAttribute('inert') || tb.inert === true,
+      smClosed: !document.getElementById('start-menu').classList.contains('open'),
+      hitMissesTaskbar: !tb.contains(hit),
+    };
+  })()`);
+  t('T45.1 三级期间任务栏锁定(类 + inert + 菜单收起 + 点击打不进任务栏)',
+    locked.cls && locked.inert && locked.smClosed && locked.hitMissesTaskbar, JSON.stringify(locked));
+
+  // 真实鼠标点击开始按钮:inert 命中测试挡下,菜单不应打开
+  const sb = await ev(`(() => {
+    const r = document.getElementById('start-btn').getBoundingClientRect();
+    return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+  })()`);
+  await clickReal(sb.x, sb.y);
+  await sleep(300);
+  const smStill = await ev(`!document.getElementById('start-menu').classList.contains('open')`);
+  t('T45.2 三级期间真实点击任务栏无响应', smStill === true);
+
+  // 关闭弹框 → 任务栏解锁,开始菜单恢复可用,窗口恢复可聚焦
+  await ev(`(() => {
+    for (const w of [...document.querySelectorAll('.win[data-app=sysdialog]')]) WebOS.wm.close(w.dataset.id);
+    return true;
+  })()`);
+  await waitFor(`!document.querySelector('.modal-shade')`);
+  const unlocked = await ev(`(async () => {
+    document.getElementById('start-btn').click();
+    await new Promise(r => setTimeout(r, 250));
+    const tb = document.getElementById('taskbar');
+    const calcWin = document.querySelector('.win[data-app=calc]');
+    WebOS.wm.focus(calcWin.dataset.id);
+    return {
+      cls: !tb.classList.contains('sys-locked'),
+      inert: !tb.hasAttribute('inert') && tb.inert !== true,
+      smOpens: document.getElementById('start-menu').classList.contains('open'),
+      calcFocusable: calcWin.classList.contains('focused'),
+    };
+  })()`);
+  t('T45.3 关闭三级后任务栏解锁、菜单可用、窗口可聚焦',
+    unlocked.cls && unlocked.inert && unlocked.smOpens && unlocked.calcFocusable, JSON.stringify(unlocked));
+  await ev(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+
+  const errs = await ev(`window.__errs.length`);
+  t('T45.4 全程无错误', errs === 0, `errs=${errs}`);
+});
+
+group('T46', '应用内弹框为二级(五子棋终局)', async () => {
+  /* ---- T46 五子棋终局弹框走 ctx.dialogs(二级 · 应用模态):
+   * 不再全屏遮罩锁系统,只锁五子棋自己的窗口,任务栏与其他应用照常 ---- */
+  await fresh();
+  await ev(`WebOS.wm.open('calc')`);   // 对照:二级不锁其他应用
+  await sleep(400);
+  await ev(`WebOS.wm.open('gomoku')`);
+  await sleep(700);
+
+  // 切双人模式 + 新对局,按谱连成五连(黑 112/111/110/109/108 横五连)
+  await ev(`(() => {
+    const btns = [...document.querySelectorAll('.win[data-app=gomoku] .app-toolbar .btn')];
+    btns.find(b => b.textContent === '人机').click();
+    btns.find(b => b.textContent.includes('新对局')).click();
+    return true;
+  })()`);
+  await sleep(350);
+  for (const i of [112, 0, 111, 1, 110, 2, 109, 3, 108]) {
+    await ev(`document.querySelector('.win[data-app=gomoku] .gk-pt[data-i="${i}"]').click()`);
+    await sleep(120);
+  }
+
+  const st = await waitFor(`(() => {
+    const dlg = [...document.querySelectorAll('.win[data-app=sysdialog]')].pop();
+    if (!dlg) return null;
+    const gk = document.querySelector('.win[data-app=gomoku]');
+    const tb = document.getElementById('taskbar');
+    return {
+      title: dlg.querySelector('.dlg-title')?.textContent,
+      noSysShade: !document.querySelector('.modal-shade'),
+      shadeOnGomoku: !!gk.querySelector('.app-shade'),
+      taskbarFree: !tb.classList.contains('sys-locked') && !tb.hasAttribute('inert'),
+    };
+  })()`);
+  t('T46 终局弹框为二级:遮罩只盖五子棋,系统与任务栏照常',
+    st && st.title === '终局' && st.noSysShade && st.shadeOnGomoku && st.taskbarFree, JSON.stringify(st));
+
+  const focusable = await ev(`(() => {
+    const calc = document.querySelector('.win[data-app=calc]');
+    WebOS.wm.focus(calc.dataset.id);
+    return calc.classList.contains('focused');
+  })()`);
+  t('T46.1 二级不锁其他应用(calc 可聚焦)', focusable === true);
+
+  // 关闭弹框 → 五子棋解锁
+  await ev(`(() => {
+    for (const w of [...document.querySelectorAll('.win[data-app=sysdialog]')]) WebOS.wm.close(w.dataset.id);
+    return true;
+  })()`);
+  const released = await waitFor(`(() => {
+    const gk = document.querySelector('.win[data-app=gomoku]');
+    if (!gk) return null;
+    WebOS.wm.focus(gk.dataset.id);
+    return !gk.querySelector('.app-shade') && gk.classList.contains('focused');
+  })()`);
+  t('T46.2 关闭弹框后五子棋解锁', released === true);
+
+  const errs = await ev(`window.__errs.length`);
+  t('T46.3 全程无错误', errs === 0, `errs=${errs}`);
+  await c.shot('t46-gomoku-endgame');
 });
 
 

@@ -20,8 +20,8 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './reversi.css';
-import { dialogs } from '../../core/dialogs.js';
 import { pickOthelloMove } from '../../../vendor/AetherOthello/src/policy.js';
+import { reportBoardMin } from '../../core/wm.js';
 
 /* 难度表、局面规则**都不 import**:表是引擎的实现细节({type:'levels'} 自报),
  * 合法性 / 翻子 / 数子 / 终局 / 胜者是规则({type:'state'} 查询)——
@@ -65,7 +65,9 @@ function halfs(b, color) {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  mount(ctx) {
+    /* dialogs = ctx.dialogs:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+    const { root, setTitle, bus, dialogs } = ctx;
     let board = initBoard();
     let turn = 'b';          // 行棋方(黑先)
     let gameOver = false;
@@ -521,7 +523,7 @@ register({
       onClick: doUndo,
     }, icon('reply', 13), '悔棋');
 
-    root.append(el('div', { class: 'app' },
+    const appEl = el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         newBtn,
         el('label', { class: 'rv-level-wrap', title: 'AI 难度' },
@@ -532,7 +534,11 @@ register({
       el('div', { class: 'app-body', style: { display: 'grid', placeItems: 'center' } }, boardEl),
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
-        infoL)));
+        infoL));
+    root.append(appEl);
+    /* 棋盘是固定像素的(56px 格 + 3px 缝),窗口再小它也不缩 —— 最小窗口尺寸
+     * 直接按实测棋盘报给 WM,改棋盘常量不用回头改清单;520 是工具栏挤不下时的兜底宽。 */
+    reportBoardMin(ctx, appEl, boardEl, 520);
 
     /* 问引擎要难度表与初始局面:放在 DOM 挂好之后、钩子之前,探针一进来
      * 就能看到。故意不 await:mount 不该为一个消息往返卡住,界面自己会就绪。 */

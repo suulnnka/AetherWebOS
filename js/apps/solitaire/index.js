@@ -9,7 +9,6 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './solitaire.css';
-import { dialogs } from '../../core/dialogs.js';
 
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RED = new Set(['♥', '♦']);
@@ -28,7 +27,8 @@ function newDeck() {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, bus, dialogs }) {
     let stock = [], waste = [], foundations = [[], [], [], []], tableau = [];
     let sel = null;           // { zone, index, cardIndex }
     let moves = 0, score = 0, won = false;

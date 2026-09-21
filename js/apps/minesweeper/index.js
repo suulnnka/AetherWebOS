@@ -7,7 +7,6 @@ import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './minesweeper.css';
-import { dialogs } from '../../core/dialogs.js';
 
 const LEVELS = {
   easy: { cols: 9, rows: 9, mines: 10, name: '初级' },
@@ -18,7 +17,8 @@ const NUM_COLORS = ['', '#2563eb', '#15803d', '#dc2626', '#6d28d9', '#b45309', '
 
 register({
   ...manifest,
-  mount({ root, setTitle }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, dialogs }) {
     let level = 'easy';
     let grid, mines, revealed, flagged, started, dead, won;
     let flags = 0, time = 0, timer = null;

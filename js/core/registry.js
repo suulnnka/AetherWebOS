@@ -7,7 +7,8 @@
  *   icon       icons.js 中的图标名
  *   color      磁贴背景(CSS background 值)
  *   width/height        初始窗口尺寸
- *   min:{w,h}           最小尺寸
+ *   min:{w,h}           最小尺寸(整窗)
+ *   contentMin:{w,h}    最小尺寸(内容区,WM 补标题栏/边框;棋类由棋盘实测上报)
  *   singleton  是否单实例(再次打开时聚焦已有窗口)
  *   resizable  是否允许调整大小(默认 true)
  *   desktop    是否出现在开始菜单(默认 true;false 同时不参与桌面快捷方式播种)

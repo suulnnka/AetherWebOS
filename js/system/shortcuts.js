@@ -1,6 +1,5 @@
 import { el } from '../core/utils.js';
 import { icon } from '../core/icons.js';
-import { settings } from '../core/store.js';
 import * as wm from '../core/wm.js';
 import { hideMenu, showMenu } from '../core/menu.js';
 import { toggleStartMenu } from './startmenu.js';
@@ -13,16 +12,10 @@ export function setupLayoutButton() {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    const on = settings.get('singleActive');
     showMenu(r.left - 150, r.top - 170, [
       { label: '网格平铺全部窗口', icon: 'grid', fn: () => wm.tile() },
       { label: '层叠排列', icon: 'restore', fn: () => wm.cascade() },
       { label: '切换活动窗口(Alt+Q)', icon: 'refresh', fn: () => wm.focusCycle() },
-      { sep: true },
-      {
-        label: on ? '✓ 单活动窗口模式' : '单活动窗口模式',
-        icon: 'check', fn: () => settings.set({ singleActive: !on }),
-      },
     ]);
   });
   document.getElementById('tray').before(btn);

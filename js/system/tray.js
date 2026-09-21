@@ -42,6 +42,9 @@ document.addEventListener('pointerdown', (e) => {
   if (openPop && !e.target.closest('.popover') && !e.target.closest('.tray-btn')) closePopover();
 }, true);
 
+/* 三级(系统模态)弹框弹出时收起托盘面板:模态期只允许对话框交互(见 wm.js raiseShade) */
+subscribe('sys:modal', (p) => { if (p?.locked) closePopover(); });
+
 /* ---- 音量面板 ---- */
 function volIconName() {
   const s = settings.get();

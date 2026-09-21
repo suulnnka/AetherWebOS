@@ -99,8 +99,3 @@
   cursor: not-allowed;
   animation: fadeIn 0.15s ease-out;
 }
-
-/* 单活动窗口模式:非活动窗口内容变暗下沉 */
-body.single-active .win:not(.focused) .win-body { opacity: 0.62; filter: saturate(0.75); }
-body.single-active .win:not(.focused) { transition: box-shadow 0.3s; }
-.single-active .win .win-body { transition: opacity 0.25s, filter 0.25s; }

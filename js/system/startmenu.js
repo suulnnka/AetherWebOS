@@ -87,6 +87,9 @@ document.addEventListener('pointerdown', (e) => {
   if (smOpen && !e.target.closest('#start-menu') && !e.target.closest('#start-btn')) toggleStartMenu(false);
 });
 
+/* 三级(系统模态)弹框弹出时收起开始菜单:模态期只允许对话框交互(见 wm.js raiseShade) */
+subscribe('sys:modal', (p) => { if (p?.locked && smOpen) toggleStartMenu(false); });
+
 export function renderStartUser() {
   const user = accounts.current();
   const name = user ? (accounts.displayName() || user) : settings.get('username');

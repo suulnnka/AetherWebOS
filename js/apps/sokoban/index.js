@@ -7,7 +7,6 @@
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
-import { dialogs } from '../../core/dialogs.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './sokoban.css';
@@ -100,7 +99,8 @@ function parseLevel(lv) {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, bus, dialogs }) {
     let levelIdx = 0;
     let level = null;
     let undoStack = [];

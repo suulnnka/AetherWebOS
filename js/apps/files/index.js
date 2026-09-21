@@ -7,16 +7,9 @@ import './files.css';
 import fs from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
-import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
-
-/** 系统对话框:输入(返回 string|null)与危险确认(返回 boolean) */
-const modalPrompt = (title, placeholder, value) =>
-  dialogs.prompt({ title, message: '输入名称:', placeholder, value });
-const modalConfirm = (title, body, danger) =>
-  dialogs.confirm({ title, message: body, danger, okText: '删除' });
 
 const QUICK = [
   { name: '主目录', path: '/home', icon: 'home' },
@@ -49,7 +42,14 @@ function fmtTime(ts) {
 
 register({
   ...manifest,
-  mount({ root, bus, params, setTitle }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, bus, params, setTitle, dialogs }) {
+    /** 对话框封装:输入(返回 string|null)与危险确认(返回 boolean) */
+    const modalPrompt = (title, placeholder, value) =>
+      dialogs.prompt({ title, message: '输入名称:', placeholder, value });
+    const modalConfirm = (title, body, danger) =>
+      dialogs.confirm({ title, message: body, danger, okText: '删除' });
+
     let cwd = params.path && fs.isDir(params.path) ? fs.normPath(params.path) : '/home';
     let selected = null;
     let history = [];

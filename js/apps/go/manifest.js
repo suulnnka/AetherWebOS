@@ -6,7 +6,8 @@ export default {
   color: 'linear-gradient(135deg,#475569,#111827)',
   neon: { a: '#94a3b8', b: '#e2e8f0' },
   width: 640, height: 720,
-  min: { w: 520, h: 600 },
+  // 不写 min:棋盘固定像素(CS 52 × 9 路),最小窗口尺寸挂载后按实测棋盘
+  // 经 wm.reportBoardMin() 上报 —— 改 CS 不用回头改清单(见 wm.js 的最小尺寸规范)
   singleton: true,
   desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 /home/desktop/棋类游戏)
   order: 9.7,

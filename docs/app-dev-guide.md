@@ -87,7 +87,8 @@ register({
 | `color` | string | — | 磁贴背景,任意 CSS background 值 |
 | `neon` | `{a,b}` | — | 霓虹未来皮肤的双色灯条(窗头流光) |
 | `width`/`height` | number | 780/540 | 初始窗口尺寸 |
-| `min` | `{w,h}` | 360/240 | 最小尺寸 |
+| `min` | `{w,h}` | 360/240 | 最小尺寸(**整窗**,WM 直接用) |
+| `contentMin` | `{w,h}` | — | 最小尺寸的**内容区**口径:WM 补上窗框(标题栏 + 边框)后再生效。适合「内容尺寸由代码算出来」的应用(见下) |
 | `singleton` | boolean | false | 单实例:再次 open 时聚焦已有窗口 |
 | `resizable` | boolean | true | 是否允许拖拽调整大小 |
 | `desktop` | boolean | true | 是否出现在开始菜单;false 同时不参与桌面快捷方式播种 |
@@ -109,7 +110,8 @@ register({
 | `setTitle(t)` | 改窗口标题(任务栏/IPC 同步广播) |
 | `close()` | 关闭自己 |
 | `focus()` | 激活自己 |
-| `setSize(w, h)` | 程序化调整窗口尺寸 |
+| `setSize(w, h)` | 程序化调整窗口尺寸(会被窗口下限夹住) |
+| `setContentMin({w,h})` | 运行时上报「内容区」最小尺寸,窗框由 WM 补。内容尺寸由代码算出来时用这个(棋盘尺寸改了不必回头改清单);当前窗口比新下限小会被顺势撑开 |
 | `onContextMenu(fn)` | 注册应用内右键菜单,见 §7 |
 
 `mount` 可以返回生命周期钩子:
@@ -204,7 +206,7 @@ const h = dialogs.progress({ title, determinate: true })     // h.set(pct, msg) 
 | --- | --- |
 | `level: 1` | 非模态:不影响任何界面,其他窗口/任务栏/桌面照常可操作 |
 | `level: 2` | 应用模态:锁定 `owner` 应用打开的所有窗口,其余系统照常 |
-| `level: 3` | 系统模态:全屏锁定,关闭弹框前整个系统不可操作(默认) |
+| `level: 3` | 系统模态:全屏遮罩 + 任务栏锁定(inert、开始菜单/托盘面板收起),关闭弹框前整个系统不可操作(默认) |
 
 ```js
 dialogs.confirm({ level: 1, title: '随手记' })                      // 浮窗,不打断任何操作
@@ -358,7 +360,7 @@ await copyText(text);   // Clipboard API + execCommand 回退
 - `singleton: true` 的应用重复 `open` 只聚焦不重挂,新参数靠 `bus.on('params')`;
 - `mount` 执行时窗口框架已进入 DOM(惰性应用为骨架回填),mount 里可直接测量布局;
 - `mount` 返回的 `onClose` 里回收资源(对象 URL、定时器、事件监听);
-- `onResize(w, h)` 跟随窗口拖拽/最大化/平铺触发,canvas 类应用在这里重设尺寸;
+- `onResize(w, h)` 跟随窗口拖拽/最大化/平铺/浏览器窗口缩放触发,canvas 类应用在这里重设尺寸;
 - 应用挂载抛异常不会拖垮系统:窗口内会显示"应用启动失败"错误卡。
 
 ## 9. 调试与测试

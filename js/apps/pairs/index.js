@@ -8,7 +8,6 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './pairs.css';
-import { dialogs } from '../../core/dialogs.js';
 
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
@@ -16,7 +15,8 @@ const RED = new Set(['♥', '♦']);
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, bus, dialogs }) {
     let size = 4;            // 4 = 4x4(8 对), 6 = 6x6(18 对)
     let deck = [];           // { suit, rank, matched, id }
     let open = [];           // 当前翻开未配对的索引

@@ -12,7 +12,6 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './todo.css';
-import { dialogs } from '../../core/dialogs.js';
 import { subscribe, publish } from '../../core/bus.js';
 import fs from '../../core/fs.js';
 import sms from '../../core/sms.js';
@@ -65,7 +64,8 @@ const dueMeta = (t) => {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus, onContextMenu }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, bus, onContextMenu, dialogs }) {
     // ---- 账号门:未登录先渲染登录面板 ----
     if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
       return;

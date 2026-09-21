@@ -13,7 +13,6 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './memo.css';
-import { dialogs } from '../../core/dialogs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { accounts } from '../../core/accounts.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
@@ -52,7 +51,8 @@ const COLORS = ['#fef3c7', '#bbf7d0', '#bfdbfe', '#fbcfe8', '#e9d5ff', '#e2e8f0'
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus, onContextMenu }) {
+  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
+  mount({ root, setTitle, bus, onContextMenu, dialogs }) {
     if (requireLogin(root, '笔记', () => { root.innerHTML = ''; appRemount(); })) return;
     state = load();
     if (!state) {

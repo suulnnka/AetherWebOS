@@ -25,12 +25,73 @@ let cascadeSeq = 0;
 /* ============================================================
  * 模态分级:0 = 非模态(一级,不影响任何界面)
  *           2 = 应用模态(二级,锁定弹出者应用的所有窗口)
- *           3 = 系统模态(三级,锁定整个桌面,仅对话框可操作)
+ *           3 = 系统模态(三级,锁定整个系统:窗口区遮罩 + 任务栏 inert,
+ *               仅对话框可操作)
  * dialog 窗口默认级别 3;普通窗口默认 0。
  * ============================================================ */
 let shadeEl = null;
 const modalWins = new Set();     // 系统模态(三级)对话框
 const appModalWins = new Set();  // 应用模态(二级)对话框
+
+/* ============================================================
+ * 最小尺寸规范(WM 统一口径)
+ *
+ * 下限三档来源,取最大者:
+ *   1) MIN_W / MIN_H —— 全局兜底,清单什么都没声明时用;
+ *   2) app.min       —— 「整窗」下限,多数应用直接给这个(如浏览器 520×360);
+ *   3) app.contentMin—— 「内容区」下限,WM 负责补窗框(标题栏 + 边框)。
+ *      棋类走这条:棋盘是固定像素、窗口再小棋盘也不缩,下限就是棋盘尺寸,
+ *      不该在每个应用里各自重复「标题栏 38 + 边框 2」这种窗框魔数。
+ *
+ * 最后还要夹一层「不得超过桌面可用区」—— 小屏上窗口不能被自己的下限撑出屏幕。
+ * ============================================================ */
+const MIN_W = 320, MIN_H = 200;
+
+/** 窗框实测:横向只有左右边框,纵向是标题栏 + 上下边框。
+ *  量不出来(未布局 / 已最小化 display:none)时退回常量,别把下限算成 0。 */
+function chromeOf(w) {
+  const x = w.el.offsetWidth - w.body.offsetWidth;
+  const y = w.el.offsetHeight - w.body.offsetHeight;
+  return { x: x > 0 && x < 80 ? x : 2, y: y > 0 && y < 120 ? y : 40 };
+}
+
+/** 窗口当前下限(每次现算:主题换了标题栏高度、应用调了 setContentMin 都能跟上) */
+function minSizeOf(w) {
+  if (w.app?.dialog) return { w: 0, h: 0 };      // 对话框按内容定尺寸,不套下限
+  const a = area();
+  const c = chromeOf(w);
+  const cw = w.contentMin ? w.contentMin.w + c.x : 0;
+  const ch = w.contentMin ? w.contentMin.h + c.y : 0;
+  return {
+    w: Math.min(Math.max(MIN_W, w.app?.min?.w || 0, cw), a.width),
+    h: Math.min(Math.max(MIN_H, w.app?.min?.h || 0, ch), a.height),
+  };
+}
+
+/** 棋类专用:把「棋盘尺寸」翻译成窗口下限交给 WM(内部走 ctx.setContentMin)。
+ *
+ *  棋类棋盘是固定像素的,窗口再小它也不缩 —— 所以下限就该是
+ *  「棋盘 + 窗内铬(工具栏 + 状态栏)」,而不是清单里拍脑袋写的一个数。
+ *  工具栏/状态栏高度实测,棋盘尺寸由调用方给(棋盘会缩放的按格距下限换算),
+ *  于是以后改棋盘常量(CS / --cs)不用回头改清单。
+ *
+ * @param ctx    挂载上下文
+ * @param appEl  应用根元素(.app)
+ * @param board  棋盘元素(取 offsetWidth/Height)或直接给 { w, h }
+ * @param minW   宽度兜底:工具栏比棋盘还宽时用它(默认 0 = 只按棋盘定宽)
+ */
+export function reportBoardMin(ctx, appEl, board, minW = 0) {
+  if (!appEl || !ctx?.setContentMin) return;
+  const bw = board?.offsetWidth || board?.w || 0;
+  const bh = board?.offsetHeight || board?.h || 0;
+  if (!bw || !bh) return;                       // 还没布局,等下一次(比如视图切换后)
+  const tool = appEl.querySelector('.app-toolbar');
+  const stat = appEl.querySelector('.app-status');
+  ctx.setContentMin({
+    w: Math.max(bw, minW),
+    h: bh + (tool?.offsetHeight || 44) + (stat?.offsetHeight || 26),
+  });
+}
 
 /** 应用模态:窗口 w 是否被其应用的二级弹框锁定 */
 function isAppLocked(w) {
@@ -55,14 +116,23 @@ function syncAppShades() {
 }
 
 function raiseShade() {
-  if (!modalWins.size) { shadeEl?.remove(); shadeEl = null; return; }
-  if (!shadeEl) {
-    shadeEl = el('div', { class: 'modal-shade' });
-    layerEl().append(shadeEl);
+  const locked = modalWins.size > 0;
+  if (!locked) {
+    shadeEl?.remove();
+    shadeEl = null;
+  } else {
+    if (!shadeEl) {
+      shadeEl = el('div', { class: 'modal-shade' });
+      layerEl().append(shadeEl);
+    }
+    // 遮罩压在最低的对话框之下,堆叠的多个对话框都保持可见
+    const bottom = Math.min(...[...modalWins].map(w => +w.el.style.zIndex || 0));
+    shadeEl.style.zIndex = Math.max(1, bottom - 1);
   }
-  // 遮罩压在最低的对话框之下,堆叠的多个对话框都保持可见
-  const bottom = Math.min(...[...modalWins].map(w => +w.el.style.zIndex || 0));
-  shadeEl.style.zIndex = Math.max(1, bottom - 1);
+  // 三级模态锁的是「整个系统」,而遮罩挂在窗口层,物理上盖不到任务栏 ——
+  // 任务栏/开始菜单/托盘的锁定与已开面板的收起由订阅方完成
+  // (taskbar.js 加锁 + inert,startmenu.js / tray.js 收面板)
+  publish('sys:modal', { from: 'wm', type: 'modal', payload: { locked } });
 }
 
 const layerEl = () => document.getElementById('windows');
@@ -214,6 +284,8 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     modalLevel: level ?? (app.dialog ? 3 : 0),
     ownerApp: owner || null,    // 二级弹框:锁定的目标应用
     shadeEl: null,
+    // 内容区下限(清单给的初值;应用挂载后可用 ctx.setContentMin() 按实测棋盘覆盖)
+    contentMin: app.contentMin ? { ...app.contentMin } : null,
   };
 
   const win = {
@@ -226,20 +298,20 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     btnMax.addEventListener('click', () => toggleMax(id));
   }
   btnClose.addEventListener('click', () => close(id));
-  // 多窗口模式:始终只允许一个活动窗口;严格模式下,非活动窗口的
-  // 首次点击仅用于激活(取消兼容鼠标事件,点击不穿透到内容)
-  root.addEventListener('pointerdown', (e) => {
-    const wasFocused = root.classList.contains('focused');
-    focus(id);
-    if (!wasFocused && settings.get('singleActive')) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }, true);
+  // 多窗口模式:按下即把焦点给这个窗口。这一次点击照常穿透到内容
+  // (与 Windows / macOS 一致;早先的"首次点击仅激活"模式已移除)
+  root.addEventListener('pointerdown', () => focus(id), true);
 
   // 窗口先进 DOM 再挂载:同步挂载与惰性回填两条路径行为一致,
   // 应用在 mount 里即可安全测量布局
   layerEl().append(root);
+
+  // 开窗口就按下限校一遍:桌面可用区比清单宽高还小时会触发(此时才能量到窗框)
+  {
+    const mn = minSizeOf(w);
+    if (width < mn.w) root.style.width = mn.w + 'px';
+    if (height < mn.h) root.style.height = mn.h + 'px';
+  }
 
   // 挂载内容
   w.bus = createAppBus(app.id);
@@ -259,8 +331,19 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     },
     close: () => close(id),
     focus: () => focus(id),
-    /** 程序化调整窗口尺寸(对话框自适应内容高度等) */
+    /** 程序化调整窗口尺寸(对话框自适应内容高度等);会被窗口下限夹住 */
     setSize: (nw, nh) => applyRect(w, { x: w.el.offsetLeft, y: w.el.offsetTop, w: nw, h: nh }, false),
+    /** 上报「内容区」下限(不含标题栏/边框,WM 补):
+     *  棋类按实测棋盘给 —— 棋盘尺寸改了不用回头改清单;已开的窗口立刻生效,
+     *  并且如果当前比新下限还小,顺势把窗口撑到下限(免得卡在缩过头的状态) */
+    setContentMin: (cm) => {
+      w.contentMin = cm && cm.w > 0 && cm.h > 0 ? { w: cm.w, h: cm.h } : null;
+      if (w.state !== 'normal') return;
+      const mn = minSizeOf(w);
+      if (w.el.offsetWidth < mn.w || w.el.offsetHeight < mn.h) {
+        applyRect(w, { x: w.el.offsetLeft, y: w.el.offsetTop, w: mn.w, h: mn.h }, false);
+      }
+    },
     /** 应用绑定弹框:owner 自动为本应用,默认二级(应用模态);
         { level: 1 } 非模态 / { level: 3 } 系统模态 可覆盖 */
     dialogs: dialogHelpers(app.id),
@@ -365,7 +448,7 @@ export function close(id) {
 export function focus(id) {
   const w = wins.get(id);
   if (!w) return;
-  // 系统模态期:只有对话框可激活(严格单活动窗口)
+  // 系统模态期:只有对话框可激活
   if (modalWins.size && w.modalLevel !== 3) return;
   // 应用模态期:被二级弹框锁定的窗口不可激活
   if (isAppLocked(w)) return;
@@ -420,15 +503,24 @@ export function toggleMax(id) {
   }
 }
 
+/** 落地一个矩形:所有改尺寸的入口(最大化/还原/贴边分屏/平铺/层叠/应用 setSize)都走这里,
+ *  下限在这一层统一兜住,调用方不用各自记着「不能小于 min」。
+ *  给的空间不够就**膨胀到下限**(平铺时因此可能压到隔壁窗口 —— 棋盘不能缩,只能让它盖着),
+ *  膨胀后左上角往回收,尽量让整窗留在桌面内(窗口比桌面还大时钉在 0)。 */
 function applyRect(w, r, animate) {
+  const mn = minSizeOf(w);
+  const a = area();
+  const rect = { x: r.x, y: r.y, w: Math.max(r.w, mn.w), h: Math.max(r.h, mn.h) };
+  rect.x = clamp(rect.x, 0, Math.max(0, a.width - rect.w));
+  rect.y = clamp(rect.y, 0, Math.max(0, a.height - rect.h));
   if (animate) {
     w.el.classList.add('anim');
     setTimeout(() => w.el.classList.remove('anim'), 200);
   }
   Object.assign(w.el.style, {
-    left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px',
+    left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px',
   });
-  w.hooks.onResize?.(r.w, r.h);
+  w.hooks.onResize?.(rect.w, rect.h);
 }
 
 function maximize(w) {
@@ -507,14 +599,14 @@ function makeDraggable(w) {
 
 /* ---------------- 调整大小 ---------------- */
 function makeResizable(w) {
-  const minW = w.app.min?.w || 320;
-  const minH = w.app.min?.h || 200;
   w.el.querySelectorAll('.rz').forEach(handle => {
     handle.addEventListener('pointerdown', (e) => {
       if (w.state === 'max') return;
       e.preventDefault();
       e.stopPropagation();
       focus(w.id);
+      // 每次按下都现算:应用挂载后才上报 contentMin 的情况也能生效
+      const { w: minW, h: minH } = minSizeOf(w);
       const dir = handle.dataset.dir;
       const a = area();
       const sx = e.clientX, sy = e.clientY;
@@ -563,20 +655,25 @@ export function toggleShowDesktop() {
   }
 }
 
-/** 浏览器窗口尺寸变化后重新约束所有窗口 */
+/** 浏览器窗口尺寸变化后重新约束所有窗口:
+ *  桌面变小时窗口跟着收,但**收不过应用上报的下限**(下限本身已被桌面可用区夹过一层),
+ *  并且这里要通知应用(onResize)—— 棋盘类得重新量一次才能跟着变。 */
 export function relayout() {
   const a = area();
   for (const w of wins.values()) {
     if (w.state === 'max') {
       Object.assign(w.el.style, { left: '0px', top: '0px', width: a.width + 'px', height: a.height + 'px' });
+      w.hooks.onResize?.(a.width, a.height);
     } else if (w.state === 'normal') {
-      const ww = Math.min(w.el.offsetWidth, a.width);
-      const hh = Math.min(w.el.offsetHeight, a.height);
+      const mn = minSizeOf(w);
+      const ww = Math.min(Math.max(w.el.offsetWidth, mn.w), a.width);
+      const hh = Math.min(Math.max(w.el.offsetHeight, mn.h), a.height);
       Object.assign(w.el.style, {
         left: clamp(w.el.offsetLeft, -ww + 90, a.width - 90) + 'px',
         top: clamp(w.el.offsetTop, 0, a.height - 36) + 'px',
         width: ww + 'px', height: hh + 'px',
       });
+      w.hooks.onResize?.(ww, hh);
     }
   }
 }

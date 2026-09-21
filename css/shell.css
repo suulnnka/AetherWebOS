@@ -92,6 +92,15 @@
   z-index: 1000;
 }
 
+/* 三级(系统模态)弹框期间:任务栏一并锁定(inert 挡指针/键盘由 wm 提供),
+   压暗与窗口区遮罩同色调,提示「整条栏都不可用」 */
+#taskbar.sys-locked { pointer-events: none; }
+#taskbar.sys-locked::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: rgba(5, 9, 20, 0.35);
+}
+
 .tb-start {
   width: 42px; height: 38px; border-radius: var(--radius-s);
   display: grid; place-items: center; color: var(--text);
