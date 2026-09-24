@@ -17,7 +17,8 @@ export function setupLayoutButton() {
       { label: '切换活动窗口(Alt+Q)', icon: 'refresh', fn: () => wm.focusCycle() },
     ]);
   });
-  document.getElementById('tray').before(btn);
+  // 放进托盘,与音量/通知/时钟一起贴右(不跟任务芯片挤在左侧)
+  document.getElementById('tray').prepend(btn);
 }
 
 /* ============ 全局快捷键 ============ */
