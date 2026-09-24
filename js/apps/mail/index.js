@@ -42,7 +42,7 @@ register({
   mount({ root, setTitle, bus, accounts: _a }) {
     // ---- 账号门 ----
     if (requireLogin(root, '邮件', () => { root.innerHTML = ''; appRemount(); })) return;
-    mail.setUser(accounts.current() || 'default');
+    const bootUser = accounts.current();
     let folder = 'inbox';
     let selId = null;
     let composing = null;   // { to, subject, body, draftId } | null
@@ -224,6 +224,10 @@ register({
     const offNew = subscribe('mail:new', () => render());
     const offChanged = subscribe('mail:changed', () => render());
     render();
+    // appdata 水合完成后重绘
+    if (bootUser) {
+      mail.setUser(bootUser).then(() => render()).catch(() => {});
+    }
     return { onClose() { offNew(); offChanged(); return true; } };
   },
 });

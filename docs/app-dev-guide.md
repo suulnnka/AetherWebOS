@@ -203,7 +203,9 @@ settings.get('volume')   // 单项;settings.get() 全量
 settings.set({ volume: 30 })   // 写入 → 应用到 DOM → 广播 sys:settings-changed
 ```
 
-只存应用自己的数据时,不要塞进系统设置,用 localStorage 键 + `accounts.userKey()`(见 §6)。
+只存应用自己的数据时,不要塞进系统设置。推荐 `js/core/appdata.js`:
+数据落在虚拟路径 `/home/<user>/appdata/<app>`(AetherWebDatabase 页加密库);
+旧 localStorage 键可用 `migrateFromLocalStorage` 一次性迁入。
 
 ### 系统对话框(`dialogs`,全 Promise)
 
@@ -290,16 +292,17 @@ mount({ root, onLoginRetry }) {
 }
 ```
 
-### 存储键速览(localStorage)
+### 存储位置
 
-| 键 | 内容 |
+| 位置 | 内容 |
 |---|---|
-| `webos.settings.v1` | 全部系统设置 |
-| `webos.fs.v1` | 虚拟文件系统整棵树 |
-| `webos.iconpos.v1` | 桌面图标位置 |
-| `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |
-| `webos.vnet.v1` | 虚拟网络状态与游戏旗标 |
-| `webos.<app>.v1` | 应用私有数据(多用户请配 `accounts.userKey()`,见上节) |
+| **OPFS** `webos/fs.v2.json` | 虚拟文件系统整棵树(启动自动从旧 localStorage 键迁移) |
+| **VFS** `/home/<user>/appdata/<app>` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase) |
+| localStorage `webos.settings.v1` | 全部系统设置 |
+| localStorage `webos.iconpos.v1` | 桌面图标位置 |
+| localStorage `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |
+| localStorage `webos.vnet.v1` | 虚拟网络状态与游戏旗标 |
+| localStorage `webos.<app>.v1` | 旧应用私有数据(短信/邮件/任务等已迁 appdata,键仅作迁移源) |
 
 「系统设置 → 系统」可查看用量并一键重置。
 

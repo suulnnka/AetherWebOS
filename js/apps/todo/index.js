@@ -2,7 +2,7 @@
  * 应用:任务(Todo)
  *
  * 项目分组 + 优先级 + 截止日期 + 星标 + 进度统计。
- * 数据持久化到 localStorage(webos.todo.v1)。
+ * 数据:加密页库 ~/appdata/todo(AetherWebDatabase);旧键自动迁移。
  * 系统联动:
  *  - 新建带截止日期的任务时可选提醒(经 sys:notify 弹系统通知);
  *  - 桌面/文件管家的 ~/desktop/todo.txt 汇出只读清单(可选命令)。
@@ -17,16 +17,12 @@ import sms from '../../core/sms.js';
 import { accounts } from '../../core/accounts.js';
 import { reopen } from '../../core/wm.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
+import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
 
 const KEY = 'webos.todo.v1';
 let state = null;
-function load() {
-  const userKey = accounts.userKey(KEY);
-  if (!userKey) return null;
-  try {
-    const s = JSON.parse(localStorage.getItem(userKey));
-    if (s && Array.isArray(s.tasks)) return s;
-  } catch { /* 忽略 */ }
+
+function defaultState() {
   return {
     seq: 1,
     projects: ['个人', '工作'],
@@ -37,13 +33,39 @@ function load() {
     ],
   };
 }
+
+function normalize(raw) {
+  if (raw && Array.isArray(raw.tasks)) {
+    return {
+      seq: raw.seq || 1,
+      projects: Array.isArray(raw.projects) && raw.projects.length ? raw.projects : ['个人', '工作'],
+      tasks: raw.tasks,
+    };
+  }
+  return null;
+}
+
+/** 异步水合:appdata / 旧 localStorage 迁移 */
+async function loadAsync() {
+  const user = accounts.current();
+  if (!user) return null;
+  try {
+    const data = await migrateFromLocalStorage('todo', accounts.userKey(KEY), normalize, user);
+    return data ?? normalize(await loadState('todo', user));
+  } catch (e) {
+    console.warn('[todo] 加载失败', e);
+    return null;
+  }
+}
+
 let saveT;
 const persist = () => {
   clearTimeout(saveT);
-  saveT = setTimeout(() => {
-    const userKey = accounts.userKey(KEY);
-    if (!userKey) return;
-    try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[todo] 持久化失败', e); }
+  saveT = setTimeout(async () => {
+    const user = accounts.current();
+    if (!user || !state) return;
+    try { await saveState('todo', state, user); }
+    catch (e) { console.warn('[todo] 持久化失败', e); }
   }, 200);
 };
 
@@ -69,11 +91,7 @@ register({
     if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
       return;
     }
-    state = load();
-    if (!state) {
-      state = { seq: 1, projects: ['个人', '工作'], tasks: [] };
-      persist();
-    }
+    state = defaultState();
 
     // 应用内右键:任务行 → 完成 / 星标 / 删除(文本选中时系统自动附加「复制」)
     onContextMenu(({ target }) => {
@@ -356,11 +374,13 @@ register({
       el('div', { class: 'app-mid' }, side, list),
       el('div', { class: 'app-status' }, statusL, el('span', { class: 'grow' }), statusR)));
 
-    // 跨实例同步:外部写入较新数据时仅采纳(要求其 seq 更大),避免双实例互相覆盖
-    const syncTimer = setInterval(() => {
+    // 跨实例同步:从 appdata 拉取较新数据(仅采纳更大 seq),避免双实例互相覆盖
+    const syncTimer = setInterval(async () => {
       try {
-        const fresh = JSON.parse(localStorage.getItem(KEY));
-        if (fresh && fresh.seq > state.seq) {
+        const user = accounts.current();
+        if (!user) return;
+        const fresh = normalize(await loadState('todo', user));
+        if (fresh && state && fresh.seq > state.seq) {
           state = fresh;
           render();
         }
@@ -368,6 +388,12 @@ register({
     }, 1500);
 
     render();
+    // 异步水合后重绘(默认种子先显示;无库则落盘种子)
+    loadAsync().then((s) => {
+      if (s) state = s;
+      else persist();
+      render();
+    });
     const offFs = subscribe('sys:fs-changed', () => { /* 桌面 todo.txt 由文件系统事件刷新 */ });
     return { onClose() { clearInterval(dueTimer); clearInterval(syncTimer); offFs(); return true; } };
   },

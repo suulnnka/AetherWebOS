@@ -4,7 +4,7 @@
  * 按日期记录每一天:左侧月历导航(有日记的日子带圆点标记,
  * 点击切换日期,跨月自动翻页),右侧编辑正文并选择心情;
  * 输入即自动保存(防抖),「今天」一键回位。
- * 数据按用户持久化到 localStorage(webos.diary.v1::<user>)。
+ * 数据:加密页库 ~/appdata/diary;旧键自动迁移。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
@@ -13,6 +13,7 @@ import './diary.css';
 import { accounts } from '../../core/accounts.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 import { reopen } from '../../core/wm.js';
+import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
 
 const KEY = 'webos.diary.v1';
 const MOODS = ['😄', '🙂', '😐', '😢', '😠'];
@@ -24,22 +25,32 @@ const keyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDat
 const fmtLong = (d) => `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${WEEKDAY[d.getDay()]}`;
 
 let state = null;
-function load() {
-  const userKey = accounts.userKey(KEY);
-  if (!userKey) return null;
-  try {
-    const s = JSON.parse(localStorage.getItem(userKey));
-    if (s && s.entries) return s;
-  } catch { /* 忽略 */ }
+
+function normalize(raw) {
+  if (raw && raw.entries) return { seq: raw.seq || 1, entries: raw.entries };
   return { seq: 1, entries: {} };
 }
+
+async function loadAsync() {
+  const user = accounts.current();
+  if (!user) return null;
+  try {
+    const data = await migrateFromLocalStorage('diary', accounts.userKey(KEY), normalize, user);
+    return data ?? normalize(await loadState('diary', user));
+  } catch (e) {
+    console.warn('[diary] 加载失败', e);
+    return null;
+  }
+}
+
 let saveT;
 const persist = () => {
   clearTimeout(saveT);
-  saveT = setTimeout(() => {
-    const userKey = accounts.userKey(KEY);
-    if (!userKey) return;
-    try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[diary] 持久化失败', e); }
+  saveT = setTimeout(async () => {
+    const user = accounts.current();
+    if (!user || !state) return;
+    try { await saveState('diary', state, user); }
+    catch (e) { console.warn('[diary] 持久化失败', e); }
   }, 200);
 };
 
@@ -48,8 +59,10 @@ register({
   mount({ root, setTitle }) {
     if (requireLogin(root, '日记', () => { root.innerHTML = ''; appRemount(); })) return;
 
-    // 单例重开时重读持久化数据(其他窗口/注入可能已更新)
-    state = load();
+    state = { seq: 1, entries: {} };
+    loadAsync().then((s) => {
+      if (s) { state = s; render(); }
+    });
 
     let sel = new Date();                     // 当前选中的日期
     let viewY = sel.getFullYear();            // 月历正在显示的年月

@@ -6,7 +6,7 @@ import { svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings, applyAll as applyAllSettings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
-import fs from '../core/fs.js';
+import fs, { fsReady } from '../core/fs.js';
 import { ensureDesktopShortcuts } from '../core/applink.js';
 import { createAppFs } from '../core/appfs.js';
 import vnet from '../core/vnet.js';
@@ -33,6 +33,8 @@ function boot() {
 
   // 首启:尚无任何可登录用户 → 自动创建默认账号并登录(不进注册锁屏)
   const start = async () => {
+    try { await fsReady(); }   // OPFS 装载/迁移完成后再碰文件系统
+    catch (e) { console.warn('[boot] FS 就绪失败:', e); }
     if (!accounts.current() && !accounts.list().length) {
       try { await accounts.bootstrapIfNeeded(); }
       catch (e) { console.warn('[boot] 自动创建初始用户失败:', e); }

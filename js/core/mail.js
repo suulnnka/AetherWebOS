@@ -1,6 +1,10 @@
 /* ============================================================
  * Mail —— 虚拟邮件服务
  *
+ * 数据:加密页库 ~/appdata/mail(AetherWebDatabase):
+ *   /home/<user>/appdata/mail;同步 API 读内存,异步水合/落盘。
+ * 旧键 webos.mail.v1::<user> 首次启动自动迁移后删除。
+ *
  * 面向玩家:邮件应用(收件箱/已发送/草稿/垃圾箱,持久化)
  * 面向游戏作者:
  *   mail.deliver({ from, fromName, subject, body, attachments })   立即投递
@@ -11,45 +15,74 @@
  * 事件:mail:new / mail:changed(总线,监视器可观测);新邮件触发系统通知。
  * ============================================================ */
 import { publish } from './bus.js';
-import { uuid } from './utils.js';
+import { accounts } from './accounts.js';
+import { fsReady } from './fs.js';
+import { loadState, saveState, migrateFromLocalStorage } from './appdata.js';
 
 const KEY = 'webos.mail.v1';
-let activeUser = null;          // 由 mail 应用登录后设置(setUser)
+let activeUser = null;
 let state = null;
+let saveTimer = null;
+let seedHooks = [];
 
-/** 登录后由应用调用:切换用户数据空间 */
-const seedHooks = [];
 /** 注册"新用户空间首次使用"钩子(用于播种初始邮件) */
-export function onFirstUse(fn) { seedHooks.push(fn); }
-export function setUser(name) {
-  if (activeUser === name && state) return;
-  activeUser = name;
-  const wasNew = !localStorage.getItem(storageKey());
-  state = load();
-  if (wasNew) for (const fn of [...seedHooks]) {
-    try { fn(); } catch (e) { console.error('[mail] seed hook error', e); }
+export function onFirstUse(fn) {
+  seedHooks.push(fn);
+}
+
+function emptyState() {
+  return { seq: 1, mails: [] };
+}
+
+function normalize(raw) {
+  if (raw && Array.isArray(raw.mails)) return { seq: raw.seq || 1, mails: raw.mails };
+  return emptyState();
+}
+
+function scheduleSave() {
+  if (!activeUser || !state) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await saveState('mail', state, activeUser);
+    } catch (e) {
+      console.warn('[mail] 持久化失败', e);
+    }
+  }, 200);
+}
+
+/**
+ * 切换用户数据空间(异步水合)。
+ * 返回 Promise;在 resolve 前 listBy/stats 使用内存态(可能为空)。
+ */
+export async function setUser(name) {
+  const user = accounts.current() || name;
+  if (!user) return;
+  if (activeUser === user && state) return;
+  activeUser = user;
+  state = emptyState();
+  let wasNew = true;
+  try {
+    await fsReady();
+    const data = await migrateFromLocalStorage('mail', `${KEY}::${user}`, normalize, user);
+    const next = data ?? (await loadState('mail', user));
+    if (next) {
+      state = normalize(next);
+      wasNew = false;
+    }
+  } catch (e) {
+    console.warn('[mail] 水合失败:', e);
+  }
+  if (wasNew) {
+    for (const fn of [...seedHooks]) {
+      try { fn(); } catch (e) { console.error('[mail] seed hook error', e); }
+    }
+    scheduleSave();
   }
 }
 
-function storageKey() {
-  return activeUser ? `${KEY}::${activeUser}` : `${KEY}::default`;
-}
 function ensure() {
-  if (!state) state = load();
-}
-function load() {
-  try {
-    const s = JSON.parse(localStorage.getItem(storageKey()));
-    if (s && Array.isArray(s.mails)) return s;
-  } catch { /* 忽略 */ }
-  return { seq: 1, mails: [] };
-}
-let t;
-function persist() {
-  clearTimeout(t);
-  t = setTimeout(() => {
-    try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (e) { console.warn('[mail] 持久化失败', e); }
-  }, 200);
+  if (!state) state = emptyState();
 }
 
 const sendHooks = [];
@@ -71,8 +104,11 @@ export function deliver(spec = {}) {
     starred: !!spec.starred,
   };
   state.mails.unshift(msg);
-  persist();
-  publish('mail:new', { from: 'mail', type: 'new', payload: { id: msg.id, fromName: msg.fromName, subject: msg.subject, folder: msg.folder } });
+  scheduleSave();
+  publish('mail:new', {
+    from: 'mail', type: 'new',
+    payload: { id: msg.id, fromName: msg.fromName, subject: msg.subject, folder: msg.folder },
+  });
   if (msg.folder === 'inbox') {
     publish('sys:notify', {
       from: 'mail', type: 'notify',
@@ -94,41 +130,55 @@ export function send({ to, subject, body }) {
     try {
       const reply = fn(msg);
       if (reply) deliverLater({ from: to, fromName: reply.fromName || to, ...reply }, reply.delay ?? 1200);
-    } catch (e) { console.error('[mail] onSend 钩子异常', e); }
+    } catch (e) {
+      console.error('[mail] onSend 钩子异常', e);
+    }
   }
   return msg;
 }
 
 /** 游戏作者注册发信钩子 */
-export function onSend(fn) { sendHooks.push(fn); }
+export function onSend(fn) {
+  sendHooks.push(fn);
+}
 
-export const listBy = (folder) => { ensure(); return state.mails.filter(m => m.folder === folder); };
-export const get = (id) => { ensure(); return state.mails.find(m => m.id === id); };
+export const listBy = (folder) => {
+  ensure();
+  return state.mails.filter((m) => m.folder === folder);
+};
+export const get = (id) => {
+  ensure();
+  return state.mails.find((m) => m.id === id);
+};
 export function markRead(id, val = true) {
-  const m = get(id); if (!m) return;
-  m.read = val; persist();
+  const m = get(id);
+  if (!m) return;
+  m.read = val;
+  scheduleSave();
   publish('mail:changed', { from: 'mail', type: 'changed', payload: { id, read: val } });
 }
 export function toggleStar(id) {
-  const m = get(id); if (!m) return false;
-  m.starred = !m.starred; persist();
+  const m = get(id);
+  if (!m) return false;
+  m.starred = !m.starred;
+  scheduleSave();
   publish('mail:changed', { from: 'mail', type: 'changed', payload: { id, starred: m.starred } });
   return m.starred;
 }
 export function move(id, folder) {
-  const m = get(id); if (!m) return;
+  const m = get(id);
+  if (!m) return;
   if (folder === 'trash' && m.folder === 'trash') {
-    // 垃圾箱内再删除 = 彻底删除
-    state.mails = state.mails.filter(x => x.id !== id);
+    state.mails = state.mails.filter((x) => x.id !== id);
   } else m.folder = folder;
-  persist();
+  scheduleSave();
   publish('mail:changed', { from: 'mail', type: 'changed', payload: { id, folder } });
 }
 export const stats = () => {
   ensure();
   return {
     total: state.mails.length,
-    unread: state.mails.filter(m => m.folder === 'inbox' && !m.read).length,
+    unread: state.mails.filter((m) => m.folder === 'inbox' && !m.read).length,
     inbox: listBy('inbox').length,
     sent: listBy('sent').length,
     drafts: listBy('drafts').length,
@@ -136,5 +186,13 @@ export const stats = () => {
   };
 };
 
-export const mail = { deliver, deliverLater, send, onSend, listBy, get, markRead, toggleStar, move, stats, setUser, onFirstUse };
+/** 若已登录会话,启动时预水合(游戏/控制台在 mount 前投递) */
+if (accounts.current()) {
+  setUser(accounts.current()).catch(() => {});
+}
+
+export const mail = {
+  deliver, deliverLater, send, onSend, listBy, get, markRead,
+  toggleStar, move, stats, setUser, onFirstUse,
+};
 export default mail;

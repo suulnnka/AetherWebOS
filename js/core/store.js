@@ -4,6 +4,7 @@
  * ============================================================ */
 
 import { publish } from './bus.js';
+import { opfsClearAll } from './opfs.js';
 
 const KEY = 'webos.settings.v1';
 
@@ -139,7 +140,9 @@ export const settings = {
       localStorage.clear();
       sessionStorage.clear();
     } catch { /* 忽略 */ }
-    location.reload();
+    opfsClearAll()
+      .catch(() => {})
+      .finally(() => location.reload());
   },
   resolvedTheme,
 };

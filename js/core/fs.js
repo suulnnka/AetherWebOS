@@ -1,10 +1,15 @@
 /* ============================================================
- * FS —— 虚拟文件系统 v2(持久化到 localStorage)
+ * FS —— 虚拟文件系统 v2(持久化到 OPFS)
  *
  * 存储结构(根节点带版本号 v:2;版本不符 → 清空全部本地数据):
  *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:'root', p:'rwxr-x' }
  *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<owner>, p:<mode> }
  *   文件: { t:'f', d:'<内容>', m, o:<owner>, p:<mode> }
+ *
+ * 落盘:
+ *   · OPFS 文件 webos/fs.v2.json(整棵树 JSON);无 OPFS 时降级 localStorage
+ *   · 首次启动自动从旧键 webos.fs.v2 迁移到 OPFS 后删除旧键
+ *   · 同步 API 读内存;fsReady 等待首次加载/迁移完成
  *
  * 用户与目录绑定:
  *   /bin /app          系统目录(root 所有,预留给系统程序/应用包)
@@ -22,20 +27,25 @@ import { publish, subscribe } from './bus.js';
 import { debounce } from './utils.js';
 import { storageWiped, markStorageWiped } from './store.js';
 import { accounts } from './accounts.js';
+import { opfsReadText, opfsWriteText, opfsClearAll, opfsAvailable } from './opfs.js';
 
-const KEY = 'webos.fs.v2';
+/** localStorage 旧键(迁移源;迁移后删除) */
+const LS_KEY = 'webos.fs.v2';
 const LEGACY_KEYS = ['webos.fs.v1'];
+/** OPFS 中的文件名 */
+const OPFS_NAME = 'fs.v2.json';
 const FS_VERSION = 2;
 
 const WELCOME = `欢迎使用 AetherWebOS!
 
 这是一个纯前端的网页操作系统。
-所有数据都保存在你浏览器的 localStorage 中,无需任何后端。
+文件系统与应用数据保存在浏览器 OPFS 中,无需任何后端。
 
 文件系统 v2:
  · 每个用户绑定 /home/<用户名> 家目录
  · 文件带属主与权限(类 Linux,无用户组)
  · 系统目录 /bin /app 预留给系统程序
+ · 应用数据在 ~/appdata/(页加密数据库)
 
 推荐试一试:
  · 双击桌面图标,或点击左下角的开始按钮
@@ -113,27 +123,24 @@ const DIR_MODE = 'rwxr-x';
 const FILE_MODE = 'rw-r--';
 const HOME_MODE = 'rwx------';
 
-/** 版本不符 / 结构损坏 → 清空浏览器内全部 WebOS 数据并重载(不做兼容迁移) */
-function wipeAllAndReload() {
-  markStorageWiped();
+/** 解析整棵树 JSON;结构/版本不符返回 null */
+function parseTree(raw) {
+  if (!raw) return null;
   try {
-    localStorage.clear();
-    sessionStorage.clear();
-  } catch { /* 忽略 */ }
-  location.reload();
+    const tree = JSON.parse(raw);
+    return tree && tree.v === FS_VERSION && tree.t === 'd' && tree.c && typeof tree.c === 'object'
+      ? tree
+      : null;
+  } catch { return null; }
 }
 
-function detectStale() {
-  // 已有 v2 但结构/版本不对
-  const raw = localStorage.getItem(KEY);
-  if (raw) {
-    try {
-      const d = JSON.parse(raw);
-      return !(d && d.v === FS_VERSION && d.t === 'd' && d.c && typeof d.c === 'object');
-    } catch { return true; }
-  }
-  // 无 v2:存在旧版 FS 键 → 旧数据,直接清空
-  return LEGACY_KEYS.some(k => localStorage.getItem(k) != null);
+/** localStorage 里是否存在无法识别的 FS 数据(需整体清空) */
+function lsLooksStale() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw && !parseTree(raw)) return true;
+    return LEGACY_KEYS.some((k) => localStorage.getItem(k) != null);
+  } catch { return false; }
 }
 
 function freshRoot() {
@@ -148,26 +155,118 @@ function freshRoot() {
   };
 }
 
-function load() {
-  if (detectStale()) { wipeAllAndReload(); return null; }
-  const raw = localStorage.getItem(KEY);
-  if (!raw) return null;
-  try {
-    const tree = JSON.parse(raw);
-    return tree?.t === 'd' && tree.v === FS_VERSION ? tree : null;
-  } catch { return null; }
+/** 内存态:同步 API 的真相源;首次从 OPFS/LS 异步水合 */
+let root = freshRoot();
+/** 首次加载(含 OPFS 迁移)完成前为 false;写盘在 ready 前会排队 */
+let fsBooted = false;
+const bootWaiters = [];
+/* 写盘队列:debounce 触发时若尚未 ready,挂到 ready 后再写 */
+let pendingPersist = false;
+let writeChain = Promise.resolve();
+
+function markBooted() {
+  if (fsBooted) return;
+  fsBooted = true;
+  while (bootWaiters.length) bootWaiters.pop()();
+  // ready 前挂起的写盘冲刷
+  if (pendingPersist && !storageWiped()) {
+    pendingPersist = false;
+    writeChain = writeChain.then(writeTree, writeTree);
+  }
 }
 
-let root = load() || freshRoot();
+/** 等待 FS 首次从 OPFS 装载/迁移完成 */
+export function fsReady() {
+  if (fsBooted) return Promise.resolve();
+  return new Promise((res) => bootWaiters.push(res));
+}
 
-const persist = debounce(() => {
-  if (storageWiped()) return;   // 完全重置后不再写盘,防止 reload 前防抖定时器把旧数据写回
-  try { localStorage.setItem(KEY, JSON.stringify(root)); }
-  catch (e) {
-    console.warn('[fs] 持久化失败:', e);
-    publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
+async function writeTree() {
+  const json = JSON.stringify(root);
+  try {
+    await opfsWriteText(OPFS_NAME, json);
+    // 迁移成功后清掉 localStorage 旧键,避免双份
+    try {
+      localStorage.removeItem(LS_KEY);
+      for (const k of LEGACY_KEYS) localStorage.removeItem(k);
+    } catch { /* 忽略 */ }
+  } catch (e) {
+    console.warn('[fs] OPFS 持久化失败,回退 localStorage:', e);
+    try { localStorage.setItem(LS_KEY, json); }
+    catch (e2) {
+      console.warn('[fs] 持久化失败:', e2);
+      publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
+    }
   }
-}, 250);
+}
+
+function schedulePersist() {
+  if (storageWiped()) return;
+  pendingPersist = true;
+  const run = async () => {
+    if (storageWiped() || !pendingPersist) return;
+    pendingPersist = false;
+    await writeTree();
+  };
+  if (!fsBooted) return;   // ready 后由 markBooted 冲刷
+  writeChain = writeChain.then(run, run);
+}
+
+const persist = debounce(() => schedulePersist(), 250);
+
+/** 首次启动:OPFS → 旧 localStorage 迁移 → 空则写入默认树 */
+async function bootLoad() {
+  // 1) OPFS 优先
+  const fromOpfs = parseTree(await opfsReadText(OPFS_NAME));
+  if (fromOpfs) {
+    root = fromOpfs;
+    markBooted();
+    if (pendingPersist) { pendingPersist = false; writeChain = writeChain.then(writeTree, writeTree); }
+    return;
+  }
+
+  // 2) OPFS 无数据:看 localStorage 旧键
+  if (lsLooksStale() && !parseTree(localStorage.getItem(LS_KEY))) {
+    // 结构损坏 / 仅有 v1 → 整机数据作废(与旧版一致)
+    wipeAllAndReload();
+    return;
+  }
+  const fromLs = parseTree(localStorage.getItem(LS_KEY));
+  if (fromLs) {
+    root = fromLs;
+    markBooted();
+    // 立刻迁到 OPFS
+    writeChain = writeChain.then(writeTree, writeTree);
+    await writeChain;
+    return;
+  }
+
+  // 3) 全新:写入默认树
+  root = freshRoot();
+  markBooted();
+  writeChain = writeChain.then(writeTree, writeTree);
+}
+
+/** 版本不符 / 结构损坏 → 清空浏览器内全部 WebOS 数据并重载(不做兼容迁移) */
+function wipeAllAndReload() {
+  markStorageWiped();
+  markBooted();   // 解除 fsReady,避免启动序列死等
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch { /* 忽略 */ }
+  // OPFS 清空后再 reload(降级路径下 opfsClearAll 清的是 LS 前缀键)
+  Promise.resolve()
+    .then(() => opfsClearAll())
+    .catch(() => {})
+    .finally(() => location.reload());
+}
+
+// 模块加载即开始水合(不阻塞 import)
+bootLoad().catch((e) => {
+  console.warn('[fs] 初始化失败:', e);
+  markBooted();
+});
 
 /* ---------- 路径工具 ---------- */
 export function normPath(p) {
@@ -288,6 +387,11 @@ function makeNode(kind, owner, mode) {
  */
 export function ensureUserHome(user) {
   if (!user || user === 'root') return false;
+  // OPFS 尚未水合:推迟到 ready,避免在空 freshRoot 上建家再被覆盖
+  if (!fsBooted) {
+    fsReady().then(() => { try { ensureUserHome(user); } catch { /* 忽略 */ } });
+    return false;
+  }
   const home = `/home/${user}`;
   const existing = node(home);
   if (existing) {
@@ -304,8 +408,8 @@ export function ensureUserHome(user) {
     const p = joinPath(home, name);
     if (!node(p)) {
       const par = node(home);
-      if (name === 'desktop' || name === 'documents' || name === 'pictures' || name === 'music' || name === 'downloads') {
-        par.c[name] = makeNode('d', user, DIR_MODE);
+      if (name === 'desktop' || name === 'documents' || name === 'pictures' || name === 'music' || name === 'downloads' || name === 'appdata') {
+        par.c[name] = makeNode('d', user, name === 'appdata' ? 'rwx------' : DIR_MODE);
       } else {
         const f = makeNode('f', user, FILE_MODE);
         f.d = content ?? '';
@@ -319,6 +423,7 @@ export function ensureUserHome(user) {
   seed('pictures');
   seed('music');
   seed('downloads');
+  seed('appdata');
   const deskNote = joinPath(home, 'desktop/桌面便签.txt');
   if (!node(deskNote)) {
     const d = node(joinPath(home, 'desktop'));
@@ -357,6 +462,10 @@ subscribe('accounts:changed', (payload, msg) => {
 /* ---------- 文件系统 API ---------- */
 export const fs = {
   normPath, basename, parentPath, joinPath, homePath, desktopPath, ensureUserHome,
+  /** 首次 OPFS 装载/迁移完成(启动序列应 await) */
+  ready: fsReady,
+  /** 是否使用真实 OPFS(否则为 localStorage 降级) */
+  storageBackend: () => (opfsAvailable() ? 'opfs' : 'localStorage'),
 
   exists: (p) => !!node(p),
   isDir: (p) => node(p)?.t === 'd',
@@ -581,6 +690,14 @@ export const fs = {
   importAll(tree) {
     if (tree?.t === 'd') { root = tree; emit('import', '/'); return true; }
     return false;
+  },
+  /** 立即落盘(测试 / 关页前);返回 Promise */
+  async flush() {
+    pendingPersist = true;
+    if (!fsBooted) await fsReady();
+    pendingPersist = false;
+    writeChain = writeChain.then(writeTree, writeTree);
+    await writeChain;
   },
 };
 

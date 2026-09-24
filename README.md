@@ -1,13 +1,17 @@
 # AetherWebOS
 
-AetherWebOS 是一个纯前端的网页操作系统:**无后端**,所有数据(设置、文件、
-图标位置)都保存在浏览器 `localStorage` 中;运行时依赖经 npm 安装并由 Vite
-一并打包,构建产物部署到任意静态服务器即可运行。
+AetherWebOS 是一个纯前端的网页操作系统:**无后端**。虚拟文件系统与应用数据
+保存在浏览器 **OPFS**(首次启动自动从旧 `localStorage` 键迁移);设置、账号等
+小状态仍在 `localStorage`。运行时依赖经 npm 安装并由 Vite 一并打包,构建产物
+部署到任意静态服务器即可运行。
 
 包含窗口系统(拖动/缩放/平铺/贴边分屏)、任务栏与开始菜单、系统托盘、
 多套可切换的风格主题、系统设置与系统对话框、虚拟文件系统、IPC 消息总线、
 通知/邮件/短信等二十余个内置应用、五个自带 AI 引擎的棋类游戏,以及一套
 用于解谜游戏的虚拟网络。
+
+应用数据(短信/邮件/任务/笔记/日记等)经 `js/core/appdata.js` 落在
+`/home/<user>/appdata/<app>`,由 AetherWebDatabase 做**页级 AES-GCM 加密**。
 
 **在线演示:<https://suulnnka.github.io/AetherWebOS/>**(每次推送 master 由
 GitHub Actions 自动构建部署)

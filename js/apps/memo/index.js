@@ -6,7 +6,7 @@
  *  - 加密后存储为密文,列表只显示锁标与标题;
  *  - 打开需输入密码,解锁后可查看与编辑(保存即重新加密);
  *  - 忘记密码无法找回(无后门),但可删除重建。
- * 数据持久化到 localStorage(webos.memo.v1::<user>)。
+ * 数据:加密页库 ~/appdata/memo;旧键 webos.memo.v1::<user> 自动迁移。
  * ============================================================ */
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -17,18 +17,14 @@ import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { accounts } from '../../core/accounts.js';
 import { requireLogin, logoutButton } from '../../core/loginpanel.js';
 import { reopen } from '../../core/wm.js';
+import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
 
 const KEY = 'webos.memo.v1';
 const CATS = ['默认', '工作', '生活', '学习'];
 
 let state = null;
-function load() {
-  const userKey = accounts.userKey(KEY);
-  if (!userKey) return null;
-  try {
-    const s = JSON.parse(localStorage.getItem(userKey));
-    if (s && Array.isArray(s.memos)) return s;
-  } catch { /* 忽略 */ }
+
+function defaultState() {
   return {
     seq: 1,
     memos: [
@@ -37,13 +33,32 @@ function load() {
     ],
   };
 }
+
+function normalize(raw) {
+  if (raw && Array.isArray(raw.memos)) return { seq: raw.seq || 1, memos: raw.memos };
+  return null;
+}
+
+async function loadAsync() {
+  const user = accounts.current();
+  if (!user) return null;
+  try {
+    const data = await migrateFromLocalStorage('memo', accounts.userKey(KEY), normalize, user);
+    return data ?? normalize(await loadState('memo', user));
+  } catch (e) {
+    console.warn('[memo] 加载失败', e);
+    return null;
+  }
+}
+
 let saveT;
 const persist = () => {
   clearTimeout(saveT);
-  saveT = setTimeout(() => {
-    const userKey = accounts.userKey(KEY);
-    if (!userKey) return;
-    try { localStorage.setItem(userKey, JSON.stringify(state)); } catch (e) { console.warn('[memo] 持久化失败', e); }
+  saveT = setTimeout(async () => {
+    const user = accounts.current();
+    if (!user || !state) return;
+    try { await saveState('memo', state, user); }
+    catch (e) { console.warn('[memo] 持久化失败', e); }
   }, 200);
 };
 
@@ -54,13 +69,7 @@ register({
   /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
   mount({ root, setTitle, bus, onContextMenu, dialogs }) {
     if (requireLogin(root, '笔记', () => { root.innerHTML = ''; appRemount(); })) return;
-    state = load();
-    if (!state) {
-      state = { seq: 1, memos: [
-        { id: 'm1', title: '欢迎使用笔记', body: '右键或按钮均可新建。每条笔记可单独加密。', color: '#fef3c7', pinned: false, created: Date.now() },
-      ] };
-      persist();
-    }
+    state = defaultState();
 
     // 应用内右键:卡片 → 置顶 / 编辑 / 删除(与卡片按钮同一套操作)
     onContextMenu(({ target }) => {
@@ -78,9 +87,6 @@ register({
     let query = '';
     let catFilter = '全部';
     let plainCache = {};   // 本次解锁会话内的明文缓存 { id: body }
-
-    // 单例重开时重读持久化数据(其他窗口/注入可能已更新)
-    state = load();
 
     const grid = el('div', { class: 'memo-grid' });
     const statusL = el('span', {}, '');
@@ -254,6 +260,9 @@ register({
         el('span', {}, '加密笔记以 🔒 显示,点击解锁'))));
 
     render();
+    loadAsync().then((s) => {
+      if (s) { state = s; render(); }
+    });
     return { onClose() { return true; } };
   },
 });

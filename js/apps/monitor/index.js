@@ -148,7 +148,7 @@ register({
     }
 
     function describeKey(k) {
-      return { 'webos.settings.v1': '系统设置', 'webos.fs.v1': '虚拟文件系统(旧)', 'webos.fs.v2': '虚拟文件系统', 'webos.iconpos.v1': '桌面图标位置' }[k] || '—';
+      return { 'webos.settings.v1': '系统设置', 'webos.fs.v1': '虚拟文件系统(旧)', 'webos.fs.v2': '虚拟文件系统(已迁至 OPFS)', 'webos.iconpos.v1': '桌面图标位置' }[k] || '—';
     }
 
     function render() {
