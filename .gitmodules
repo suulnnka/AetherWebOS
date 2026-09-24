@@ -18,3 +18,7 @@
 [submodule "vendor/Aether3DLib"]
 	path = vendor/Aether3DLib
 	url = git@github.com:suulnnka/Aether3DLib.git
+
+[submodule "vendor/AetherWebDatabase"]
+	path = vendor/AetherWebDatabase
+	url = git@github.com:suulnnka/AetherWebDatabase.git
