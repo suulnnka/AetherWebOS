@@ -141,25 +141,6 @@ html[data-style="neon"] #taskbar {
   border: none;
   box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.45);
 }
-/* 顶部双色流光:青→紫→品红,极细呼吸 */
-html[data-style="neon"] #taskbar::before {
-  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1.5px;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(0, 240, 255, 0.15) 8%,
-    rgba(0, 240, 255, 0.7) 28%,
-    rgba(125, 95, 255, 0.85) 50%,
-    rgba(255, 42, 212, 0.7) 72%,
-    rgba(255, 42, 212, 0.15) 92%,
-    transparent 100%);
-  box-shadow: 0 0 14px rgba(0, 240, 255, 0.35), 0 0 28px rgba(255, 42, 212, 0.18);
-  pointer-events: none;
-  animation: neonTaskEdge 5.5s ease-in-out infinite;
-}
-@keyframes neonTaskEdge {
-  0%, 100% { opacity: 0.75; filter: saturate(1); }
-  50%      { opacity: 1;    filter: saturate(1.15) brightness(1.1); }
-}
 /* 开始按钮:圆角方章 + 激活光晕 */
 html[data-style="neon"] .tb-start {
   width: 42px; height: 40px;
@@ -274,7 +255,7 @@ html[data-style="neon"] #tb-layout:hover {
   border-color: rgba(0, 240, 255, 0.18);
 }
 html[data-style="neon"] #tb-layout + .tray {
-  margin-left: 2px;
+  margin-left: auto;
   padding-left: 8px;
   border-left: 1px solid rgba(0, 240, 255, 0.14);
 }

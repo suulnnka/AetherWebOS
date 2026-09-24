@@ -107,16 +107,14 @@
 }
 .style-card[data-sty="neon"] .sp-bar {
   height: 10px;
-  background:
-    linear-gradient(90deg, transparent, #00f0ff 25%, #7d5fff 50%, #ff2ad4 75%, transparent) left top / 100% 2px no-repeat,
-    rgba(0, 240, 255, 0.08);
+  background: rgba(0, 240, 255, 0.08);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.18);
 }
 .style-card[data-sty="neon"] .sp-dot { border-radius: 2px; background: transparent; border: none; width: 4px; height: 4px; box-shadow: 0 0 3px #00f0ff; background: #00e5ff; }
 .style-card[data-sty="neon"] .sp-dot.d3 { background: #ff2ad4; box-shadow: 0 0 3px #ff2ad4; }
 .style-card[data-sty="neon"] .sp-task {
   background: rgba(6, 10, 20, 0.9);
-  border-top: 1px solid rgba(0, 240, 255, 0.2);
-  box-shadow: 0 -3px 7px rgba(0, 0, 0, 0.35);
+  border-top: 1px solid rgba(0, 240, 255, 0.12);
 }
 .style-card[data-sty="neon"] .sp-start { border-radius: 3px; background: #00e5ff; box-shadow: 0 0 5px rgba(0, 240, 255, 0.6); width: 8px; height: 6px; }
 
