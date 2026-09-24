@@ -11,7 +11,8 @@ AetherWebOS 是一个纯前端的网页操作系统:**无后端**。虚拟文件
 用于解谜游戏的虚拟网络。
 
 应用数据(短信/邮件/任务/笔记/日记等)经 `js/core/appdata.js` 落在
-`/home/<user>/appdata/<app>`,由 AetherWebDatabase 做**页级 AES-GCM 加密**。
+`/home/<user>/appdata/<app>.awdb`,由 AetherWebDatabase 做**页级 AES-GCM 加密**
+(经虚拟文件系统写入,库不直连 OPFS)。
 
 **在线演示:<https://suulnnka.github.io/AetherWebOS/>**(每次推送 master 由
 GitHub Actions 自动构建部署)

@@ -1,8 +1,8 @@
 /* ============================================================
  * SMS —— 虚拟短信服务
  *
- * 数据:加密页库 ~/appdata/sms(AetherWebDatabase),路径
- *   /home/<user>/appdata/sms;同步 API 读内存,异步水合/落盘。
+ * 数据:加密页库 ~/appdata/sms.awdb(AetherWebDatabase),路径
+ *   /home/<user>/appdata/sms.awdb;同步 API 读内存,异步水合/落盘。
  * 旧键 webos.sms.v1 首次启动自动迁移后删除。
  *
  * 面向玩家:短信应用(会话式,持久化,验证码一键复制)

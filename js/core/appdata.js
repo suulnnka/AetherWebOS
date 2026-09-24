@@ -1,8 +1,8 @@
 /* ============================================================
- * AppData —— 应用数据落盘:/home/<user>/appdata/<app>
+ * AppData —— 应用数据落盘:/home/<user>/appdata/<app>.awdb
  *
- * · 物理位置:虚拟文件系统路径 `/home/<user>/appdata/<app>`
- * · 存储引擎:AetherWebDatabase(OPFS 分页模型,此处由 VFS 后端承载)
+ * · 物理位置:虚拟文件系统路径 `/home/<user>/appdata/<app>.awdb`
+ * · 存储引擎:AetherWebDatabase;**不直连 OPFS**,经 VFS 字符串文件后端
  * · 整库文件以 `AWDBVFS1:<base64>` 写入 VFS;页级 AES-GCM 加密
  * · 密钥:每用户随机口令,存 `webos.appdata.key::<user>`(与库文件分离)
  *
@@ -11,14 +11,12 @@
  *   loadState(app) / saveState(app, data)  单文档状态读写
  * ============================================================ */
 
-import { open, PAGE_SIZE } from '../../vendor/AetherWebDatabase/src/index.js';
+import { open, createFileBackend, FILE_MAGIC } from '../../vendor/AetherWebDatabase/src/index.js';
 import fs, { fsReady } from './fs.js';
 import { accounts } from './accounts.js';
 
-const MAGIC = 'AWDBVFS1:';
 const KEY_PREFIX = 'webos.appdata.key::';
-
-/* ---------- base64 ↔ bytes ---------- */
+const EXT = '.awdb';
 
 const u8ToB64 = (u8) => {
   let s = '';
@@ -27,14 +25,14 @@ const u8ToB64 = (u8) => {
   }
   return btoa(s);
 };
-const b64ToU8 = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 /* ---------- 路径 ---------- */
 
-/** `/home/<user>/appdata/<app>` */
+/** `/home/<user>/appdata/<app>.awdb` */
 export function appDataPath(app, user = accounts.current()) {
   if (!user) return null;
-  return `/home/${user}/appdata/${app}`;
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  return `/home/${user}/appdata/${base}${EXT}`;
 }
 
 /** 确保 /home/<user>/appdata 目录存在(属主 = user,仅本人可进) */
@@ -62,81 +60,19 @@ function dbPassword(user) {
   return pass;
 }
 
-/* ---------- VFS 分页后端 ---------- */
+/* ---------- VFS 文件后端(单例) ---------- */
 
 /** path → backend 单例(同文件同实例,配合 open 句柄单例) */
 const backends = new Map();
 
-function createVfsBackend(path, user) {
-  /** 整文件缓存;null = 未加载 */
-  let buf = null;
-
-  async function ensureLoaded() {
-    if (buf) return;
-    const raw = fs.read(path, { as: user });
-    if (raw && raw.startsWith(MAGIC)) {
-      try {
-        buf = b64ToU8(raw.slice(MAGIC.length));
-      } catch {
-        buf = new Uint8Array(0);
-      }
-    } else {
-      buf = new Uint8Array(0);
-    }
-  }
-
-  async function flush() {
-    if (!buf) return;
-    const ok = fs.write(path, MAGIC + u8ToB64(buf), {
+function getBackend(path, user) {
+  let b = backends.get(path);
+  if (!b) {
+    b = createFileBackend(fs, path, {
       as: user,
       owner: user,
       mode: 'rw-------',
     });
-    if (!ok) {
-      const err = new Error('appdata 写入失败(权限或配额)');
-      err.name = 'QuotaExceededError';
-      throw err;
-    }
-  }
-
-  return {
-    kind: 'vfs',
-    async readPage(no) {
-      await ensureLoaded();
-      const off = no * PAGE_SIZE;
-      const out = new Uint8Array(PAGE_SIZE);
-      if (off < buf.length) {
-        out.set(buf.subarray(off, Math.min(off + PAGE_SIZE, buf.length)));
-      }
-      return out;
-    },
-    async writePages(startNo, chunks) {
-      await ensureLoaded();
-      const need = (startNo + chunks.length) * PAGE_SIZE;
-      if (buf.length < need) {
-        const next = new Uint8Array(need);
-        next.set(buf);
-        buf = next;
-      }
-      for (let i = 0; i < chunks.length; i++) {
-        const off = (startNo + i) * PAGE_SIZE;
-        buf.fill(0, off, off + PAGE_SIZE);
-        buf.set(chunks[i].subarray(0, PAGE_SIZE), off);
-      }
-      await flush();
-    },
-    async pageCount() {
-      await ensureLoaded();
-      return Math.ceil(buf.length / PAGE_SIZE) || 0;
-    },
-    async close() {},
-  };
-}
-
-function getBackend(path, user) {
-  let b = backends.get(path);
-  if (!b) {
-    b = createVfsBackend(path, user);
     backends.set(path, b);
   }
   return b;
@@ -145,8 +81,8 @@ function getBackend(path, user) {
 /* ---------- 打开库 ---------- */
 
 /**
- * 打开(或创建)应用库,页加密,落在 /home/<user>/appdata/<app>。
- * @param {string} app  应用 id(如 'sms' / 'todo')
+ * 打开(或创建)应用库,页加密,落在 /home/<user>/appdata/<app>.awdb。
+ * @param {string} app  应用 id(如 'sms' / 'todo');可带或不带 .awdb
  * @param {string} [user] 默认当前登录用户
  * @returns {Promise<import('../../vendor/AetherWebDatabase/src/database.js').Database>}
  */
@@ -156,7 +92,10 @@ export async function openAppData(app, user = accounts.current()) {
   if (!ensureAppDataDir(user)) throw new Error('无法创建 appdata 目录');
   const path = appDataPath(app, user);
   const backend = getBackend(path, user);
-  return open(app, {
+  const handleName = String(app).endsWith(EXT)
+    ? String(app).slice(0, -EXT.length)
+    : String(app);
+  return open(handleName, {
     storage: backend,
     password: dbPassword(user),
   });
@@ -212,8 +151,9 @@ export async function migrateFromLocalStorage(app, legacyKey, normalize, user = 
 export function closeAppData(user = accounts.current()) {
   if (!user) return;
   void user;
-  // AetherWebDatabase closeAll 会关掉所有;按需在 accounts logout 调
 }
+
+export { FILE_MAGIC };
 
 export default {
   appDataPath,
@@ -221,4 +161,5 @@ export default {
   loadState,
   saveState,
   migrateFromLocalStorage,
+  FILE_MAGIC,
 };

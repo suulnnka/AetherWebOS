@@ -6,7 +6,7 @@
  *  - 加密后存储为密文,列表只显示锁标与标题;
  *  - 打开需输入密码,解锁后可查看与编辑(保存即重新加密);
  *  - 忘记密码无法找回(无后门),但可删除重建。
- * 数据:加密页库 ~/appdata/memo;旧键 webos.memo.v1::<user> 自动迁移。
+ * 数据:加密页库 ~/appdata/memo.awdb;旧键 webos.memo.v1::<user> 自动迁移。
  * ============================================================ */
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';

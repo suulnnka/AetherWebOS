@@ -1,8 +1,8 @@
 /* ============================================================
  * Mail —— 虚拟邮件服务
  *
- * 数据:加密页库 ~/appdata/mail(AetherWebDatabase):
- *   /home/<user>/appdata/mail;同步 API 读内存,异步水合/落盘。
+ * 数据:加密页库 ~/appdata/mail.awdb(AetherWebDatabase):
+ *   /home/<user>/appdata/mail.awdb;同步 API 读内存,异步水合/落盘。
  * 旧键 webos.mail.v1::<user> 首次启动自动迁移后删除。
  *
  * 面向玩家:邮件应用(收件箱/已发送/草稿/垃圾箱,持久化)

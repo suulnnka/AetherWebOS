@@ -2,7 +2,7 @@
  * 应用:任务(Todo)
  *
  * 项目分组 + 优先级 + 截止日期 + 星标 + 进度统计。
- * 数据:加密页库 ~/appdata/todo(AetherWebDatabase);旧键自动迁移。
+ * 数据:加密页库 ~/appdata/todo.awdb(AetherWebDatabase);旧键自动迁移。
  * 系统联动:
  *  - 新建带截止日期的任务时可选提醒(经 sys:notify 弹系统通知);
  *  - 桌面/文件管家的 ~/desktop/todo.txt 汇出只读清单(可选命令)。

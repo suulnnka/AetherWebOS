@@ -204,8 +204,8 @@ settings.set({ volume: 30 })   // 写入 → 应用到 DOM → 广播 sys:settin
 ```
 
 只存应用自己的数据时,不要塞进系统设置。推荐 `js/core/appdata.js`:
-数据落在虚拟路径 `/home/<user>/appdata/<app>`(AetherWebDatabase 页加密库);
-旧 localStorage 键可用 `migrateFromLocalStorage` 一次性迁入。
+数据落在虚拟路径 `/home/<user>/appdata/<app>.awdb`(AetherWebDatabase 页加密库,
+经 VFS 写入,库不直连 OPFS);旧 localStorage 键可用 `migrateFromLocalStorage` 一次性迁入。
 
 ### 系统对话框(`dialogs`,全 Promise)
 
@@ -297,7 +297,7 @@ mount({ root, onLoginRetry }) {
 | 位置 | 内容 |
 |---|---|
 | **OPFS** `webos/fs.v2.json` | 虚拟文件系统整棵树(启动自动从旧 localStorage 键迁移) |
-| **VFS** `/home/<user>/appdata/<app>` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase) |
+| **VFS** `/home/<user>/appdata/<app>.awdb` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase,不直连 OPFS) |
 | localStorage `webos.settings.v1` | 全部系统设置 |
 | localStorage `webos.iconpos.v1` | 桌面图标位置 |
 | localStorage `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |
