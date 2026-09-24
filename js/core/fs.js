@@ -1,14 +1,16 @@
 /* ============================================================
- * FS —— 虚拟文件系统 v2(持久化到 OPFS)
+ * FS —— 虚拟文件系统 v2(元数据在 OPFS JSON,内容在 OPFS 文件)
  *
  * 存储结构(根节点带版本号 v:2;版本不符 → 清空全部本地数据):
  *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:'root', p:'rwxr-x' }
  *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<owner>, p:<mode> }
- *   文件: { t:'f', d:'<内容>', m, o:<owner>, p:<mode> }
+ *   文件: { t:'f', d:'<内容>', m, o:<owner>, p:<mode> }  ← d 仅在内存
  *
- * 落盘:
- *   · OPFS 文件 webos/fs.v2.json(整棵树 JSON);无 OPFS 时降级 localStorage
- *   · 首次启动自动从旧键 webos.fs.v2 迁移到 OPFS 后删除旧键
+ * 落盘(inode 式拆分):
+ *   · OPFS `webos/fs.v2.json` —— **仅元数据树**(无 d 字段,类似 inode 表)
+ *   · OPFS `webos/fsdata/<绝对路径>` —— 每个文件的真实内容
+ *     例:fsdata/home/user/appdata/sms.awdb
+ *   · 无 OPFS 时整树(含内容)降级 localStorage 键 webos.fs.v2
  *   · 同步 API 读内存;fsReady 等待首次加载/迁移完成
  *
  * 用户与目录绑定:
@@ -155,6 +157,64 @@ function freshRoot() {
   };
 }
 
+/** 子节点绝对路径:base 为 '' | '/' | '/home' 等 */
+function childPath(base, name) {
+  if (!base || base === '/') return '/' + name;
+  return base + '/' + name;
+}
+
+/** 内存树 → 仅元数据(去掉文件 d),供 OPFS inode JSON */
+function stripContents(node) {
+  if (node.t === 'f') {
+    const { d: _d, ...rest } = node;
+    return rest;
+  }
+  const out = { ...node };
+  if (out.c) {
+    const c = {};
+    for (const [k, ch] of Object.entries(node.c)) c[k] = stripContents(ch);
+    out.c = c;
+  }
+  return out;
+}
+
+/** 遍历文件:yield { path, content } */
+function* walkFiles(node, path) {
+  if (node.t === 'f') {
+    yield { path, content: node.d ?? '' };
+    return;
+  }
+  if (!node.c) return;
+  for (const [name, ch] of Object.entries(node.c)) {
+    yield* walkFiles(ch, childPath(path, name));
+  }
+}
+
+/** 内存中是否有任一文件已带内容(旧整树 JSON 迁移源) */
+function hasInlineContent(node) {
+  if (node.t === 'f') return node.d != null;
+  if (!node.c) return false;
+  for (const ch of Object.values(node.c)) {
+    if (hasInlineContent(ch)) return true;
+  }
+  return false;
+}
+
+/** 从 fsdata/ 水合缺失的文件内容(元数据树无 d 时) */
+async function hydrateContents(node, path) {
+  if (node.t === 'f') {
+    if (node.d == null) {
+      const raw = await opfsReadText('fsdata' + path);
+      node.d = raw ?? '';
+    }
+    return;
+  }
+  if (!node.c) return;
+  for (const [name, ch] of Object.entries(node.c)) {
+    await hydrateContents(ch, childPath(path, name));
+  }
+}
+
 /** 内存态:同步 API 的真相源;首次从 OPFS/LS 异步水合 */
 let root = freshRoot();
 /** 首次加载(含 OPFS 迁移)完成前为 false;写盘在 ready 前会排队 */
@@ -181,18 +241,32 @@ export function fsReady() {
   return new Promise((res) => bootWaiters.push(res));
 }
 
+/**
+ * 落盘:
+ *  1) 每个文件内容 → OPFS fsdata/<path>
+ *  2) 元数据树(无 d) → fs.v2.json
+ * OPFS 不可用时整树(含 d)写入 localStorage 键作回退。
+ */
 async function writeTree() {
-  const json = JSON.stringify(root);
+  const meta = JSON.stringify(stripContents(root));
+  const full = JSON.stringify(root); // 降级用
   try {
-    await opfsWriteText(OPFS_NAME, json);
-    // 迁移成功后清掉 localStorage 旧键,避免双份
+    if (opfsAvailable()) {
+      // 先内容后元数据:崩溃时旧元数据仍可解析(带 d 或依赖已写内容)
+      for (const { path, content } of walkFiles(root, '/')) {
+        await opfsWriteText('fsdata' + path, content);
+      }
+      await opfsWriteText(OPFS_NAME, meta);
+    } else {
+      await opfsWriteText(OPFS_NAME, full);
+    }
     try {
       localStorage.removeItem(LS_KEY);
       for (const k of LEGACY_KEYS) localStorage.removeItem(k);
     } catch { /* 忽略 */ }
   } catch (e) {
     console.warn('[fs] OPFS 持久化失败,回退 localStorage:', e);
-    try { localStorage.setItem(LS_KEY, json); }
+    try { localStorage.setItem(LS_KEY, full); }
     catch (e2) {
       console.warn('[fs] 持久化失败:', e2);
       publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
@@ -214,28 +288,38 @@ function schedulePersist() {
 
 const persist = debounce(() => schedulePersist(), 250);
 
-/** 首次启动:OPFS → 旧 localStorage 迁移 → 空则写入默认树 */
+/** 装入树并按需从 fsdata/ 水合内容 */
+async function adoptTree(tree) {
+  if (!hasInlineContent(tree)) {
+    await hydrateContents(tree, '/');
+  }
+  root = tree;
+}
+
+/** 首次启动:OPFS 元数据 → 旧 localStorage 迁移 → 空则默认树 */
 async function bootLoad() {
   // 1) OPFS 优先
   const fromOpfs = parseTree(await opfsReadText(OPFS_NAME));
   if (fromOpfs) {
-    root = fromOpfs;
+    await adoptTree(fromOpfs);
     markBooted();
-    if (pendingPersist) { pendingPersist = false; writeChain = writeChain.then(writeTree, writeTree); }
+    if (pendingPersist) {
+      pendingPersist = false;
+      writeChain = writeChain.then(writeTree, writeTree);
+    }
     return;
   }
 
-  // 2) OPFS 无数据:看 localStorage 旧键
+  // 2) OPFS 无数据:看 localStorage 旧键(可能仍含内联内容)
   if (lsLooksStale() && !parseTree(localStorage.getItem(LS_KEY))) {
-    // 结构损坏 / 仅有 v1 → 整机数据作废(与旧版一致)
     wipeAllAndReload();
     return;
   }
   const fromLs = parseTree(localStorage.getItem(LS_KEY));
   if (fromLs) {
+    // 旧整树:保留内存中的 d,立刻拆到 OPFS
     root = fromLs;
     markBooted();
-    // 立刻迁到 OPFS
     writeChain = writeChain.then(writeTree, writeTree);
     await writeChain;
     return;

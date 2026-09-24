@@ -296,7 +296,8 @@ mount({ root, onLoginRetry }) {
 
 | 位置 | 内容 |
 |---|---|
-| **OPFS** `webos/fs.v2.json` | 虚拟文件系统整棵树(启动自动从旧 localStorage 键迁移) |
+| **OPFS** `webos/fs.v2.json` | 虚拟文件系统**元数据树**(inode 式,无文件内容) |
+| **OPFS** `webos/fsdata/<path>` | 各文件真实内容(如 `fsdata/home/u/appdata/sms.awdb`) |
 | **VFS** `/home/<user>/appdata/<app>.awdb` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase,不直连 OPFS) |
 | localStorage `webos.settings.v1` | 全部系统设置 |
 | localStorage `webos.iconpos.v1` | 桌面图标位置 |

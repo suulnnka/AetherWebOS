@@ -1,7 +1,7 @@
 # AetherWebOS
 
-AetherWebOS 是一个纯前端的网页操作系统:**无后端**。虚拟文件系统与应用数据
-保存在浏览器 **OPFS**(首次启动自动从旧 `localStorage` 键迁移);设置、账号等
+AetherWebOS 是一个纯前端的网页操作系统:**无后端**。虚拟文件系统的**元数据**
+(JSON)与**文件内容**(OPFS `fsdata/` 下按路径)保存在浏览器 OPFS;设置、账号等
 小状态仍在 `localStorage`。运行时依赖经 npm 安装并由 Vite 一并打包,构建产物
 部署到任意静态服务器即可运行。
 
