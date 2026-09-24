@@ -9,14 +9,14 @@ import { toggleStartMenu } from './startmenu.js';
 /* ============ 托盘:弹出面板管理 ============ */
 let openPop = null;
 
-function closePopover() {
+export function closePopover() {
   if (!openPop) return;
   openPop.pop.remove();
   openPop.anchor.classList.remove('on');
   openPop = null;
 }
 
-function togglePopover(name, anchor, build, width) {
+export function togglePopover(name, anchor, build, width) {
   if (openPop?.name === name) return closePopover();
   closePopover();
   const pop = el('div', { class: 'popover', dataset: { pop: name }, style: width ? { width: width + 'px' } : {} }, build());

@@ -260,6 +260,23 @@
 /* 面板宽度由 togglePopover 的内联 width 控制,内层不再定宽以免溢出裁剪 */
 .pop-volume .row { display: flex; align-items: center; gap: 12px; }
 .pop-volume .pct { font-size: 12px; color: var(--text-2); width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+/* 窗口布局面板:与音量/时钟同壳,条目复用 .ctx-item */
+.pop-layout { display: flex; flex-direction: column; gap: 2px; margin: -4px; }
+.pop-layout .ctx-item { padding: 9px 12px; }
+
+/* 桌面图标说明框:固定锚点(图标下方居中,放不下翻上方),不用浏览器原生 title */
+#tip {
+  position: fixed; z-index: 1400;
+  max-width: 220px; padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  color: var(--text); font-size: 12px; line-height: 1.35;
+  pointer-events: none;
+  animation: popIn 0.12s ease-out;
+}
+#tip[hidden] { display: none !important; }
 
 input[type="range"] {
   -webkit-appearance: none; appearance: none;

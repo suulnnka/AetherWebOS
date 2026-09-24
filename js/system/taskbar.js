@@ -138,7 +138,8 @@ $('#taskbar').addEventListener('contextmenu', (e) => {
     return;
   }
   if (e.target.closest('#tb-layout')) {
-    showMenu(x, y, layoutItems);
+    // 与左键一致:打开同一套托盘 popover(而非右键菜单样式)
+    $('#tb-layout').click();
     return;
   }
   if (e.target.closest('#tray-vol')) {
