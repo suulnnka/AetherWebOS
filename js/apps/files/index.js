@@ -10,14 +10,22 @@ import { showMenu } from '../../core/menu.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
+import { homePath } from '../../core/fs.js';
 
-const QUICK = [
-  { name: '主目录', path: '/home', icon: 'home' },
-  { name: '文档', path: '/home/documents', icon: 'fileText' },
-  { name: '图片', path: '/home/pictures', icon: 'image' },
-  { name: '音乐', path: '/home/music', icon: 'music' },
-  { name: '下载', path: '/home/downloads', icon: 'download' },
-];
+/** 快捷入口:随当前用户家目录变化 */
+function quickPlaces() {
+  const home = homePath() || '/home';
+  return [
+    { name: '主目录', path: home, icon: 'home' },
+    { name: '桌面', path: `${home}/desktop`, icon: 'monitor' },
+    { name: '文档', path: `${home}/documents`, icon: 'fileText' },
+    { name: '图片', path: `${home}/pictures`, icon: 'image' },
+    { name: '音乐', path: `${home}/music`, icon: 'music' },
+    { name: '下载', path: `${home}/downloads`, icon: 'download' },
+    { name: '系统 /bin', path: '/bin', icon: 'terminal' },
+    { name: '应用 /app', path: '/app', icon: 'grid' },
+  ];
+}
 
 function fileIcon(item, encrypted = false) {
   if (item.dir) return { name: 'folder', color: '#4f9cf9', size: 34 };
@@ -50,7 +58,9 @@ register({
     const modalConfirm = (title, body, danger) =>
       dialogs.confirm({ title, message: body, danger, okText: '删除' });
 
-    let cwd = params.path && fs.isDir(params.path) ? fs.normPath(params.path) : '/home';
+    let cwd = params.path && fs.isDir(params.path)
+      ? fs.normPath(params.path)
+      : (homePath() || '/home');
     let selected = null;
     let history = [];
 
@@ -90,7 +100,7 @@ register({
           if (pw == null) return;
           try {
             const plain = await decryptText(fs.read(item.path), pw);
-            const tmp = '/home/downloads/.' + item.name + '.preview';
+            const tmp = (homePath() || '/home') + '/downloads/.' + item.name + '.preview';
             fs.write(tmp, plain);
             open('viewer', { params: { file: new File([plain], item.name, { type: 'text/plain' }) } });
             fs.rm(tmp);
@@ -239,7 +249,13 @@ register({
     function renderGrid() {
       grid.innerHTML = '';
       const items = fs.list(cwd);
-      if (!items) { cwd = '/home'; return render(); }
+      if (!items) {
+        const h = homePath();
+        if (h && cwd !== h && fs.isDir(h)) cwd = h;
+        else if (cwd !== '/') cwd = '/';
+        else return;
+        return render();
+      }
       if (!items.length) {
         grid.append(el('div', { class: 'empty', style: { gridColumn: '1/-1' } }, icon('folderOpen', 40), '此文件夹为空'));
       }
@@ -322,7 +338,7 @@ register({
         el('div', { class: 'app-side' },
           el('div', { class: 'dim', style: { fontSize: '11.5px', padding: '4px 10px 8px' } }, '快速访问'),
           el('div', { class: 'list' },
-            ...QUICK.map(q => el('button', {
+            ...quickPlaces().map(q => el('button', {
               class: 'list-item' + (cwd === q.path ? ' active' : ''),
               onClick: () => nav(q.path),
             }, el('span', { class: 'li-ico' }, icon(q.icon, 15)), q.name))),

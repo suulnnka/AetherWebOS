@@ -1,31 +1,47 @@
 /* ============================================================
- * FS —— 虚拟文件系统(持久化到 localStorage)
+ * FS —— 虚拟文件系统 v2(持久化到 localStorage)
  *
- * 存储结构:
- *   目录: { t:'d', c:{ <名称>: <node> }, m:<mtime> }
- *   文件: { t:'f', d:'<内容>', m:<mtime> }
- * 所有写操作自动持久化,并广播 sys:fs-changed 事件。
+ * 存储结构(根节点带版本号 v:2;版本不符 → 清空全部本地数据):
+ *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:'root', p:'rwxr-x' }
+ *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<owner>, p:<mode> }
+ *   文件: { t:'f', d:'<内容>', m, o:<owner>, p:<mode> }
+ *
+ * 用户与目录绑定:
+ *   /bin /app          系统目录(root 所有,预留给系统程序/应用包)
+ *   /home/<user>/...   每个登录用户的家目录(含 desktop/documents/…)
+ *
+ * 权限(类 Linux,但无用户组):
+ *   p 为 6 位 "rwxrwx":前 3 位属主,后 3 位其他用户;
+ *   root 超级用户绕过全部检查。ls 显示时补成 9 位(组位=其他位)。
+ *
+ * 当前会话用户来自 accounts.current();未登录时仅允许 root 内部操作
+ * (as:'root')。所有写操作自动持久化并广播 sys:fs-changed。
  * ============================================================ */
 
-import { publish } from './bus.js';
+import { publish, subscribe } from './bus.js';
 import { debounce } from './utils.js';
-import { list as listApps } from './registry.js';
-import { storageWiped } from './store.js';
+import { storageWiped, markStorageWiped } from './store.js';
+import { accounts } from './accounts.js';
 
-const KEY = 'webos.fs.v1';
+const KEY = 'webos.fs.v2';
+const LEGACY_KEYS = ['webos.fs.v1'];
+const FS_VERSION = 2;
 
 const WELCOME = `欢迎使用 AetherWebOS!
 
 这是一个纯前端的网页操作系统。
 所有数据都保存在你浏览器的 localStorage 中,无需任何后端。
 
+文件系统 v2:
+ · 每个用户绑定 /home/<用户名> 家目录
+ · 文件带属主与权限(类 Linux,无用户组)
+ · 系统目录 /bin /app 预留给系统程序
+
 推荐试一试:
  · 双击桌面图标,或点击左下角的开始按钮
  · 打开「终端」,输入 help 查看全部命令
+ · ls -l 查看权限,chmod 修改权限
  · 在「系统设置 → 外观」更换主题、强调色与壁纸
- · 打开「系统监视器」,切到 IPC 消息页,可以看到
-   应用之间流动的所有消息
- · 用记事本改这个文件,文件管家会实时刷新
 
 快捷操作:
  · 双击窗口标题栏 = 最大化 / 还原
@@ -38,7 +54,7 @@ const WELCOME = `欢迎使用 AetherWebOS!
 
 const DESKTOP_NOTE = `桌面便签
 
-这里就是你的桌面目录(/home/desktop)。
+这里就是你的桌面目录(~/desktop)。
 试试:
  · 桌面空白处右键 → 新建文本文档 / 新建文件夹
  · 拖动图标(自动对齐网格)、空白处拖框多选
@@ -89,74 +105,57 @@ ctx.bus.notify('标题', '内容')
 ctx.bus.onSys('fs-changed', payload => ...)
 `;
 
-/* 桌面「棋类游戏」文件夹预置的快捷方式(内容 = 应用 ID 的 .app 文件) */
-const CHESS_APPS = {
-  chess3d: '国际象棋',
-  xiangqi: '中国象棋',
-  go: '围棋',
-  gomoku: '五子棋',
-  reversi: '黑白棋',
-};
+/* 默认权限:目录 rwxr-x / 文件 rw-r--(6 位:属主 + 其他) */
+const DIR_MODE = 'rwxr-x';
+const FILE_MODE = 'rw-r--';
+const HOME_MODE = 'rwx------';
 
-/* 桌面不自动生成图标:桌面上的一切都是 /home/desktop 里的真实文件,
- * 应用入口以 .app 快捷方式存在。初始化时为各应用在桌面生成快捷
- * 方式(棋类应用收进「棋类游戏」文件夹),用户可随意删除、改名、收纳;
- * 完整的应用列表始终在开始菜单。 */
-function desktopShortcutSeeds() {
-  const seeds = {};
-  for (const a of listApps()) {
-    if (a.desktop === false || a.desktopIcon === false) continue;
-    seeds[a.name + '.app'] = { t: 'f', d: a.id };
-  }
-  return seeds;
+/** 版本不符 / 结构损坏 → 清空浏览器内全部 WebOS 数据并重载(不做兼容迁移) */
+function wipeAllAndReload() {
+  markStorageWiped();
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch { /* 忽略 */ }
+  location.reload();
 }
 
-function defaultTree() {
+function detectStale() {
+  // 已有 v2 但结构/版本不对
+  const raw = localStorage.getItem(KEY);
+  if (raw) {
+    try {
+      const d = JSON.parse(raw);
+      return !(d && d.v === FS_VERSION && d.t === 'd' && d.c && typeof d.c === 'object');
+    } catch { return true; }
+  }
+  // 无 v2:存在旧版 FS 键 → 旧数据,直接清空
+  return LEGACY_KEYS.some(k => localStorage.getItem(k) != null);
+}
+
+function freshRoot() {
   const now = Date.now();
-  const chessLinks = {};
-  for (const [id, name] of Object.entries(CHESS_APPS)) {
-    chessLinks[name + '.app'] = { t: 'f', d: id, m: now };
-  }
-  const shortcuts = {};
-  for (const [fname, node] of Object.entries(desktopShortcutSeeds())) {
-    shortcuts[fname] = { ...node, m: now };
-  }
   return {
-    t: 'd', m: now, c: {
-      home: {
-        t: 'd', m: now, c: {
-          desktop: {
-            t: 'd', m: now, c: {
-              '桌面便签.txt': { t: 'f', d: DESKTOP_NOTE, m: now },
-              '棋类游戏': { t: 'd', m: now, c: chessLinks },
-              ...shortcuts,
-            },
-          },
-          documents: {
-            t: 'd', m: now, c: {
-              '欢迎使用.txt': { t: 'f', d: WELCOME, m: now },
-              '应用开发指南.md': { t: 'f', d: DEVGUIDE, m: now },
-            },
-          },
-          pictures: { t: 'd', m: now, c: {} },
-          music: { t: 'd', m: now, c: {} },
-          downloads: { t: 'd', m: now, c: {} },
-        },
-      },
+    v: FS_VERSION, t: 'd', m: now, o: 'root', p: DIR_MODE,
+    c: {
+      bin: { t: 'd', m: now, o: 'root', p: 'r-xr-x', c: {} },
+      app: { t: 'd', m: now, o: 'root', p: 'r-xr-x', c: {} },
+      home: { t: 'd', m: now, o: 'root', p: DIR_MODE, c: {} },
     },
   };
 }
 
 function load() {
+  if (detectStale()) { wipeAllAndReload(); return null; }
+  const raw = localStorage.getItem(KEY);
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
     const tree = JSON.parse(raw);
-    return tree?.t === 'd' ? tree : null;
+    return tree?.t === 'd' && tree.v === FS_VERSION ? tree : null;
   } catch { return null; }
 }
 
-let root = load() || defaultTree();
+let root = load() || freshRoot();
 
 const persist = debounce(() => {
   if (storageWiped()) return;   // 完全重置后不再写盘,防止 reload 前防抖定时器把旧数据写回
@@ -186,6 +185,16 @@ export const parentPath = (p) => {
 export const joinPath = (a, b) =>
   normPath(String(b).startsWith('/') ? b : (normPath(a) === '/' ? '' : normPath(a)) + '/' + b);
 
+/** 当前用户的家目录 /home/<user>(未登录返回 null) */
+export function homePath(user = accounts.current()) {
+  return user ? `/home/${user}` : null;
+}
+/** 当前用户的桌面目录(桌面即此目录) */
+export function desktopPath(user = accounts.current()) {
+  const h = homePath(user);
+  return h ? `${h}/desktop` : null;
+}
+
 function node(p) {
   let n = root;
   for (const seg of normPath(p).split('/').filter(Boolean)) {
@@ -201,12 +210,137 @@ function emit(action, path) {
   publish('sys:fs-changed', { from: 'fs', type: 'fs-changed', payload: { action, path: normPath(path) } });
 }
 
+/* ---------- 权限 ---------- */
+/** 解析 6 位模式 → 属主/其他 的 {r,w,x} */
+function modeFor(n, user) {
+  const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
+  if (user === 'root') return { r: true, w: true, x: true };
+  const owner = user && n.o === user;
+  const chunk = owner ? full.slice(0, 3) : full.slice(3, 6);
+  return { r: chunk[0] === 'r', w: chunk[1] === 'w', x: chunk[2] === 'x' };
+}
+
+/**
+ * 是否允许对 path 做 r/w/x。
+ * 规则(无用户组):祖先目录逐级需 x;目标节点查属主位或"其他"位。
+ * bit 为 'r'|'w'|'x';祖先穿越不额外要求 r。
+ */
+function allow(p, bit, user) {
+  if (!user) return false;
+  if (user === 'root') return true;
+  const segs = normPath(p).split('/').filter(Boolean);
+  if (!segs.length) return modeFor(root, user)[bit] === true;
+  let cur = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+    cur = cur.c[segs[i]];
+    if (!cur) return false;
+  }
+  if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+  const target = cur.c[segs[segs.length - 1]];
+  if (!target) return false;
+  return modeFor(target, user)[bit] === true;
+}
+
+/** 内部解析当前操作身份:显式 as > 会话用户 */
+function actor(opts) {
+  if (opts?.as) return opts.as;
+  return accounts.current();
+}
+
+/** 内部建节点(带属主/权限) */
+function makeNode(kind, owner, mode) {
+  const m = Date.now();
+  return kind === 'd'
+    ? { t: 'd', c: {}, m, o: owner || 'root', p: mode || DIR_MODE }
+    : { t: 'f', d: '', m, o: owner || actor() || 'root', p: mode || FILE_MODE };
+}
+
+/* ---------- 用户家目录 ---------- */
+/**
+ * 确保 /home/<user> 存在(幂等)。由登录/注册触发。
+ * 权限:家目录 700(仅本人),其下标准子目录继承属主。
+ */
+export function ensureUserHome(user) {
+  if (!user || user === 'root') return false;
+  const home = `/home/${user}`;
+  const existing = node(home);
+  if (existing) {
+    existing.o = user;
+    if (existing.p !== HOME_MODE) existing.p = HOME_MODE;
+  } else {
+    // 沿途创建:仅 /home 下新建
+    const homeDir = node('/home');
+    if (!homeDir || homeDir.t !== 'd') return false;
+    homeDir.c[user] = makeNode('d', user, HOME_MODE);
+    homeDir.m = Date.now();
+  }
+  const seed = (name, content) => {
+    const p = joinPath(home, name);
+    if (!node(p)) {
+      const par = node(home);
+      if (name === 'desktop' || name === 'documents' || name === 'pictures' || name === 'music' || name === 'downloads') {
+        par.c[name] = makeNode('d', user, DIR_MODE);
+      } else {
+        const f = makeNode('f', user, FILE_MODE);
+        f.d = content ?? '';
+        par.c[name] = f;
+      }
+      par.m = Date.now();
+    }
+  };
+  seed('desktop');
+  seed('documents');
+  seed('pictures');
+  seed('music');
+  seed('downloads');
+  const deskNote = joinPath(home, 'desktop/桌面便签.txt');
+  if (!node(deskNote)) {
+    const d = node(joinPath(home, 'desktop'));
+    const f = makeNode('f', user, FILE_MODE);
+    f.d = DESKTOP_NOTE;
+    d.c['桌面便签.txt'] = f;
+    d.m = Date.now();
+  }
+  const welcome = joinPath(home, 'documents/欢迎使用.txt');
+  if (!node(welcome)) {
+    const d = node(joinPath(home, 'documents'));
+    const f = makeNode('f', user, FILE_MODE);
+    f.d = WELCOME;
+    d.c['欢迎使用.txt'] = f;
+    d.m = Date.now();
+  }
+  const guide = joinPath(home, 'documents/应用开发指南.md');
+  if (!node(guide)) {
+    const d = node(joinPath(home, 'documents'));
+    const f = makeNode('f', user, FILE_MODE);
+    f.d = DEVGUIDE;
+    d.c['应用开发指南.md'] = f;
+    d.m = Date.now();
+  }
+  emit('ensure-home', home);
+  return true;
+}
+
+/* 登录 / 注册 / 系统建号 → 自动准备家目录 */
+subscribe('accounts:changed', (payload, msg) => {
+  const t = msg?.type;
+  const u = payload?.user || accounts.current();
+  if ((t === 'login' || t === 'created' || t === 'register') && u) ensureUserHome(u);
+});
+
 /* ---------- 文件系统 API ---------- */
 export const fs = {
-  normPath, basename, parentPath, joinPath,
+  normPath, basename, parentPath, joinPath, homePath, desktopPath, ensureUserHome,
 
   exists: (p) => !!node(p),
   isDir: (p) => node(p)?.t === 'd',
+
+  /** 属主 + 显示用 9 位权限(组位 = 其他位,无组概念) */
+  modeString(n) {
+    const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
+    return full.slice(0, 3) + full.slice(3, 6) + full.slice(3, 6);
+  },
 
   stat(p) {
     const n = node(p);
@@ -216,13 +350,18 @@ export const fs = {
       dir: n.t === 'd',
       size: n.t === 'f' ? (n.d || '').length : Object.keys(n.c).length,
       mtime: n.m || 0,
+      owner: n.o || 'root',
+      mode: this.modeString(n),
+      mode6: String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6),
     };
   },
 
-  /** 列出目录,返回按"目录在前 + 名称排序"的数组 */
+  /** 列出目录(需读权限);返回按"目录在前 + 名称排序"的数组,无权限返回 null */
   list(p) {
     const n = node(p);
     if (!n || n.t !== 'd') return null;
+    const user = accounts.current();
+    if (!allow(p, 'r', user)) return null;
     const base = normPath(p) === '/' ? '' : normPath(p);
     return Object.entries(n.c)
       .map(([name, ch]) => ({
@@ -230,34 +369,79 @@ export const fs = {
         dir: ch.t === 'd',
         size: ch.t === 'f' ? (ch.d || '').length : Object.keys(ch.c).length,
         mtime: ch.m || 0,
+        owner: ch.o || 'root',
+        mode: this.modeString(ch),
       }))
       .sort((a, b) => (a.dir !== b.dir) ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, 'zh'));
   },
 
   read(p) {
     const n = node(p);
+    if (n?.t !== 'f') return null;
+    if (!allow(p, 'r', accounts.current())) return null;
+    return n.d ?? '';
+  },
+
+  /** 系统内部读(绕过权限;用于快捷方式解析等) */
+  readRaw(p) {
+    const n = node(p);
     return n?.t === 'f' ? (n.d ?? '') : null;
   },
 
-  /** 写文件(自动创建父目录),返回 boolean */
-  write(p, content) {
+  /**
+   * 写文件(自动创建父目录)。
+   * opts.as  跳过会话身份(系统内部)
+   * opts.owner 新建时的属主(默认当前用户 / root)
+   * opts.mode  新建时 6 位权限
+   */
+  write(p, content, opts = {}) {
     const name = basename(p);
     if (!name || name === '/') return false;
-    const par = this.mkdir(parentPath(p), { silent: true });
+    const user = actor(opts);
+    if (!user) return false;
+    const existing = node(p);
+    if (existing) {
+      if (!allow(p, 'w', user)) return false;
+      existing.d = String(content);
+      existing.m = Date.now();
+      emit('write', p);
+      return true;
+    }
+    const parPath = parentPath(p);
+    if (!allow(parPath, 'w', user) || !allow(parPath, 'x', user)) return false;
+    const par = this.mkdir(parPath, { silent: true, as: opts.as, owner: opts.owner });
     if (!par) return false;
-    const old = par.c[name];
-    par.c[name] = { t: 'f', d: String(content), m: Date.now() };
+    if (par.c[name]) return false;
+    const n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
+    n.d = String(content);
+    par.c[name] = n;
     par.m = Date.now();
     emit('write', p);
     return true;
   },
 
-  /** 创建目录(可递归),返回父目录 node */
-  mkdir(p, { silent } = {}) {
+  /** 创建目录(可递归),返回目录 node;失败返回 null */
+  mkdir(p, { silent, as, owner, mode } = {}) {
+    const user = actor({ as });
+    if (!user) return null;
+    const segs = normPath(p).split('/').filter(Boolean);
+    if (!segs.length) return root;
     let n = root;
-    for (const seg of normPath(p).split('/').filter(Boolean)) {
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
       if (n.t !== 'd') return null;
-      if (!n.c[seg]) { n.c[seg] = { t: 'd', c: {}, m: Date.now() }; n.m = Date.now(); if (!silent) emit('mkdir', p); }
+      if (!n.c[seg]) {
+        // 新建子目录:当前目录需可写可进入(root 免检)
+        if (!modeFor(n, user).w || !modeFor(n, user).x) return null;
+        const isLast = i === segs.length - 1;
+        n.c[seg] = makeNode(
+          'd',
+          owner || (isLast ? (user === 'root' ? 'root' : user) : user) || 'root',
+          mode || (owner && isLast ? HOME_MODE : DIR_MODE),
+        );
+        n.m = Date.now();
+        if (!silent) emit('mkdir', p);
+      }
       n = n.c[seg];
     }
     persist();
@@ -265,10 +449,14 @@ export const fs = {
   },
 
   /** 删除文件或目录(含子内容) */
-  rm(p) {
+  rm(p, opts = {}) {
+    const user = actor(opts);
     const par = node(parentPath(p));
     const name = basename(p);
     if (!par || !par.c[name]) return false;
+    if (!allow(parentPath(p), 'w', user)) return false;
+    const victim = par.c[name];
+    if (victim.o !== user && !modeFor(victim, user).w) return false;
     delete par.c[name];
     par.m = Date.now();
     emit('rm', p);
@@ -276,19 +464,65 @@ export const fs = {
   },
 
   /** 移动/重命名 */
-  rename(oldP, newP) {
+  rename(oldP, newP, opts = {}) {
+    const user = actor(opts);
     const par = node(parentPath(oldP));
     const name = basename(oldP);
     if (!par || !par.c[name]) return false;
+    if (!allow(parentPath(oldP), 'w', user)) return false;
+    if (!allow(parentPath(newP), 'w', user)) return false;
+    if (!allow(parentPath(newP), 'x', user)) return false;
     const n = par.c[name];
     delete par.c[name];
-    const dstPar = this.mkdir(parentPath(newP), { silent: true });
+    const dstPar = this.mkdir(parentPath(newP), { silent: true, ...opts });
     if (!dstPar) { par.c[name] = n; return false; }
     dstPar.c[basename(newP)] = n;
     n.m = Date.now();
     emit('rename', newP);
     return true;
   },
+
+  /** chmod:mode 为 6 位 "rwxrwx" 或 4 位八进制如 "755"(映射为 6 位) */
+  chmod(p, mode, opts = {}) {
+    const n = node(p);
+    if (!n) return false;
+    const user = actor(opts);
+    if (!user) return false;
+    if (user !== 'root' && n.o !== user) return false;   // 仅属主或 root 可改
+    let m6;
+    if (/^[0-7]{4}$/.test(String(mode))) {
+      // 四位八进制:忽略特殊位,取属主 + 其他(无用户组)
+      const s = String(mode);
+      const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
+      m6 = bits(parseInt(s[1], 8)) + bits(parseInt(s[3], 8));
+    } else if (/^[rwxt-]{6}$/.test(String(mode))) {
+      m6 = String(mode);
+    } else if (/^[0-7]{3}$/.test(String(mode))) {
+      const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
+      const [u, g, o] = String(mode).split('').map(c => parseInt(c, 8));
+      // 无组:中间位并入"其他"
+      m6 = bits(u) + bits(g | o);
+    } else return false;
+    n.p = m6;
+    n.m = Date.now();
+    emit('chmod', p);
+    return true;
+  },
+
+  /** chown:仅 root */
+  chown(p, newOwner, opts = {}) {
+    const n = node(p);
+    if (!n) return false;
+    const user = actor(opts);
+    if (user !== 'root' && !opts.as) return false;
+    n.o = String(newOwner);
+    n.m = Date.now();
+    emit('chown', p);
+    return true;
+  },
+
+  /** 当前会话用户(未登录 null) */
+  currentUser: () => accounts.current(),
 
   /** 全盘统计 */
   stats() {

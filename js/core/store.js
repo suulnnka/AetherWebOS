@@ -77,6 +77,8 @@ let state = { ...DEFAULTS, ...load() };
 let persistTimer;
 let wiped = false;   // 完全重置后置位:persist 不再写盘,防止 reload 前防抖定时器把旧数据写回
 export const storageWiped = () => wiped;
+/** 标记本地数据已作废(文件系统版本不符等):阻止后续任何写回,再清空并重载 */
+export function markStorageWiped() { wiped = true; }
 
 function persist() {
   if (wiped) return;

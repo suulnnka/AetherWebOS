@@ -294,7 +294,9 @@ function renderSection(root, sec, bus) {
       nameRow,
       row('系统用户', '注销后可在此处列出的用户之间切换登录', listWrap),
       row('添加用户', '仅创建账号,不切换当前登录', el('div', { class: 'row' }, newName, newPass, addBtn)),
-      row('用户目录', '', el('span', { class: 'dim mono' }, '/home')),
+      row('用户目录', '每个用户绑定独立家目录', el('span', { class: 'dim mono' }, cur ? `/home/${cur}` : '/home/<user>')),
+      row('系统目录', '预留给系统程序与应用包', el('span', { class: 'dim mono' }, '/bin · /app')),
+      row('root 账号', '密码为空,仅供系统内部使用,无法登录', el('span', { class: 'dim mono' }, 'root (system)')),
     ));
   }
 

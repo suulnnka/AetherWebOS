@@ -130,5 +130,8 @@ subscribe('accounts:changed', (p, msg) => {
   }
 });
 
-/* 启动自检:上次处于锁屏(注销后刷新页面)→ 直接进入锁屏 */
-if (localStorage.getItem(LOCK_KEY) === '1' && !accounts.current()) showSession();
+/* 启动自检:锁屏标记,或尚无任何可登录用户(首启进入注册)→ 显示锁屏 */
+if (!accounts.current() &&
+    (localStorage.getItem(LOCK_KEY) === '1' || !accounts.list().length)) {
+  showSession();
+}

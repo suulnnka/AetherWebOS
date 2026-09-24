@@ -12,7 +12,7 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './viewer.css';
-import fs from '../../core/fs.js';
+import fs, { homePath } from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 
 const TEXT_EXT = ['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'csv', 'log', 'ini', 'yml', 'conf'];
@@ -40,7 +40,7 @@ register({
       onClick: async () => {
         if (!currentFile) return;
         const text = await currentFile.file.text();
-        const path = '/home/downloads/' + (currentFile.name.replace(/[\/\\]/g, '_'));
+        const path = (homePath() || '/home') + '/downloads/' + (currentFile.name.replace(/[\/\\]/g, '_'));
         fs.write(path, text);
         open('notes', { params: { path } });
         bus.notify('已转入记事本', path);

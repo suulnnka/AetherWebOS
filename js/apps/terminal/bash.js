@@ -10,11 +10,12 @@
  * UI(回显/提示符/SSH 会话/密码掩码)由 terminal/index.js 提供。
  * ============================================================ */
 import { fmtDate, fmtTime } from '../../core/utils.js';
-import fs from '../../core/fs.js';
+import fs, { homePath } from '../../core/fs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { settings, WALLPAPERS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper } from '../../core/store.js';
 import { list as listApps } from '../../core/registry.js';
 import { isAppLink, appLinkApp } from '../../core/applink.js';
+import { accounts } from '../../core/accounts.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
 import { httpGet, dnsResolve } from '../../core/vnet.js';
@@ -77,7 +78,10 @@ CMDS.ls = {
         const isDir = i.dir;
         const size = i.size ?? 4096;
         const mtime = i.mtime ? fmtDate(new Date(i.mtime)) : '          ';
-        return `${isDir ? 'drwxr-xr-x' : '-rw-r--r--'}  1 user user ${String(size).padStart(6)} ${mtime} ${names[k]}`;
+        const mode = i.mode || (isDir ? 'drwxr-xr-x' : '-rw-r--r--');
+        const owner = i.owner || 'root';
+        // 属主占两列显示(无用户组:第二列仍显示属主,便于对照类 Unix 习惯)
+        return `${mode}  1 ${owner} ${owner} ${String(size).padStart(6)} ${mtime} ${names[k]}`;
       }).join('\n');
     }
     // 管道/重定向中每个文件一行(真实 bash 行为,便于 wc -l)
@@ -127,7 +131,18 @@ CMDS.mkdir = {
   run(args, { resolve }) {
     const p = args.filter(a => !a.startsWith('-'))[0];
     if (!p) throw new Error('mkdir: 缺少操作数');
-    fs.mkdir(resolve(p));
+    if (!fs.mkdir(resolve(p))) throw new Error(`mkdir: 无法创建目录 ${p}: 权限不足或路径无效`);
+    return '';
+  },
+};
+CMDS.chmod = {
+  desc: '修改权限(chmod <八进制如 755> <文件>)',
+  run(args, { resolve }) {
+    if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt');
+    const mode = args[0];
+    const p = resolve(args[1]);
+    if (!fs.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
+    if (!fs.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改`);
     return '';
   },
 };
@@ -509,7 +524,7 @@ CMDS.help = {
   desc: '列出可用命令',
   run() {
     return `GNU Bash (AetherWebOS) —— 可用命令:
-  文件目录  ${['ls', 'cd', 'pwd', 'cat', 'mkdir', 'rm', 'touch', 'mv', 'cp', 'head', 'tail', 'grep', 'wc', 'find', 'tree'].join(' ')}
+  文件目录  ${['ls', 'cd', 'pwd', 'cat', 'mkdir', 'chmod', 'rm', 'touch', 'mv', 'cp', 'head', 'tail', 'grep', 'wc', 'find', 'tree'].join(' ')}
   系统      ${['whoami', 'hostname', 'uname', 'date', 'uptime', 'history', 'clear', 'exit', 'reboot'].join(' ')}
   虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh'].join(' ')}
   应用与IPC ${['apps', 'open', 'edit', 'notify', 'vol', 'theme', 'wallpaper', 'sysinfo'].join(' ')}
@@ -526,13 +541,18 @@ man <命令> 查看用法;支持管道 |、重定向 > >>、引号、# 注释、
  * 是终端层状态);exit / 清屏的收尾由宿主在 runLine 之后检查 state。
  */
 export function createBash({ user, history, print, hooks, dialogs }) {
-  const state = { cwd: '/home', user, history, clear: false, exit: false };
+  const home = homePath(user) || '/home';
+  const state = { cwd: home, user, history, clear: false, exit: false };
 
   const resolve = (p) => {
-    if (p === '~' || p.startsWith('~/')) p = '/home' + p.slice(1);
+    if (p === '~' || p.startsWith('~/')) p = home + p.slice(1);
     return fs.joinPath(state.cwd, p);
   };
-  const shortCwd = () => state.cwd === '/home' ? '~' : state.cwd.replace(/^\/home/, '~');
+  const shortCwd = () => {
+    if (state.cwd === home) return '~';
+    if (state.cwd.startsWith(home + '/')) return '~' + state.cwd.slice(home.length);
+    return state.cwd;
+  };
 
   /** Ubuntu 风格彩色提示符(装入宿主的提示符元素) */
   const el = (tag, cls, text) => {

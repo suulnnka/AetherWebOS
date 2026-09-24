@@ -2,15 +2,16 @@ import { $, el, clamp } from '../core/utils.js';
 import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings, wallpaperCss, wallpaperMotion } from '../core/store.js';
-import fs from '../core/fs.js';
+import fs, { desktopPath } from '../core/fs.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
-import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, hoverPrefetch } from '../core/applink.js';
+import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, hoverPrefetch, desktopDir, ensureDesktopShortcuts } from '../core/applink.js';
 import { renderPinned, pinnedApps, togglePin } from './taskbar.js';
+import { accounts } from '../core/accounts.js';
 
-/* 桌面:壁纸 + 图标(桌面即 /home/desktop 目录:文件、文件夹与 .app 应用快捷方式,
- * 系统不为应用自动生成图标;自动生成的应用列表在开始菜单)*/
+/* 桌面:壁纸 + 图标(桌面即 ~/desktop = /home/<user>/desktop:
+ * 文件、文件夹与 .app 快捷方式;应用入口以快捷方式文件存在)*/
 /* ============ 桌面壁纸 ============ */
 export function applyWallpaper() {
   const wp = $('#wallpaper');
@@ -27,9 +28,10 @@ subscribe('sys:settings-changed', (p) => {
   if (p?.changed?.includes('style')) { wm.relayout(); renderDesktopIcons(); }
 });
 
-/* ============ 桌面 = /home/desktop:文件、文件夹与 .app 快捷方式(像操作系统一样可操作) ============ */
+/* ============ 桌面 = ~/desktop(/home/<user>/desktop):随会话用户切换 ============ */
 const ICON_KEY = 'webos.iconpos.v1';
-const DESKTOP_DIR = '/home/desktop';
+/** 当前桌面目录(未登录为 null) */
+const DESKTOP_DIR = () => desktopDir() || desktopPath();
 const GRID = { x: 92, y: 104, mx: 12, my: 10 };
 const iconPos = (() => {
   try { return JSON.parse(localStorage.getItem(ICON_KEY)) || {}; } catch { return {}; }
@@ -55,10 +57,11 @@ function fsTileMeta(name, isDir, path) {
   return { icon: 'fileText', color: 'linear-gradient(135deg,#94a3b8,#64748b)' };
 }
 
-/** 桌面条目:即 /home/desktop 的内容(应用入口也是 .app 快捷方式文件,
- *  系统不为应用自动生成桌面图标;完整应用列表在开始菜单) */
+/** 桌面条目:即 ~/desktop 的内容(应用入口也是 .app 快捷方式文件) */
 function desktopItems() {
-  return (fs.list(DESKTOP_DIR) || [])
+  const dir = DESKTOP_DIR();
+  if (!dir) return [];
+  return (fs.list(dir) || [])
     .map(f => ({ kind: 'fs', key: 'fs:' + f.path, path: f.path, name: f.name, dir: f.dir,
       label: displayName(f.name),
       ...fsTileMeta(f.name, f.dir, f.path) }));
@@ -82,12 +85,14 @@ function selectedItems() {
 }
 
 async function desktopNew(kind) {
+  const dir = DESKTOP_DIR();
+  if (!dir) return;
   const name = await dialogs.prompt({
     title: kind === 'dir' ? '新建文件夹' : '新建文本文档',
     message: '名称:', value: kind === 'dir' ? '新建文件夹' : '新建文档.txt',
   });
   if (name == null || !name.trim()) return;
-  const p = fs.joinPath(DESKTOP_DIR, name.trim());
+  const p = fs.joinPath(dir, name.trim());
   if (kind === 'dir') fs.mkdir(p); else fs.write(p, '');
 }
 
@@ -133,9 +138,46 @@ function moveToFolder(targetNode) {
   return n;                                    // rename 触发 fs-changed → 自动重渲染
 }
 
+/* 桌面图标说明框:原生 title 由浏览器随手定位,观感随机 —— 改用固定锚点的自定义 tip */
+let tipEl = null;
+let tipTimer = 0;
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipEl) tipEl.hidden = true;
+}
+
+function showTipFor(node, text) {
+  if (!text) return;
+  if (!tipEl) {
+    tipEl = el('div', { id: 'tip', hidden: true });
+    document.body.append(tipEl);
+  }
+  tipEl.textContent = text;
+  tipEl.hidden = false;
+  const r = node.getBoundingClientRect();
+  const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+  // 默认在图标正下方居中;下方放不下则翻到上方
+  let left = r.left + r.width / 2 - tw / 2;
+  let top = r.bottom + 8;
+  if (top + th > innerHeight - 8) top = r.top - th - 8;
+  tipEl.style.left = clamp(left, 8, innerWidth - tw - 8) + 'px';
+  tipEl.style.top = clamp(top, 8, innerHeight - th - 8) + 'px';
+}
+
+function bindIconTip(node, text) {
+  node.addEventListener('pointerenter', () => {
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => showTipFor(node, text), 450);
+  });
+  node.addEventListener('pointerleave', hideTip);
+  node.addEventListener('pointerdown', hideTip);
+}
+
 export function renderDesktopIcons() {
   const box = $('#icons');
   box.innerHTML = '';
+  hideTip();
   const items = desktopItems();
   const areaW = box.clientWidth, areaH = box.clientHeight;
   const rows = Math.max(1, Math.floor((areaH - GRID.my) / GRID.y));
@@ -148,14 +190,15 @@ export function renderDesktopIcons() {
     const tile = el('div', { class: 'tile' });
     paintTile(tile, item);
     tile.append(icon(item.icon, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile') || 48) * 0.52) || 24));
-    if (item.link) tile.append(el('span', { class: 'lnk-badge', title: '应用快捷方式' }, icon('external', 9)));
+    if (item.link) tile.append(el('span', { class: 'lnk-badge' }, icon('external', 9)));
 
+    const tipText = item.label || item.name;
     const node = el('button', {
       class: 'dicon',
       dataset: { key: item.key, kind: item.kind, ...(item.dir ? { dir: '1' } : {}) },
       style: { left: pos.x + 'px', top: pos.y + 'px' },
-      title: item.label || item.name,
-    }, tile, el('span', { class: 'label' }, item.label || item.name));
+    }, tile, el('span', { class: 'label' }, tipText));
+    bindIconTip(node, tipText);
 
     const clearDropHover = () =>
       box.querySelectorAll('.dicon.drop-target').forEach(d => d.classList.remove('drop-target'));
@@ -234,9 +277,21 @@ export function renderDesktopIcons() {
   });
 }
 
-/* ---- 桌面文件系统联动:任何应用改写 /home/desktop 都实时刷新 ---- */
+/* ---- 桌面文件系统联动:任何应用改写当前用户桌面都实时刷新 ---- */
 subscribe('sys:fs-changed', (p) => {
-  if (String(p?.path || '').startsWith(DESKTOP_DIR)) renderDesktopIcons();
+  const dir = DESKTOP_DIR();
+  if (dir && String(p?.path || '').startsWith(dir)) renderDesktopIcons();
+});
+
+/* 切换用户 → 重建家目录快捷方式并刷新桌面 */
+subscribe('accounts:changed', (payload, msg) => {
+  if (msg?.type === 'login' || msg?.type === 'register') {
+    const u = payload?.user || accounts.current();
+    if (u) ensureDesktopShortcuts(u);
+    renderDesktopIcons();
+  } else if (msg?.type === 'logout' || msg?.type === 'removed') {
+    renderDesktopIcons();
+  }
 });
 
 /* ---- 橡皮筋框选(空白处拖动) ---- */
@@ -279,7 +334,11 @@ $('#desktop').addEventListener('contextmenu', (e) => {
     { label: '新建文本文档', icon: 'filePlus', fn: () => desktopNew('file') },
     { label: '新建文件夹', icon: 'folderPlus', fn: () => desktopNew('dir') },
     { label: '新建应用快捷方式', icon: 'star',
-      fn: () => showMenu(cx, cy, appLinkMenuItems((a) => createAppLink(DESKTOP_DIR, a.id))) },
+      fn: () => {
+        const dir = DESKTOP_DIR();
+        if (!dir) return;
+        showMenu(cx, cy, appLinkMenuItems((a) => createAppLink(dir, a.id)));
+      } },
     { sep: true },
     {
       label: '排列图标', icon: 'grid', fn: () => {
@@ -294,7 +353,10 @@ $('#desktop').addEventListener('contextmenu', (e) => {
     { label: '显示设置', icon: 'monitor', fn: () => wm.open('settings', { params: { section: 'display' } }) },
     { sep: true },
     { label: '打开终端', icon: 'terminal', fn: () => wm.open('terminal') },
-    { label: '在此处打开文件管家', icon: 'folder', fn: () => wm.open('files', { params: { path: DESKTOP_DIR } }) },
+    { label: '在此处打开文件管家', icon: 'folder', fn: () => {
+      const dir = DESKTOP_DIR();
+      if (dir) wm.open('files', { params: { path: dir } });
+    } },
   ]);
 });
 

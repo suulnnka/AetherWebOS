@@ -5,7 +5,7 @@
  * 数据持久化到 localStorage(webos.todo.v1)。
  * 系统联动:
  *  - 新建带截止日期的任务时可选提醒(经 sys:notify 弹系统通知);
- *  - 桌面/文件管家的 /home/desktop/todo.txt 汇出只读清单(可选命令)。
+ *  - 桌面/文件管家的 ~/desktop/todo.txt 汇出只读清单(可选命令)。
  * ============================================================ */
 import { el, escapeHtml, fmtDate } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -13,7 +13,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './todo.css';
 import { subscribe, publish } from '../../core/bus.js';
-import fs from '../../core/fs.js';
+import fs, { desktopPath } from '../../core/fs.js';
 import sms from '../../core/sms.js';
 import { accounts } from '../../core/accounts.js';
 import { reopen } from '../../core/wm.js';
@@ -335,8 +335,10 @@ register({
         el('b', { style: { fontSize: '13.5px' } }, '任务'),
         el('span', { class: 'grow' }),
         el('button', {
-          class: 'btn', title: '把当前清单导出到 /home/desktop/todo.txt',
+          class: 'btn', title: '把当前清单导出到桌面 todo.txt',
           onClick: () => {
+            const desk = desktopPath();
+            if (!desk) { bus.notify('未登录', '登录后才能导出到桌面'); return; }
             const lines = ['# 任务清单 — ' + fmtDate(new Date())];
             for (const p of state.projects) {
               lines.push(`\n[${p}]`);
@@ -344,8 +346,9 @@ register({
                 lines.push(` ${t.done ? 'x' : ' '} [${prioOf(t.prio).name}] ${t.text}${t.due ? ' (截止 ' + t.due + ')' : ''}`);
               }
             }
-            fs.write('/home/desktop/todo.txt', lines.join('\n') + '\n');
-            bus.notify('已导出到桌面', '/home/desktop/todo.txt');
+            const out = fs.joinPath(desk, 'todo.txt');
+            fs.write(out, lines.join('\n') + '\n');
+            bus.notify('已导出到桌面', out);
           },
         }, icon('download', 13), '导出到桌面')),
       el('div', { class: 'app-mid' }, side, list),

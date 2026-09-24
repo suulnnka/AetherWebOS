@@ -7,6 +7,7 @@ import { subscribe, publish } from '../core/bus.js';
 import { settings, applyAll as applyAllSettings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
 import fs from '../core/fs.js';
+import { ensureDesktopShortcuts } from '../core/applink.js';
 import vnet from '../core/vnet.js';
 import mailSvc from '../core/mail.js';
 import smsSvc from '../core/sms.js';
@@ -32,6 +33,12 @@ function boot() {
   renderTasks();
   renderStartMenu();
   renderStartUser();
+  // 已有会话:确保家目录与桌面快捷方式齐全(刷新后 / 旧数据补齐)
+  const cur = accounts.current();
+  if (cur) {
+    fs.ensureUserHome(cur);
+    ensureDesktopShortcuts(cur);
+  }
   renderDesktopIcons();
   tickClock();
 
@@ -41,6 +48,7 @@ function boot() {
     wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc,
     __weatherDaily: weatherSvc.daily,
     apps: { list: listApps },
+    ensureDesktopShortcuts,
   });
   window.WebOS = SYS;
 

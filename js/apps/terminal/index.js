@@ -5,6 +5,7 @@ import manifest from './manifest.js';
 import './terminal.css';
 import { createBash } from './bash.js';
 import { settings } from '../../core/store.js';
+import { accounts } from '../../core/accounts.js';
 import { sshConnect, dnsResolve } from '../../core/vnet.js';
 
 register({
@@ -89,7 +90,7 @@ register({
     }
 
     const shell = createBash({
-      user: settings.get('username'),
+      user: accounts.current() || settings.get('username') || 'user',
       history,
       print,
       hooks: { beginSsh },

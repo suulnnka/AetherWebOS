@@ -64,14 +64,51 @@ const GROUPS = [];
 const group = (id, title, fn) => GROUPS.push({ id, title, fn });
 const ev = (expr) => c.evaluate(expr);
 
-/* 就绪等待:轮询直到开机画面移除、桌面图标渲染(替代固定 sleep) */
+/* 就绪等待:轮询直到开机画面移除、桌面图标渲染(替代固定 sleep)。
+   文件系统 v2 绑定用户:首启无账号时自动注册 e2euser,保证有 ~/desktop 与图标。 */
+async function ensureE2ESession() {
+  const st = await ev(`(() => ({
+    os: !!window.WebOS,
+    user: window.WebOS?.accounts?.current?.() || null,
+    users: (window.WebOS?.accounts?.list?.() || []).map(u => u.name),
+  }))()`);
+  if (!st.os) return false;
+  if (st.user) return true;
+  // 无会话:优先用套件常用账号登录;否则注册 e2euser;账号库为空则清掉重建
+  const r = await ev(`(async () => {
+    const acc = WebOS.accounts;
+    const tries = [
+      ['e2euser', 'e2epass1'],
+      ['admin', 'admin1234'],
+      ['alice', 'alice1234'],
+      ['todoer', 'todopass'],
+      ['mailuser', 'mailpass123'],
+    ];
+    for (const [u, p] of tries) {
+      if (!acc.list().some(x => x.name === u)) continue;
+      const r = await acc.login(u, p);
+      if (r.ok) return { ok: true, user: u };
+    }
+    if (!acc.list().length) {
+      const reg = await acc.register('e2euser', 'e2epass1');
+      if (reg.ok) return { ok: true, user: reg.user };
+    }
+    return { ok: false, users: acc.list().map(u => u.name) };
+  })()`);
+  return !!r?.ok;
+}
+
 async function waitReady() {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 120; i++) {
     const r = await ev(`(() => ({ boot: !!document.getElementById('boot'), icons: document.querySelectorAll('.dicon').length, os: !!window.WebOS }))()`);
-    if (r.os && !r.boot && r.icons > 0) { await sleep(100); return; }
+    if (r.os && !r.boot) {
+      await ensureE2ESession();
+      const r2 = await ev(`(() => ({ boot: !!document.getElementById('boot'), icons: document.querySelectorAll('.dicon').length, lock: !!document.getElementById('session') }))()`);
+      if (!r2.boot && (r2.icons > 0 || r2.lock)) { await sleep(100); return; }
+    }
     await sleep(100);
   }
-  throw new Error('页面 10s 内未就绪');
+  throw new Error('页面 12s 内未就绪');
 }
 /* 组间重置:回到初始桌面(localStorage 保留,由用例自行清理) */
 async function fresh() { await c.goto(URL_BASE); await waitReady(); }
@@ -321,7 +358,7 @@ group('T8', '文件管家 + 记事本(IPC 参数传递)', async () => {
   await ev(`const a=document.querySelector('.notes-area'); a.value += '\\n[E2E 测试行]'; a.dispatchEvent(new Event('input'));
     document.querySelector('.win[data-app=notes] .btn').click()`);
   await sleep(500);
-  const saved = await ev(`WebOS.fs.read('/home/documents/欢迎使用.txt').includes('[E2E 测试行]')`);
+  const saved = await ev(`WebOS.fs.read(WebOS.fs.homePath()+'/documents/欢迎使用.txt').includes('[E2E 测试行]')`);
   t('T8.2 记事本保存到虚拟文件系统', saved === true);
   await ev(`WebOS.wm.close(document.querySelector('.win[data-app=notes]').dataset.id)`);
   await sleep(400);
@@ -456,12 +493,12 @@ group('T14', '持久化:刷新后数据仍在', async () => {
   /* ---- T14 持久化:刷新后数据仍在 ---- */
   // 独立运行:先落一份待持久化的状态(主题 + 文件改动),刷新后应原样保留
   await ev(`WebOS.settings.set({ theme: 'dark' });
-  WebOS.fs.write('/home/documents/欢迎使用.txt', (WebOS.fs.read('/home/documents/欢迎使用.txt') || '') + '\\n[E2E 测试行]')`);
+  WebOS.fs.write(WebOS.fs.homePath()+'/documents/欢迎使用.txt', (WebOS.fs.read(WebOS.fs.homePath()+'/documents/欢迎使用.txt') || '') + '\\n[E2E 测试行]')`);
   await sleep(500);   // fs 落盘是 250ms 防抖,等它写进 localStorage 再刷新
   await fresh();
   const persisted = await ev(`({
     theme: JSON.parse(localStorage.getItem('webos.settings.v1')).theme,
-    file: WebOS.fs.read('/home/documents/欢迎使用.txt').includes('[E2E 测试行]'),
+    file: WebOS.fs.read(WebOS.fs.homePath()+'/documents/欢迎使用.txt').includes('[E2E 测试行]'),
     errs: window.__errs.length,
   })`);
   t('T14 刷新后持久化', persisted.theme === 'dark' && persisted.file && persisted.errs === 0, JSON.stringify(persisted));
@@ -776,22 +813,22 @@ group('T20', '终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络', as
   const b0prompt = await ev(`document.querySelector('.win[data-app=terminal] .t-prompt').textContent`);
   t('T20.0 Bash 启动(唯一 shell)', b0.includes('GNU Bash 5.2') && b0prompt.includes('@aetherwebos:'), `prompt=${b0prompt}`);
 
-  await bashType('ls /home');
+  await bashType('ls ~');
   const b1 = await bashOut();
-  t('T20 Bash ls', b1.includes('documents/') && b1.includes('downloads/'), 'ls /home ✓');
+  t('T20 Bash ls', b1.includes('documents/') && b1.includes('downloads/') && b1.includes('desktop/'), 'ls ~ ✓');
 
-  await bashType('echo hello-bash > /home/bash_t.txt');
-  await bashType('cat /home/bash_t.txt');
+  await bashType('echo hello-bash > ~/bash_t.txt');
+  await bashType('cat ~/bash_t.txt');
   const b2 = await bashOut();
-  const b2fs = await ev(`WebOS.fs.read('/home/bash_t.txt')`);
+  const b2fs = await ev(`WebOS.fs.read(WebOS.fs.homePath()+'/bash_t.txt')`);
   t('T20.1 重定向落地文件系统', b2.includes('hello-bash') && b2fs === 'hello-bash\n', `fs=${JSON.stringify(b2fs)}`);
 
-  await bashType('ls /home | grep doc');
+  await bashType('ls ~ | grep doc');
   const b3 = await bashOut();
-  await bashType('ls /home | wc -l');
+  await bashType('ls ~ | wc -l');
   const b4 = await bashOut();
   const wcNum = Number((/wc -l\D*(\d+)/.exec(b4) || [])[1] || 0);
-  t('T20.2 管道 grep/wc', b3.includes('documents/') && wcNum >= 4, `wc -l = ${wcNum}`);
+  t('T20.2 管道 grep/wc', b3.includes('documents/') && wcNum >= 3, `wc -l = ${wcNum}`);
 
   await bashType('uname -a');
   const b5 = await bashOut();
@@ -805,14 +842,15 @@ group('T20', '终端(Bash):Linux 指令 / 管道 / 重定向 / 虚拟网络', as
   const b7 = await bashOut();
   t('T20.5 虚拟网络命令(ifconfig)', b7.includes('eth0: 10.0.0.2'), '');
 
-  await bashType('rm /home/bash_t.txt');
-  await bashType('cat /home/bash_t.txt');
+  await bashType('rm ~/bash_t.txt');
+  await bashType('cat ~/bash_t.txt');
   const b8 = await bashOut();
   t('T20.6 rm 与错误提示', b8.includes('没有那个文件或目录'), '');
 
-  await bashType('find /home -name "*.txt"');
+  await bashType('find ~ -name "*.txt"');
   const b9 = await bashOut();
-  t('T20.7 find 通配符', b9.includes('/home/documents/'), b9.slice(-80));
+  const homeDocs = await ev(`WebOS.fs.homePath()+'/documents/'`);
+  t('T20.7 find 通配符', b9.includes(homeDocs), b9.slice(-80));
 
   await ev(`(() => {
     const inp = document.querySelector('.win[data-app=terminal] .term-in input');
@@ -1139,7 +1177,7 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
       folders: icons.filter(n => n.dataset.dir === '1').length,
     };
   })()`);
-  t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 11 && dsk1.folders >= 1 && await ev(`WebOS.fs.isDir('/home/desktop')`), JSON.stringify(dsk1));
+  t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 11 && dsk1.folders >= 1 && await ev(`WebOS.fs.isDir(WebOS.fs.desktopPath())`), JSON.stringify(dsk1));
 
   // b. 桌面右键 → 新建文本文档(全 GUI:菜单 → 系统对话框输入)
   await ev(`document.getElementById('icons').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 300 }))`);
@@ -1154,23 +1192,23 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   })()`);
   await sleep(600);
   const newFile = await ev(`({
-    fs: WebOS.fs.read('/home/desktop/测试便签.txt') === '',
-    icon: [...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:/home/desktop/测试便签.txt'),
+    fs: WebOS.fs.read(WebOS.fs.desktopPath()+'/测试便签.txt') === '',
+    icon: [...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/测试便签.txt'),
   })`);
   t('T24.1 右键新建文档(菜单→对话框→文件系统→图标)', menuHasNew && newFile.fs && newFile.icon, JSON.stringify(newFile));
 
   // c. 终端写桌面文件 → 图标实时出现(IPC 联动)
   await ev(`WebOS.wm.open('terminal')`);
   await sleep(500);
-  await termType('echo 来自终端 > /home/desktop/终端创建.txt');
+  await termType('echo 来自终端 > ~/desktop/终端创建.txt');
   await sleep(600);
-  const liveIcon = await ev(`[...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:/home/desktop/终端创建.txt')`);
+  const liveIcon = await ev(`[...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/终端创建.txt')`);
   t('T24.2 终端写桌面 → 图标实时刷新', liveIcon === true);
 
   // d. F2 重命名(选中 → 键盘 → 对话框);先让输入框失焦,模拟用户点击桌面后的状态
   await ev(`(() => {
     document.activeElement && document.activeElement.blur();
-    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:/home/desktop/测试便签.txt');
+    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/测试便签.txt');
     n.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
   })()`);
   await sleep(200);
@@ -1182,13 +1220,13 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(600);
-  const renamed = await ev(`WebOS.fs.exists('/home/desktop/改名后.txt')`);
+  const renamed = await ev(`WebOS.fs.exists(WebOS.fs.desktopPath()+'/改名后.txt')`);
   t('T24.3 F2 重命名', renamed === true);
 
   // e. Delete 删除(确认对话框)
   await ev(`(() => {
     document.activeElement && document.activeElement.blur();
-    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:/home/desktop/改名后.txt');
+    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/改名后.txt');
     n.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
   })()`);
   await sleep(200);
@@ -1196,7 +1234,7 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   await sleep(450);
   await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].find(b => b.textContent === '删除').click()`);
   await sleep(600);
-  const deleted = await ev(`!WebOS.fs.exists('/home/desktop/改名后.txt') && ![...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:/home/desktop/改名后.txt')`);
+  const deleted = await ev(`!WebOS.fs.exists(WebOS.fs.desktopPath()+'/改名后.txt') && ![...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/改名后.txt')`);
   t('T24.4 Delete 删除(确认→文件系统→图标移除)', deleted === true);
 
   // f. 橡皮筋框选
@@ -1278,7 +1316,7 @@ group('T25', '真实输入回归(浏览器输入管线:真实鼠标与键盘事�
 
   // 25.1 真实鼠标双击桌面快捷方式 → 打开应用(回归:窗口层曾挡住真实点击)
   const iconPt = await ev(`(() => {
-    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:/home/desktop/记事本.app');
+    const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/记事本.app');
     const r = n.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   })()`);
@@ -1349,12 +1387,12 @@ group('T25', '真实输入回归(浏览器输入管线:真实鼠标与键盘事�
     await sleep(600);
   }
   const realMenu = await ev(`(() => ({
-    created: WebOS.fs.exists('/home/desktop/真实新建.txt'),
-    icon: [...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:/home/desktop/真实新建.txt'),
+    created: WebOS.fs.exists(WebOS.fs.desktopPath()+'/真实新建.txt'),
+    icon: [...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/真实新建.txt'),
   }))()`);
   t('T25.4 右键菜单+真实点击+真实键盘新建文件', realMenu.created && realMenu.icon, JSON.stringify(realMenu));
   // 清理
-  await ev(`WebOS.fs.rm('/home/desktop/真实新建.txt')`);
+  await ev(`WebOS.fs.rm(WebOS.fs.desktopPath()+'/真实新建.txt')`);
   await sleep(300);
 
   const errs25 = await ev(`window.__errs.length`);
@@ -1577,7 +1615,7 @@ group('T27', '任务(Todo)应用', async () => {
   await ev(`(() => { [...document.querySelectorAll('.win[data-app=todo] .btn')].find(b => b.textContent.includes('导出到桌面')).click(); })()`);
   await sleep(500);
   await sleep(600);
-  const td5 = await ev(`WebOS.fs.read('/home/desktop/todo.txt')`);
+  const td5 = await ev(`WebOS.fs.read(WebOS.fs.desktopPath()+'/todo.txt')`);
   const ok5 = typeof td5 === 'string' && td5.includes('过期任务') && td5.includes('写周报');
   if (!ok5) console.log('   todo.txt 内容:', JSON.stringify((td5 || '').slice(0, 200)));
   t('T27.5 导出清单到桌面文件', ok5, (td5 || '').slice(0, 80));
@@ -1696,33 +1734,33 @@ group('T28', '短信应用', async () => {
 
 group('T29', '文件加密(AES-GCM)', async () => {
   /* ---- T29 文件加密(AES-GCM) ---- */
-  await ev(`WebOS.fs.write('/home/documents/机密.txt', '绝密内容 top-secret')`);
+  await ev(`WebOS.fs.write(WebOS.fs.homePath()+'/documents/机密.txt', '绝密内容 top-secret')`);
   await ev(`WebOS.wm.open('files')`);
   await ev(`WebOS.wm.open('terminal')`);
   await sleep(700);
 
   // 终端加密
-  await termType('crypt encrypt /home/documents/机密.txt s3cret');
+  await termType('crypt encrypt ~/documents/机密.txt s3cret');
   await sleep(700);
   const c1 = await ev(`(() => ({
-    locked: WebOS.fs.read('/home/documents/机密.txt').startsWith('WEOS1:'),
-    plainLeak: WebOS.fs.read('/home/documents/机密.txt').includes('top-secret'),
+    locked: WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt').startsWith('WEOS1:'),
+    plainLeak: WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt').includes('top-secret'),
   }))()`);
   t('T29 终端加密(密文落地,明文不可见)', c1.locked && !c1.plainLeak, JSON.stringify(c1));
-  await termType('crypt islocked /home/documents/机密.txt');
+  await termType('crypt islocked ~/documents/机密.txt');
   const c2 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('已加密')`);
   t('T29.1 islocked 查询', c2 === true);
 
   // 错误密码解密被拒
-  await termType('crypt decrypt /home/documents/机密.txt wrongpw');
+  await termType('crypt decrypt ~/documents/机密.txt wrongpw');
   await sleep(600);
   const c3 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('密码错误')`);
   t('T29.2 错误密码被拒', c3 === true);
 
   // 正确密码解密 → 原文还原
-  await termType('crypt decrypt /home/documents/机密.txt s3cret');
+  await termType('crypt decrypt ~/documents/机密.txt s3cret');
   await sleep(600);
-  const c4 = await ev(`WebOS.fs.read('/home/documents/机密.txt')`);
+  const c4 = await ev(`WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt')`);
   t('T29.3 正确密码解密还原', c4 === '绝密内容 top-secret', JSON.stringify(c4));
 
   // 文件管家 GUI:重新加密(对话框双密码)→ 锁图标 → 双击解锁预览
@@ -1754,7 +1792,7 @@ group('T29', '文件加密(AES-GCM)', async () => {
   await ev(`(() => { const i = document.querySelector('.win[data-app=sysdialog] .dlg-input'); i.value = 'pw123'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
   await sleep(700);
   const c5 = await ev(`(() => ({
-    lockedInStore: WebOS.fs.read('/home/documents/机密.txt').startsWith('WEOS1:'),
+    lockedInStore: WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt').startsWith('WEOS1:'),
     lockIcon: [...document.querySelectorAll('.win[data-app=files] .fitem')].find(f => f.textContent.includes('🔒')) !== undefined,
   }))()`);
   t('T29.4 GUI 加密(双密码对话框+锁图标)', c5.lockedInStore && c5.lockIcon, JSON.stringify(c5));
@@ -1770,20 +1808,20 @@ group('T29', '文件加密(AES-GCM)', async () => {
   await sleep(700);
   const c6 = await ev(`(() => ({
     preview: [...document.querySelectorAll('.win[data-app=viewer] .viewer-pre')].pop()?.textContent,
-    notPersisted: !WebOS.fs.read('/home/documents/机密.txt').includes('top-secret'),
+    notPersisted: !WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt').includes('top-secret'),
   }))()`);
   t('T29.5 双击解锁只读预览(明文不落盘)', c6.preview === '绝密内容 top-secret' && c6.notPersisted, JSON.stringify(c6));
   await c.shot('t29-unlock-preview');
 
   // Bash 终端 cat 加密文件被拒(终端本身就是 bash,直接输入)
-  await bashType('cat /home/documents/机密.txt');
+  await bashType('cat ~/documents/机密.txt');
   const c7 = await ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent.includes('是加密文件')`);
   t('T29.6 Bash cat 拒绝加密文件', c7 === true);
 
   // 解密还原(终端)并清理
-  await termType('crypt decrypt /home/documents/机密.txt pw123');
+  await termType('crypt decrypt ~/documents/机密.txt pw123');
   await sleep(600);
-  const c8 = await ev(`({ restored: WebOS.fs.read('/home/documents/机密.txt') === '绝密内容 top-secret', errs: window.__errs.length })`);
+  const c8 = await ev(`({ restored: WebOS.fs.read(WebOS.fs.homePath()+'/documents/机密.txt') === '绝密内容 top-secret', errs: window.__errs.length })`);
   t('T29.7 解密还原+无错误', c8.restored && c8.errs === 0, JSON.stringify(c8));
 
 });
@@ -1873,11 +1911,11 @@ group('T31', '压缩包支持', async () => {
   /* ---- T31 压缩包支持 ---- */
   await fresh();
   await ev(`(() => {
-    WebOS.fs.rm('/home/documents/archive.zip');
-    WebOS.fs.write('/home/documents/打包A.txt', '文件A内容');
-    WebOS.fs.write('/home/documents/打包B.txt', '文件B内容');
-    WebOS.fs.mkdir('/home/documents/bundle');
-    WebOS.fs.write('/home/documents/bundle/inner.txt', '嵌套文件');
+    WebOS.fs.rm(WebOS.fs.homePath()+'/documents/archive.zip');
+    WebOS.fs.write(WebOS.fs.homePath()+'/documents/打包A.txt', '文件A内容');
+    WebOS.fs.write(WebOS.fs.homePath()+'/documents/打包B.txt', '文件B内容');
+    WebOS.fs.mkdir(WebOS.fs.homePath()+'/documents/bundle');
+    WebOS.fs.write(WebOS.fs.homePath()+'/documents/bundle/inner.txt', '嵌套文件');
     return true;
   })()`);
   await ev(`WebOS.wm.open('files')`);
@@ -1902,14 +1940,14 @@ group('T31', '压缩包支持', async () => {
     return {
       ok: true,
       selected: w.querySelectorAll('.fitem.selected').length,
-      zip: WebOS.fs.exists('/home/documents/打包A.zip'),
+      zip: WebOS.fs.exists(WebOS.fs.homePath()+'/documents/打包A.zip'),
       toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent.slice(0, 40)),
       errs: window.__errs,
     };
   })()`);
   await sleep(400);
   const z1 = await ev(`(() => {
-    const content = WebOS.fs.read('/home/documents/打包A.zip');
+    const content = WebOS.fs.read(WebOS.fs.homePath()+'/documents/打包A.zip');
     return { exists: content != null, b64: content?.charCodeAt(0) === 0 && content?.slice(1, 8) === 'ZIPB64:', bytes: content?.length };
   })()`);
   t('T31 压缩为 ZIP(工具栏,B64 存储)', z1.exists && z1.b64, JSON.stringify(z1));
@@ -1918,7 +1956,7 @@ group('T31', '压缩包支持', async () => {
   const z2 = await ev(`(async () => {
     const { unzip } = await import('./js/core/zip.js');
     const data = await (await fetch('/')).text(); // noop 保持 async
-    const b64 = WebOS.fs.read('/home/documents/打包A.zip');
+    const b64 = WebOS.fs.read(WebOS.fs.homePath()+'/documents/打包A.zip');
     const bin = Uint8Array.from(atob(b64.slice(8)), c => c.charCodeAt(0));
     return { entries: (await unzip(bin, { asText: true })).map(i => i.name + ':' + (i.text ?? '')) };
   })()`);
@@ -2638,8 +2676,10 @@ group('T40', '系统用户与注销', async () => {
     overlay: !!document.getElementById('session'),
     user: WebOS.accounts.current(),
     count: WebOS.accounts.list().length,
+    names: WebOS.accounts.list().map(u => u.name),
   }))()`);
-  t('T40.5 锁屏注册新用户并登录', !regC.overlay && regC.user === 'dave' && regC.count === 3, JSON.stringify(regC));
+  // count 含 e2e 引导账号等,核心断言:dave 已注册并登录
+  t('T40.5 锁屏注册新用户并登录', !regC.overlay && regC.user === 'dave' && regC.count >= 3 && regC.names.includes('dave'), JSON.stringify(regC));
 
   // 删除用户:密码错误被拒;正确密码删除;删除当前用户触发注销锁屏
   const del = await ev(`(async () => {

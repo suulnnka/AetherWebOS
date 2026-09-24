@@ -9,6 +9,6 @@ export default {
   // 不写 min:2D/3D 棋盘都按容器缩放,最小窗口尺寸挂载后按「格距下限 MIN_CELL」
   // 经 wm.reportBoardMin() 上报(见 index.js 的 MIN_CELL 与 wm.js 的最小尺寸规范)
   singleton: true,
-  desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 /home/desktop/棋类游戏)
+  desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 ~/desktop/棋类游戏)
   order: 9.5,
 };

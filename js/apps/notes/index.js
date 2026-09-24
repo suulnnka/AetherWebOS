@@ -4,7 +4,7 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './notes.css';
-import fs from '../../core/fs.js';
+import fs, { homePath } from '../../core/fs.js';
 import { modal } from '../../core/ui.js';
 
 register({
@@ -29,9 +29,10 @@ register({
     async function save(as = false) {
       let target = path;
       if (as || !target) {
+        const def = `${homePath() || '/home'}/documents/未命名.txt`;
         const p = await modal(document.body, {
           title: '保存文件',
-          input: { placeholder: '/home/documents/文件.txt', value: target || '/home/documents/未命名.txt' },
+          input: { placeholder: def, value: target || def },
           body: '输入文件保存路径(自动创建目录)',
         });
         if (p == null) return false;
