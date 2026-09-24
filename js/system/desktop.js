@@ -138,16 +138,29 @@ function moveToFolder(targetNode) {
   return n;                                    // rename 触发 fs-changed → 自动重渲染
 }
 
-/* 桌面图标说明框:原生 title 由浏览器随手定位,观感随机 —— 改用固定锚点的自定义 tip */
+/* 桌面图标说明框:不用浏览器原生 title —— 悬停后出现在鼠标旁并跟随移动 */
 let tipEl = null;
 let tipTimer = 0;
+let tipXY = { x: 0, y: 0 };
 
 function hideTip() {
   clearTimeout(tipTimer);
   if (tipEl) tipEl.hidden = true;
 }
 
-function showTipFor(node, text) {
+function placeTip() {
+  if (!tipEl || tipEl.hidden) return;
+  const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+  // 默认在光标右下;贴边则翻到左侧/上方
+  let left = tipXY.x + 14;
+  let top = tipXY.y + 18;
+  if (left + tw > innerWidth - 8) left = tipXY.x - tw - 12;
+  if (top + th > innerHeight - 8) top = tipXY.y - th - 12;
+  tipEl.style.left = clamp(left, 8, innerWidth - tw - 8) + 'px';
+  tipEl.style.top = clamp(top, 8, innerHeight - th - 8) + 'px';
+}
+
+function showTipFor(text, x, y) {
   if (!text) return;
   if (!tipEl) {
     tipEl = el('div', { id: 'tip', hidden: true });
@@ -155,20 +168,19 @@ function showTipFor(node, text) {
   }
   tipEl.textContent = text;
   tipEl.hidden = false;
-  const r = node.getBoundingClientRect();
-  const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
-  // 默认在图标正下方居中;下方放不下则翻到上方
-  let left = r.left + r.width / 2 - tw / 2;
-  let top = r.bottom + 8;
-  if (top + th > innerHeight - 8) top = r.top - th - 8;
-  tipEl.style.left = clamp(left, 8, innerWidth - tw - 8) + 'px';
-  tipEl.style.top = clamp(top, 8, innerHeight - th - 8) + 'px';
+  tipXY = { x, y };
+  placeTip();
 }
 
 function bindIconTip(node, text) {
-  node.addEventListener('pointerenter', () => {
+  node.addEventListener('pointerenter', (e) => {
+    tipXY = { x: e.clientX, y: e.clientY };
     clearTimeout(tipTimer);
-    tipTimer = setTimeout(() => showTipFor(node, text), 450);
+    tipTimer = setTimeout(() => showTipFor(text, tipXY.x, tipXY.y), 450);
+  });
+  node.addEventListener('pointermove', (e) => {
+    tipXY = { x: e.clientX, y: e.clientY };
+    if (tipEl && !tipEl.hidden) placeTip();
   });
   node.addEventListener('pointerleave', hideTip);
   node.addEventListener('pointerdown', hideTip);

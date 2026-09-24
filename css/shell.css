@@ -264,7 +264,7 @@
 .pop-layout { display: flex; flex-direction: column; gap: 2px; margin: -4px; }
 .pop-layout .ctx-item { padding: 9px 12px; }
 
-/* 桌面图标说明框:固定锚点(图标下方居中,放不下翻上方),不用浏览器原生 title */
+/* 桌面图标说明框:跟随鼠标(光标右下偏移,贴边翻转),不用浏览器原生 title */
 #tip {
   position: fixed; z-index: 1400;
   max-width: 220px; padding: 6px 10px;
