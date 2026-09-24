@@ -106,7 +106,10 @@ register({
 | `win` | `{ id, appId }` 当前窗口标识 |
 | `bus` | 本应用的总量总线实例,见 §5 |
 | `params` | `open(id, { params })` 传入的参数 |
-| `fs` / `settings` | 核心 API 直通,见 §5 |
+| `fs` | **应用级文件系统**(读/写/建/删/权限),以执行用户鉴权,见 §5 |
+| `user` | 本窗口执行用户(= `ctx.fs.user`;未登录为 `null`) |
+| `executeAs` | 清单执行模式:`session`(默认)/ `root` / 固定用户名 |
+| `settings` | 系统设置直通 |
 | `setTitle(t)` | 改窗口标题(任务栏/IPC 同步广播) |
 | `close()` | 关闭自己 |
 | `focus()` | 激活自己 |
@@ -148,19 +151,31 @@ bus.onSys(type, fn)                  // 订阅系统事件(见下表)
 | `theme-changed` | 亮/暗主题切换 |
 | `volume-changed` | 音量/静音变化 |
 
-### 文件系统(`fs`,持久化在 localStorage,全部同步 API)
+### 文件系统(`ctx.fs`,持久化在 localStorage,全部同步 API)
+
+应用窗口打开时绑定**执行用户** `ctx.user`(默认 = 当时登录用户)。
+`ctx.fs` 上的读/写/建/删/权限检查都以该用户进行;新建文件属主 = 执行用户。
+业务读写请用 `ctx.fs`,不要 `import` 全局 `core/fs.js`(那会绕过应用执行身份)。
 
 ```js
-fs.read(path)             // 文件内容(字符串),不存在返回 null
-fs.write(path, content)   // 写文件(父目录自动补齐)
-fs.mkdir(path)            // 建目录
-fs.rm(path)               // 删除(递归)
-fs.rename(old, newPath)
-fs.list(path)             // 目录项数组
-fs.exists(p) / fs.isDir(p)
+mount({ root, fs, user }) {
+  fs.read(path)                // 字符串;不存在或无读权限 → null
+  fs.write(path, content)      // boolean;父目录自动补齐(需父可写)
+  fs.create(path, content='')  // 新建文件
+  fs.mkdir(path)               // 目录 node | null
+  fs.rm(path)                  // boolean(递归删除)
+  fs.rename(old, newPath)      // boolean
+  fs.list(path)                // 目录项数组 | null(无读权限)
+  fs.exists(p) / fs.isDir(p) / fs.stat(p)
+  fs.can(p, 'r'|'w'|'x')       // 权限探测
+  fs.chmod(path, '644')        // 仅属主或 root 执行身份
+  fs.homePath() / fs.desktopPath()
+  fs.joinPath / basename / parentPath / normPath
+}
 ```
 
-约定用户目录:`/home/desktop`(桌面即此目录:文件、文件夹与 .app 快捷方式,系统不自动生成图标)、`/home/documents`、`/home/downloads`。
+清单字段 `executeAs`:`'session'`(默认)/ `'root'` / 固定用户名。
+约定目录(相对执行用户):`~/desktop`、`~/documents`、`~/downloads`。
 监听变动:`bus.onSys('fs-changed', ...)`,写文件后其他应用会自动收到通知。
 
 `.app` 应用快捷方式:内容为应用 ID 的文本文件(如「国际象棋.app」内容为 `chess3d`)。

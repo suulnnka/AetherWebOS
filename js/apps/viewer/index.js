@@ -12,7 +12,6 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './viewer.css';
-import fs, { homePath } from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 
 const TEXT_EXT = ['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'csv', 'log', 'ini', 'yml', 'conf'];
@@ -30,7 +29,7 @@ function route(file) {
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus, params }) {
+  mount({ root, setTitle, bus, params, fs, user }) {
     let url = null;              // 当前对象 URL(关闭时回收)
     const stage = el('div', { class: 'viewer-stage' });
     const infoL = el('span', {}, '拖放文件到此处');
@@ -40,8 +39,11 @@ register({
       onClick: async () => {
         if (!currentFile) return;
         const text = await currentFile.file.text();
-        const path = (homePath() || '/home') + '/downloads/' + (currentFile.name.replace(/[\/\\]/g, '_'));
-        fs.write(path, text);
+        const path = (fs.homePath() || '/home') + '/downloads/' + (currentFile.name.replace(/[\/\\]/g, '_'));
+        if (!fs.write(path, text)) {
+          bus.notify('写入失败', '无写入权限或路径无效');
+          return;
+        }
         open('notes', { params: { path } });
         bus.notify('已转入记事本', path);
       },

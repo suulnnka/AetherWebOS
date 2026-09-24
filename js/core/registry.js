@@ -14,6 +14,9 @@
  *   desktop    是否出现在开始菜单(默认 true;false 同时不参与桌面快捷方式播种)
  *   desktopIcon 初始化/迁移时是否在桌面生成 .app 快捷方式(默认 true;
  *              桌面本身不自动生成图标,应用入口都是快捷方式文件)
+ *   executeAs  执行用户:'session'(默认,打开窗口时的登录用户)|
+ *              'root'(系统内部,空密码账号)| 固定用户名。
+ *              窗口存续期内 ctx.user / ctx.fs 以此身份做文件权限检查。
  *   order      排序权重(小的在前)
  *   prefetch   高频应用预读:启动空闲后在后台拉取应用 chunk,首次打开免等
  *   hoverPrefetch  鼠标悬停启动入口(桌面图标/开始菜单/任务栏)时预读
@@ -38,6 +41,7 @@ export function register(manifest) {
     resizable: true,
     desktop: true,
     desktopIcon: true,
+    executeAs: 'session',
     order: 100,
     prefetch: false,
     hoverPrefetch: true,
@@ -60,6 +64,7 @@ export function registerLazy(manifest, load) {
     resizable: true,
     desktop: true,
     desktopIcon: true,
+    executeAs: 'session',
     order: 100,
     prefetch: false,
     hoverPrefetch: true,

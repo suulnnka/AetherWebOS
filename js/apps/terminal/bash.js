@@ -10,7 +10,7 @@
  * UI(回显/提示符/SSH 会话/密码掩码)由 terminal/index.js 提供。
  * ============================================================ */
 import { fmtDate, fmtTime } from '../../core/utils.js';
-import fs, { homePath } from '../../core/fs.js';
+import coreFs, { homePath } from '../../core/fs.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { settings, WALLPAPERS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper } from '../../core/store.js';
 import { list as listApps } from '../../core/registry.js';
@@ -19,6 +19,9 @@ import { accounts } from '../../core/accounts.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
 import { httpGet, dnsResolve } from '../../core/vnet.js';
+
+/* 当前 shell 绑定的应用级 FS(createBash 注入;未注入时退回 core) */
+let FS = coreFs;
 
 /* ---------- 词法:引号与注释 ---------- */
 function tokenize(line) {
@@ -69,7 +72,7 @@ CMDS.ls = {
     const long = args.filter(a => a.startsWith('-')).some(a => a.includes('l'));
     const all = args.filter(a => a.startsWith('-')).some(a => a.includes('a'));
     const target = resolve(args.find(a => !a.startsWith('-')) || '.');
-    const items = fs.list(target);
+    const items = FS.list(target);
     if (!items) throw new Error(`ls: 无法访问 ${target}: 没有那个文件或目录`);
     const shown = all ? [{ name: '.', dir: true }, { name: '..', dir: true }, ...items] : items;
     const names = shown.map(i => i.name + (i.dir ? '/' : ''));
@@ -93,7 +96,7 @@ CMDS.cd = {
   desc: '切换目录(cd <路径>,~ 为主目录)',
   run(args, { resolve, state }) {
     const target = resolve(args[0] || '~');
-    if (!fs.isDir(target)) throw new Error(`cd: ${args[0] || target}: 没有那个目录`);
+    if (!FS.isDir(target)) throw new Error(`cd: ${args[0] || target}: 没有那个目录`);
     state.cwd = target;
     return '';
   },
@@ -119,7 +122,7 @@ CMDS.cat = {
   run(args, { stdin, resolve }) {
     if (!args.length) return stdin ?? '';
     return args.map((p) => {
-      const f = fs.read(resolve(p));
+      const f = FS.read(resolve(p));
       if (f == null) throw new Error(`cat: ${p}: 没有那个文件或目录`);
       if (isEncrypted(f)) throw new Error(`cat: ${p}: 是加密文件(在文件管家中解锁后查看)`);
       return f;
@@ -131,7 +134,7 @@ CMDS.mkdir = {
   run(args, { resolve }) {
     const p = args.filter(a => !a.startsWith('-'))[0];
     if (!p) throw new Error('mkdir: 缺少操作数');
-    if (!fs.mkdir(resolve(p))) throw new Error(`mkdir: 无法创建目录 ${p}: 权限不足或路径无效`);
+    if (!FS.mkdir(resolve(p))) throw new Error(`mkdir: 无法创建目录 ${p}: 权限不足或路径无效`);
     return '';
   },
 };
@@ -141,8 +144,8 @@ CMDS.chmod = {
     if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt');
     const mode = args[0];
     const p = resolve(args[1]);
-    if (!fs.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
-    if (!fs.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改`);
+    if (!FS.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
+    if (!FS.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改`);
     return '';
   },
 };
@@ -153,8 +156,8 @@ CMDS.rm = {
     const p = args.filter(a => !a.startsWith('-'))[0];
     if (!p) throw new Error('rm: 缺少操作数');
     const target = resolve(p);
-    if (fs.isDir(target) && !rec) throw new Error(`rm: 无法删除 ${p}: 是一个目录(使用 -r)`);
-    if (!fs.rm(target)) throw new Error(`rm: 无法删除 ${p}: 没有那个文件或目录`);
+    if (FS.isDir(target) && !rec) throw new Error(`rm: 无法删除 ${p}: 是一个目录(使用 -r)`);
+    if (!FS.rm(target)) throw new Error(`rm: 无法删除 ${p}: 没有那个文件或目录`);
     return '';
   },
 };
@@ -163,7 +166,7 @@ CMDS.touch = {
   run(args, { resolve }) {
     if (!args[0]) throw new Error('touch: 缺少文件操作数');
     const p = resolve(args[0]);
-    if (!fs.exists(p)) fs.write(p, '');
+    if (!FS.exists(p)) FS.write(p, '');
     return '';
   },
 };
@@ -171,7 +174,7 @@ CMDS.mv = {
   desc: '移动/重命名(mv <源> <目标>)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('mv: 缺少目标文件操作数');
-    if (!fs.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}`);
+    if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}`);
     return '';
   },
 };
@@ -180,10 +183,10 @@ CMDS.cp = {
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('cp: 缺少目标文件操作数');
     const src = resolve(args[0]);
-    if (fs.isDir(src)) throw new Error(`cp: 略过目录 ${args[0]}`);
-    const c = fs.read(src);
+    if (FS.isDir(src)) throw new Error(`cp: 略过目录 ${args[0]}`);
+    const c = FS.read(src);
     if (c == null) throw new Error(`cp: 无法统计 ${args[0]}: 没有那个文件`);
-    fs.write(resolve(args[1]), c);
+    FS.write(resolve(args[1]), c);
     return '';
   },
 };
@@ -192,7 +195,7 @@ CMDS.head = {
   run(args, { stdin, resolve }) {
     const n = Number(args[args.indexOf('-n') + 1]) || 10;
     const file = args.find((a, i) => !a.startsWith('-') && args[i - 1] !== '-n');
-    const text = file != null ? (fs.read(resolve(file)) ?? (() => { throw new Error(`head: 无法打开 ${file}`); })()) : stdin ?? '';
+    const text = file != null ? (FS.read(resolve(file)) ?? (() => { throw new Error(`head: 无法打开 ${file}`); })()) : stdin ?? '';
     return text.split('\n').slice(0, n).join('\n') + '\n';
   },
 };
@@ -201,7 +204,7 @@ CMDS.tail = {
   run(args, { stdin, resolve }) {
     const n = Number(args[args.indexOf('-n') + 1]) || 10;
     const file = args.find((a, i) => !a.startsWith('-') && args[i - 1] !== '-n');
-    const text = file != null ? (fs.read(resolve(file)) ?? (() => { throw new Error(`tail: 无法打开 ${file}`); })()) : stdin ?? '';
+    const text = file != null ? (FS.read(resolve(file)) ?? (() => { throw new Error(`tail: 无法打开 ${file}`); })()) : stdin ?? '';
     const lines = text.replace(/\n$/, '').split('\n');
     return lines.slice(-n).join('\n') + '\n';
   },
@@ -216,7 +219,7 @@ CMDS.grep = {
     const pattern = rest.shift();
     if (!pattern) throw new Error('用法: grep [-i] [-n] <模式> [文件]');
     const file = rest[0];
-    const text = file ? (fs.read(resolve(file)) ?? (() => { throw new Error(`grep: ${file}: 没有那个文件`); })()) : stdin ?? '';
+    const text = file ? (FS.read(resolve(file)) ?? (() => { throw new Error(`grep: ${file}: 没有那个文件`); })()) : stdin ?? '';
     const rx = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), ci ? 'i' : '');
     const hits = text.replace(/\n$/, '').split('\n')
       .map((l, i) => (rx.test(l) ? (num ? `${i + 1}:${l}` : l) : null))
@@ -229,7 +232,7 @@ CMDS.wc = {
   run(args, { stdin, resolve }) {
     const flags = args.filter(a => a.startsWith('-')).join('');
     const file = args.find(a => !a.startsWith('-'));
-    const text = file ? (fs.read(resolve(file)) ?? (() => { throw new Error(`wc: ${file}: 没有那个文件`); })()) : stdin ?? '';
+    const text = file ? (FS.read(resolve(file)) ?? (() => { throw new Error(`wc: ${file}: 没有那个文件`); })()) : stdin ?? '';
     const lines = text.replace(/\n$/, '') === '' ? 0 : text.replace(/\n$/, '').split('\n').length;
     const words = text.trim() ? text.trim().split(/\s+/).length : 0;
     const chars = text.length;
@@ -248,7 +251,7 @@ CMDS.find = {
     const rx = pattern ? new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$') : null;
     const acc = [];
     (function walk(p) {
-      const items = fs.list(p) || [];
+      const items = FS.list(p) || [];
       for (const it of items) {
         if (!rx || rx.test(it.name)) acc.push(p === '/' ? '/' + it.name : p + '/' + it.name);
         if (it.dir) walk(it.path);
@@ -263,7 +266,7 @@ CMDS.tree = {
     const start = resolve(args[0] || '.');
     const acc = [start];
     (function walk(p, prefix) {
-      const items = fs.list(p) || [];
+      const items = FS.list(p) || [];
       items.forEach((it, i) => {
         const last = i === items.length - 1;
         acc.push(prefix + (last ? '└─ ' : '├─ ') + it.name + (it.dir ? '/' : ''));
@@ -351,29 +354,29 @@ CMDS.crypt = {
   async run(args, { resolve }) {
     const [sub, file, password] = args;
     if (!sub || !file) throw new Error('用法: crypt encrypt|decrypt|islocked <文件> [密码]');
-    const p = fs.normPath(resolve(file));
+    const p = FS.normPath(resolve(file));
     if (sub === 'encrypt') {
       if (!password) throw new Error('用法: crypt encrypt <文件> <密码>');
-      const c = fs.read(p);
+      const c = FS.read(p);
       if (c == null) throw new Error(`crypt: "${p}": 文件不存在`);
       if (isEncrypted(c)) throw new Error('crypt: 该文件已是加密状态');
-      fs.write(p, await encryptText(c, password));
+      FS.write(p, await encryptText(c, password));
       return `已加密 🔒 ${p}`;
     }
     if (sub === 'decrypt') {
       if (!password) throw new Error('用法: crypt decrypt <文件> <密码>');
-      const c = fs.read(p);
+      const c = FS.read(p);
       if (c == null) throw new Error(`crypt: "${p}": 文件不存在`);
       if (!isEncrypted(c)) throw new Error('crypt: 该文件未加密');
       try {
-        fs.write(p, await decryptText(c, password));
+        FS.write(p, await decryptText(c, password));
         return `已解密 ${p}`;
       } catch (e) {
         throw new Error(`crypt: ${e.message}`);
       }
     }
     if (sub === 'islocked') {
-      const c = fs.read(p);
+      const c = FS.read(p);
       return c == null ? '文件不存在' : isEncrypted(c) ? '🔒 已加密' : '未加密';
     }
     throw new Error(`用法: crypt encrypt|decrypt|islocked <文件> [密码](未知子命令 "${sub}")`);
@@ -394,7 +397,7 @@ CMDS.open = {
     if (!a) throw new Error('用法: open <应用ID|快捷方式路径>');
     // .app 快捷方式:按路径解析并启动目标应用
     const p = resolve(a);
-    if (fs.exists(p) && isAppLink(fs.basename(p))) {
+    if (FS.exists(p) && isAppLink(FS.basename(p))) {
       const app = appLinkApp(p);
       if (!app) throw new Error(`open: 快捷方式指向的应用不存在 ${p}`);
       open(app.id);
@@ -410,7 +413,7 @@ CMDS.edit = {
   run(args, { resolve }) {
     const p = resolve(args[0] || '');
     if (!args[0]) throw new Error('用法: edit <文件>');
-    if (!fs.exists(p)) fs.write(p, '');
+    if (!FS.exists(p)) FS.write(p, '');
     open('notes', { params: { path: p } });
     return `已在记事本打开 ${p}`;
   },
@@ -540,13 +543,14 @@ man <命令> 查看用法;支持管道 |、重定向 > >>、引号、# 注释、
  * print 由终端 UI 提供;hooks.beginSsh 由 UI 提供(密码掩码与远程会话
  * 是终端层状态);exit / 清屏的收尾由宿主在 runLine 之后检查 state。
  */
-export function createBash({ user, history, print, hooks, dialogs }) {
-  const home = homePath(user) || '/home';
+export function createBash({ user, fs: appFs, history, print, hooks, dialogs }) {
+  FS = appFs || coreFs;
+  const home = (appFs?.homePath?.() ?? homePath(user)) || '/home';
   const state = { cwd: home, user, history, clear: false, exit: false };
 
   const resolve = (p) => {
     if (p === '~' || p.startsWith('~/')) p = home + p.slice(1);
-    return fs.joinPath(state.cwd, p);
+    return FS.joinPath(state.cwd, p);
   };
   const shortCwd = () => {
     if (state.cwd === home) return '~';
@@ -593,8 +597,8 @@ export function createBash({ user, history, print, hooks, dialogs }) {
       stdin = result;
       if (file) {
         const target = resolve(file);
-        const prev = append && fs.exists(target) ? fs.read(target) : '';
-        fs.write(target, (prev ?? '') + result);
+        const prev = append && FS.exists(target) ? FS.read(target) : '';
+        FS.write(target, (prev ?? '') + result);
         redirected = true;
       }
     }
@@ -610,7 +614,7 @@ export function createBash({ user, history, print, hooks, dialogs }) {
     if (parts.length <= 1) {
       pool = Object.keys(CMDS);
     } else {
-      pool = (fs.list(state.cwd) || []).map(i => i.name + (i.dir ? '/' : ''));
+      pool = (FS.list(state.cwd) || []).map(i => i.name + (i.dir ? '/' : ''));
     }
     const hits = pool.filter(n => n.startsWith(last));
     if (hits.length === 1) {

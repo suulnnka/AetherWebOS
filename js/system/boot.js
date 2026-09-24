@@ -8,6 +8,7 @@ import { settings, applyAll as applyAllSettings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
 import fs from '../core/fs.js';
 import { ensureDesktopShortcuts } from '../core/applink.js';
+import { createAppFs } from '../core/appfs.js';
 import vnet from '../core/vnet.js';
 import mailSvc from '../core/mail.js';
 import smsSvc from '../core/sms.js';
@@ -49,6 +50,7 @@ function boot() {
     __weatherDaily: weatherSvc.daily,
     apps: { list: listApps },
     ensureDesktopShortcuts,
+    createAppFs,
   });
   window.WebOS = SYS;
 

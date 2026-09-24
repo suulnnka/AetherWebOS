@@ -4,17 +4,14 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './files.css';
-import fs from '../../core/fs.js';
 import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
-import { homePath } from '../../core/fs.js';
 
-/** 快捷入口:随当前用户家目录变化 */
-function quickPlaces() {
-  const home = homePath() || '/home';
+/** 快捷入口:随执行用户家目录变化 */
+function quickPlaces(home) {
   return [
     { name: '主目录', path: home, icon: 'home' },
     { name: '桌面', path: `${home}/desktop`, icon: 'monitor' },
@@ -50,17 +47,18 @@ function fmtTime(ts) {
 
 register({
   ...manifest,
-  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
-  mount({ root, bus, params, setTitle, dialogs }) {
+  /* dialogs / fs 来自 ctx:应用绑定弹框与执行用户鉴权的文件 API */
+  mount({ root, bus, params, setTitle, dialogs, fs, user }) {
     /** 对话框封装:输入(返回 string|null)与危险确认(返回 boolean) */
     const modalPrompt = (title, placeholder, value) =>
       dialogs.prompt({ title, message: '输入名称:', placeholder, value });
     const modalConfirm = (title, body, danger) =>
       dialogs.confirm({ title, message: body, danger, okText: '删除' });
 
+    const home = fs.homePath() || '/home';
     let cwd = params.path && fs.isDir(params.path)
       ? fs.normPath(params.path)
-      : (homePath() || '/home');
+      : home;
     let selected = null;
     let history = [];
 
@@ -100,7 +98,7 @@ register({
           if (pw == null) return;
           try {
             const plain = await decryptText(fs.read(item.path), pw);
-            const tmp = (homePath() || '/home') + '/downloads/.' + item.name + '.preview';
+            const tmp = (fs.homePath() || '/home') + '/downloads/.' + item.name + '.preview';
             fs.write(tmp, plain);
             open('viewer', { params: { file: new File([plain], item.name, { type: 'text/plain' }) } });
             fs.rm(tmp);
@@ -250,7 +248,7 @@ register({
       grid.innerHTML = '';
       const items = fs.list(cwd);
       if (!items) {
-        const h = homePath();
+        const h = fs.homePath();
         if (h && cwd !== h && fs.isDir(h)) cwd = h;
         else if (cwd !== '/') cwd = '/';
         else return;
@@ -338,7 +336,7 @@ register({
         el('div', { class: 'app-side' },
           el('div', { class: 'dim', style: { fontSize: '11.5px', padding: '4px 10px 8px' } }, '快速访问'),
           el('div', { class: 'list' },
-            ...quickPlaces().map(q => el('button', {
+            ...quickPlaces(home).map(q => el('button', {
               class: 'list-item' + (cwd === q.path ? ' active' : ''),
               onClick: () => nav(q.path),
             }, el('span', { class: 'li-ico' }, icon(q.icon, 15)), q.name))),

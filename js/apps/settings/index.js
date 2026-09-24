@@ -10,9 +10,9 @@ import { accounts } from '../../core/accounts.js';
 import { logoutSession } from '../../system/session.js';
 import { beep } from '../../core/audio.js';
 import { modal } from '../../core/ui.js';
-import fs from '../../core/fs.js';
 import { forApp } from '../../core/dialogs.js';
 import { openConfigPopup, openGamePopup } from './popup-demo.js';
+import coreFs from '../../core/fs.js';
 
 /* 应用内弹框走应用绑定实例(与 mount ctx 的 ctx.dialogs 完全同语义):
  * 默认二级 · 应用模态,owner=settings,只锁设置自己的窗口;
@@ -373,7 +373,8 @@ function localStorageUsage() {
 const storagePercent = () => Math.min(100, Math.round(localStorageUsage() / (5 * 1024 * 1024) * 100));
 
 function fsStats() {
-  return fs.stats();
+  // 全盘存储统计(系统信息,与应用执行用户无关)
+  return coreFs.stats();
 }
 
 register({

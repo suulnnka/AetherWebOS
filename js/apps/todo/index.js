@@ -13,7 +13,6 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './todo.css';
 import { subscribe, publish } from '../../core/bus.js';
-import fs, { desktopPath } from '../../core/fs.js';
 import sms from '../../core/sms.js';
 import { accounts } from '../../core/accounts.js';
 import { reopen } from '../../core/wm.js';
@@ -64,8 +63,8 @@ const dueMeta = (t) => {
 
 register({
   ...manifest,
-  /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
-  mount({ root, setTitle, bus, onContextMenu, dialogs }) {
+  /* dialogs/fs 来自 ctx:应用绑定弹框与执行用户文件 API */
+  mount({ root, setTitle, bus, onContextMenu, dialogs, fs, user }) {
     // ---- 账号门:未登录先渲染登录面板 ----
     if (requireLogin(root, '任务', () => { /* 重新挂载由外层负责 */ location.hash = location.hash; root.innerHTML = ''; appRemount(); })) {
       return;
@@ -337,7 +336,7 @@ register({
         el('button', {
           class: 'btn', title: '把当前清单导出到桌面 todo.txt',
           onClick: () => {
-            const desk = desktopPath();
+            const desk = fs.desktopPath();
             if (!desk) { bus.notify('未登录', '登录后才能导出到桌面'); return; }
             const lines = ['# 任务清单 — ' + fmtDate(new Date())];
             for (const p of state.projects) {
@@ -347,7 +346,10 @@ register({
               }
             }
             const out = fs.joinPath(desk, 'todo.txt');
-            fs.write(out, lines.join('\n') + '\n');
+            if (!fs.write(out, lines.join('\n') + '\n')) {
+              bus.notify('导出失败', '无写入权限');
+              return;
+            }
             bus.notify('已导出到桌面', out);
           },
         }, icon('download', 13), '导出到桌面')),

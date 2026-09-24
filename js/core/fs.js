@@ -86,9 +86,12 @@ register({
 ctx.root     挂载根元素(写你的 DOM 到这里)
 ctx.bus      本应用的消息总线(见下)
 ctx.params   打开窗口时传入的参数
-ctx.fs / ctx.settings   文件系统与设置
+ctx.fs       应用级文件系统(读/写/建/删,按执行用户鉴权)★ 推荐
+ctx.user     本窗口执行用户(打开时绑定;未登录 null)
+ctx.settings 系统设置
 ctx.setTitle(t) / ctx.close()
 返回 { onClose, onResize, onParams } 钩子(可选)。
+清单可声明 executeAs: 'session'(默认)| 'root' | 固定用户名。
 
 ## 3. 布局:直接用 AppKit 类
 
@@ -242,10 +245,32 @@ function allow(p, bit, user) {
   return modeFor(target, user)[bit] === true;
 }
 
-/** 内部解析当前操作身份:显式 as > 会话用户 */
+/** 内部解析当前操作身份:显式 as(含 null)> 会话用户;as:undefined 视为未指定 */
 function actor(opts) {
-  if (opts?.as) return opts.as;
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'as') && opts.as !== undefined) {
+    return opts.as;
+  }
   return accounts.current();
+}
+
+/**
+ * 穿越检查:path 上每一级目录(不含终点自身)对 user 是否可进入(x)。
+ * 用于 exists/stat 前提;终点本身的 r/w/x 由 allow() 判定。
+ */
+function canTraverse(p, user) {
+  if (!user) return false;
+  if (user === 'root') return true;
+  const segs = normPath(p).split('/').filter(Boolean);
+  if (!segs.length) return modeFor(root, user).x === true;
+  let cur = root;
+  if (!modeFor(root, user).x) return false;
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+    cur = cur.c[segs[i]];
+    if (!cur) return false;
+  }
+  // 终点的父目录必须可进入;若终点是目录,进入它也要 x(由调用方按需再查 allow)
+  return cur.t === 'd' && modeFor(cur, user).x === true;
 }
 
 /** 内部建节点(带属主/权限) */
@@ -356,11 +381,14 @@ export const fs = {
     };
   },
 
-  /** 列出目录(需读权限);返回按"目录在前 + 名称排序"的数组,无权限返回 null */
-  list(p) {
+  /**
+   * 列出目录(需读权限);返回按"目录在前 + 名称排序"的数组,无权限返回 null。
+   * opts.as 指定执行用户(应用级 API 传入应用的执行用户;未登录传 null)。
+   */
+  list(p, opts = {}) {
     const n = node(p);
     if (!n || n.t !== 'd') return null;
-    const user = accounts.current();
+    const user = actor(opts);
     if (!allow(p, 'r', user)) return null;
     const base = normPath(p) === '/' ? '' : normPath(p);
     return Object.entries(n.c)
@@ -375,10 +403,11 @@ export const fs = {
       .sort((a, b) => (a.dir !== b.dir) ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, 'zh'));
   },
 
-  read(p) {
+  /** 读文件;无读权限或不存在返回 null。opts.as 指定执行用户 */
+  read(p, opts = {}) {
     const n = node(p);
     if (n?.t !== 'f') return null;
-    if (!allow(p, 'r', accounts.current())) return null;
+    if (!allow(p, 'r', actor(opts))) return null;
     return n.d ?? '';
   },
 
@@ -409,7 +438,12 @@ export const fs = {
     }
     const parPath = parentPath(p);
     if (!allow(parPath, 'w', user) || !allow(parPath, 'x', user)) return false;
-    const par = this.mkdir(parPath, { silent: true, as: opts.as, owner: opts.owner });
+    // 父目录补齐:仅在显式指定了 as 时传入,避免 as:undefined 被当成无身份
+    const mkdirOpts = { silent: true };
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'as') && opts.as !== undefined) {
+      mkdirOpts.as = opts.as;
+    }
+    const par = this.mkdir(parPath, mkdirOpts);
     if (!par) return false;
     if (par.c[name]) return false;
     const n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
@@ -514,7 +548,7 @@ export const fs = {
     const n = node(p);
     if (!n) return false;
     const user = actor(opts);
-    if (user !== 'root' && !opts.as) return false;
+    if (user !== 'root') return false;   // 仅 root 可 chown
     n.o = String(newOwner);
     n.m = Date.now();
     emit('chown', p);
@@ -523,6 +557,15 @@ export const fs = {
 
   /** 当前会话用户(未登录 null) */
   currentUser: () => accounts.current(),
+
+  /** 是否允许 user 对 path 做 r/w/x(应用级 API 经 AppFS 调用) */
+  can(p, bit, user = accounts.current()) {
+    return allow(p, bit, user);
+  },
+  /** 是否可穿越 path 的父目录链(存在性/进入前提) */
+  canTraverse(p, user = accounts.current()) {
+    return canTraverse(p, user);
+  },
 
   /** 全盘统计 */
   stats() {

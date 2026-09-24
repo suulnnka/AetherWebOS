@@ -10,8 +10,8 @@ import { sshConnect, dnsResolve } from '../../core/vnet.js';
 
 register({
   ...manifest,
-  /* dialogs 来自 ctx:传给 bash 会话,对话框命令走应用绑定弹框(二级 · 应用模态) */
-  mount({ root, close, dialogs }) {
+  /* dialogs / fs / user 来自 ctx:对话框二级锁定;文件与身份按执行用户 */
+  mount({ root, close, dialogs, fs, user }) {
     const history = [];
     let hIdx = 0;
     let sshSess = null;      // 活动的 SSH 远程会话(输入整体交给远程)
@@ -90,7 +90,8 @@ register({
     }
 
     const shell = createBash({
-      user: accounts.current() || settings.get('username') || 'user',
+      user: user || accounts.current() || settings.get('username') || 'user',
+      fs,
       history,
       print,
       hooks: { beginSsh },

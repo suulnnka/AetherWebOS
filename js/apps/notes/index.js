@@ -4,12 +4,11 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './notes.css';
-import fs, { homePath } from '../../core/fs.js';
 import { modal } from '../../core/ui.js';
 
 register({
   ...manifest,
-  mount({ root, bus, params, setTitle }) {
+  mount({ root, bus, params, setTitle, fs, user }) {
     let path = params.path || null;   // null = 未保存的新文档
     let dirty = false;
 
@@ -29,7 +28,7 @@ register({
     async function save(as = false) {
       let target = path;
       if (as || !target) {
-        const def = `${homePath() || '/home'}/documents/未命名.txt`;
+        const def = `${fs.homePath() || '/home'}/documents/未命名.txt`;
         const p = await modal(document.body, {
           title: '保存文件',
           input: { placeholder: def, value: target || def },
@@ -39,7 +38,10 @@ register({
         target = fs.normPath(p.trim() || '');
         if (!target || target === '/') return false;
       }
-      fs.write(target, area.value);
+      if (!fs.write(target, area.value)) {
+        bus.notify('保存失败', `无写入权限或路径无效:${target}`);
+        return false;
+      }
       path = target;
       dirty = false;
       refreshTitle();

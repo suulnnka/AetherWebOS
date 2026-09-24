@@ -14,6 +14,8 @@ import { ensureLoaded, get as getApp } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
 import fs from './fs.js';
+import { createAppFs } from './appfs.js';
+import { accounts } from './accounts.js';
 import { showMenu, copyText, selectionAt } from './menu.js';
 import { forApp as dialogHelpers } from './dialogs.js';
 
@@ -315,12 +317,25 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
 
   // 挂载内容
   w.bus = createAppBus(app.id);
+  /* 执行用户:清单 executeAs —— 'session'(默认,打开时登录用户)|
+     'root'(系统内部)| 固定用户名。窗口存续期内绑定不变。 */
+  const execMode = app.executeAs || 'session';
+  const execUser = execMode === 'session'
+    ? accounts.current()
+    : execMode;
+  const appFs = createAppFs(app.id, execUser);
   const ctx = {
     root: body,
     win,
     bus: w.bus,
     params,
-    fs,
+    /** 应用级文件系统:全部操作以执行用户鉴权(读/写/建/删/权限) */
+    fs: appFs,
+    /** 全局文件系统(系统/调试;应用请优先用 ctx.fs) */
+    fsGlobal: fs,
+    /** 本窗口的执行用户(打开时绑定;未登录为 null) */
+    user: execUser,
+    executeAs: execMode,
     settings,
     /** 应用自定义右键:fn({ x, y, target }) 返回菜单项数组(可含 {sep:true});
         返回 null/undefined 时走系统默认(选中文字 → 复制,表单控件 → 全选) */
@@ -351,6 +366,7 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     popup: (opts = {}) => popup({ owner: app.id, ...opts }),
   };
   w.ctx = ctx;
+  w.execUser = execUser;
 
   try {
     const hooks = mount(ctx);
