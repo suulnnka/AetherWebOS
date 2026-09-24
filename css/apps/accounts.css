@@ -7,6 +7,7 @@
 .acc-sub { font-size: 11.5px; margin-bottom: 6px; text-align: center; }
 .acc-panel .input { width: 230px; }
 .acc-error { color: #ef4444; font-size: 12px; min-height: 16px; }
+.acc-hint { font-size: 11.5px; min-height: 14px; text-align: center; max-width: 230px; }
 .acc-main-btn { width: 230px; justify-content: center; }
 .acc-switch { border: none; background: none; color: var(--accent); font-size: 12px; text-decoration: underline; }
 .acc-logout { font-size: 11.5px; }

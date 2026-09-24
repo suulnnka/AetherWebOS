@@ -78,6 +78,7 @@ async function ensureE2ESession() {
   const r = await ev(`(async () => {
     const acc = WebOS.accounts;
     const tries = [
+      ['user', '1234'],
       ['e2euser', 'e2epass1'],
       ['admin', 'admin1234'],
       ['alice', 'alice1234'],

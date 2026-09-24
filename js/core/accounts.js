@@ -17,6 +17,9 @@
  *   accounts.login(username, password)      → { ok, user } | { ok:false, error }
  *   accounts.logout()                       会话清除
  *   accounts.current()                      当前用户名 | null(会话持久化)
+ *   accounts.lastUser()                     上次成功登录的用户(注销后仍保留)
+ *   accounts.passwordHint(username)         密码提示 | null
+ *   accounts.bootstrapIfNeeded()            首启无用户时自动建默认账号并登录
  *   accounts.list()                         [{ name, displayName, created }](不含 root)
  *   accounts.listAll()                      含系统账号
  *   accounts.displayName(username)          显示名 | null
@@ -28,9 +31,18 @@ import { publish, subscribe } from './bus.js';
 
 const DB_KEY = 'webos.accounts.v1';
 const SESSION_KEY = 'webos.account-session.v1';
+const LAST_USER_KEY = 'webos.accounts.last-user.v1';
 const ITER = 150000;
 const te = new TextEncoder();
 const SYSTEM_USERS = new Set(['root']);
+
+/** 首启自动创建的默认账号(可登录;提示写入 profile.passwordHint) */
+export const BOOTSTRAP_USER = {
+  username: 'user',
+  password: '1234',
+  displayName: '用户',
+  passwordHint: '系统初始账号:user / 1234',
+};
 
 const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 
@@ -129,6 +141,35 @@ const accounts = {
     return { ok: true, user: name };
   },
 
+  /**
+   * 首启引导:系统里还没有任何可登录用户时,创建默认账号并登录。
+   * 已有用户时直接返回 null。返回 { ok, user } | null。
+   */
+  async bootstrapIfNeeded() {
+    if (this.list().length > 0) return null;
+    const b = BOOTSTRAP_USER;
+    const r = await this.register(b.username, b.password, {
+      displayName: b.displayName,
+      passwordHint: b.passwordHint,
+    });
+    return r.ok ? r : null;
+  },
+
+  /** 上次成功登录的用户名(注销/锁屏后仍可读,用于锁屏默认选中) */
+  lastUser() {
+    try {
+      const u = localStorage.getItem(LAST_USER_KEY);
+      return u || null;
+    } catch { return null; }
+  },
+
+  /** 密码提示(注册时写入 profile.passwordHint) */
+  passwordHint(username = this.current()) {
+    if (!username) return null;
+    const hint = loadDB().users[username]?.profile?.passwordHint;
+    return hint ? String(hint) : null;
+  },
+
   /** 登录:空密码 / 系统账号 / 口令不符一律失败 */
   async login(username, password) {
     const name = String(username || '').trim();
@@ -147,7 +188,11 @@ const accounts = {
   },
 
   _startSession(name) {
-    try { localStorage.setItem(SESSION_KEY, JSON.stringify({ user: name, at: Date.now() })); } catch { /* 忽略 */ }
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ user: name, at: Date.now() }));
+      // 上次登录用户:注销后锁屏仍默认选中(不随 logout 清除)
+      localStorage.setItem(LAST_USER_KEY, name);
+    } catch { /* 忽略 */ }
   },
 
   logout() {
@@ -179,6 +224,7 @@ const accounts = {
         displayName: u.profile?.displayName || name,
         created: u.created || 0,
         system: !!u.profile?.system || SYSTEM_USERS.has(name),
+        passwordHint: u.profile?.passwordHint || null,
       }))
       .sort((a, b) => a.created - b.created);
   },
@@ -189,7 +235,7 @@ const accounts = {
     return loadDB().users[username]?.profile?.displayName || username;
   },
 
-  /** 修改显示名 */
+  /** 修改显示名;可选同时更新密码提示 profile.passwordHint */
   setDisplayName(username, displayName) {
     const db = loadDB();
     const rec = db.users[username];
@@ -199,6 +245,18 @@ const accounts = {
     saveDB(db);
     publish('accounts:changed', { from: 'accounts', type: 'profile', payload: { user: username } });
     return { ok: true, displayName: name };
+  },
+
+  /** 设置密码提示(登录页展示;不超过 80 字) */
+  setPasswordHint(username, hint) {
+    const db = loadDB();
+    const rec = db.users[username];
+    if (!rec) return { ok: false, error: '用户不存在' };
+    const text = String(hint || '').trim().slice(0, 80);
+    rec.profile = { ...(rec.profile || {}), passwordHint: text };
+    saveDB(db);
+    publish('accounts:changed', { from: 'accounts', type: 'profile', payload: { user: username } });
+    return { ok: true, passwordHint: text };
   },
 
   /** 删除用户:需校验该用户密码;系统账号不可删;删当前用户时同时注销 */
@@ -211,6 +269,9 @@ const accounts = {
     saveDB(db);
     const wasCurrent = this.current() === username;
     if (wasCurrent) this.logout();
+    try {
+      if (this.lastUser() === username) localStorage.removeItem(LAST_USER_KEY);
+    } catch { /* 忽略 */ }
     publish('accounts:changed', { from: 'accounts', type: 'removed', payload: { user: username, wasCurrent } });
     return { ok: true, wasCurrent };
   },

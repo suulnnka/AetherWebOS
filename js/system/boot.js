@@ -30,18 +30,27 @@ function boot() {
   applyWallpaper();
   paintVolIcon();
   paintBell();
-  renderPinned();
-  renderTasks();
-  renderStartMenu();
-  renderStartUser();
-  // 已有会话:确保家目录与桌面快捷方式齐全(刷新后 / 旧数据补齐)
-  const cur = accounts.current();
-  if (cur) {
-    fs.ensureUserHome(cur);
-    ensureDesktopShortcuts(cur);
-  }
-  renderDesktopIcons();
-  tickClock();
+
+  // 首启:尚无任何可登录用户 → 自动创建默认账号并登录(不进注册锁屏)
+  const start = async () => {
+    if (!accounts.current() && !accounts.list().length) {
+      try { await accounts.bootstrapIfNeeded(); }
+      catch (e) { console.warn('[boot] 自动创建初始用户失败:', e); }
+    }
+    // 已有会话 / 刚 bootstrap:确保家目录与桌面快捷方式齐全
+    const cur = accounts.current();
+    if (cur) {
+      fs.ensureUserHome(cur);
+      ensureDesktopShortcuts(cur);
+    }
+    renderPinned();
+    renderTasks();
+    renderStartMenu();
+    renderStartUser();
+    renderDesktopIcons();
+    tickClock();
+  };
+  start();
 
   // 调试 / 自动化接口
   Object.assign(SYS, {
