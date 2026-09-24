@@ -59,6 +59,9 @@ export function hideMenu() {
   if (box) { box.hidden = true; box.innerHTML = ''; }
 }
 
+// 菜单项上再右键:屏蔽浏览器默认菜单(菜单自身不应再弹出系统菜单)
+document.getElementById('ctx').addEventListener('contextmenu', (e) => e.preventDefault());
+
 document.addEventListener('pointerdown', (e) => {
   if (!e.target.closest('#ctx')) hideMenu();
 }, true);
