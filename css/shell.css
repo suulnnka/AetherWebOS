@@ -134,8 +134,7 @@
 .tbtn.active { background: var(--hover); }
 .tbtn.active::after {
   content: ""; position: absolute;
-  left: 50%; bottom: 4px; width: min(18px, calc(100% - 20px)); height: 2.5px;
-  transform: translateX(-50%);
+  left: 10px; right: 10px; bottom: 4px; height: 2.5px;
   border-radius: 2px; background: var(--accent);
 }
 
