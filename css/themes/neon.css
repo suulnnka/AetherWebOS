@@ -2,18 +2,19 @@
  * 霓虹未来(Neon)—— 强制暗色 + 窗框霓虹灯条 + 赛博网格桌面
  * ============================================================ */
 html[data-style="neon"] {
-  --tb: 48px;   /* 现代深色全宽任务栏 */
-  --radius: 10px;
+  --tb: 52px;   /* 现代全宽玻璃任务栏 */
+  --radius: 12px;
+  --radius-s: 10px;
   --accent: #00e5ff;
-  --panel: rgba(9, 14, 28, 0.86);
+  --panel: rgba(8, 12, 24, 0.82);
   --panel-solid: #0a1020;
   --panel-2: #0c1326;
-  --text: #d9f6ff;
-  --text-2: #6f88ad;
-  --border: rgba(0, 240, 255, 0.22);
+  --text: #e8f7ff;
+  --text-2: #7a92b0;
+  --border: rgba(0, 240, 255, 0.14);
   --hover: rgba(0, 240, 255, 0.08);
-  --shadow: 0 0 26px rgba(0, 240, 255, 0.16), 0 18px 54px rgba(0, 0, 0, 0.65);
-  --shadow-2: 0 0 14px rgba(0, 240, 255, 0.12), 0 8px 26px rgba(0, 0, 0, 0.55);
+  --shadow: 0 0 0 1px rgba(0, 240, 255, 0.08), 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(0, 240, 255, 0.08);
+  --shadow-2: 0 0 0 1px rgba(0, 240, 255, 0.06), 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 20px rgba(0, 240, 255, 0.06);
 }
 
 /* ============ 霓虹氛围层:半透明色彩流动,叠在用户壁纸之上 ============ */
@@ -127,97 +128,435 @@ html[data-style="neon"] .wbtn.close:hover {
   box-shadow: 0 0 12px rgba(255, 42, 212, 0.55);
 }
 
-/* ============ 任务栏:现代深色(暗色玻璃 + 细霓虹上边线) ============ */
+/* ============ 任务栏:近未来玻璃坞 + 双色流光顶线 ============ */
 html[data-style="neon"] #taskbar {
-  height: 46px;
-  background: rgba(8, 12, 22, 0.88);
-  backdrop-filter: blur(22px) saturate(1.4);
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  height: 52px;
+  gap: 6px;
+  padding: 0 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 28px),
+    rgba(6, 10, 20, 0.78);
+  backdrop-filter: blur(28px) saturate(1.55);
+  -webkit-backdrop-filter: blur(28px) saturate(1.55);
   border: none;
-  border-top: 1px solid rgba(0, 240, 255, 0.4);
-  box-shadow: 0 -6px 20px rgba(0, 240, 255, 0.12), inset 0 1px 0 rgba(0, 240, 255, 0.25);
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.45);
 }
+/* 顶部双色流光:青→紫→品红,极细呼吸 */
+html[data-style="neon"] #taskbar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1.5px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(0, 240, 255, 0.15) 8%,
+    rgba(0, 240, 255, 0.7) 28%,
+    rgba(125, 95, 255, 0.85) 50%,
+    rgba(255, 42, 212, 0.7) 72%,
+    rgba(255, 42, 212, 0.15) 92%,
+    transparent 100%);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.35), 0 0 28px rgba(255, 42, 212, 0.18);
+  pointer-events: none;
+  animation: neonTaskEdge 5.5s ease-in-out infinite;
+}
+@keyframes neonTaskEdge {
+  0%, 100% { opacity: 0.75; filter: saturate(1); }
+  50%      { opacity: 1;    filter: saturate(1.15) brightness(1.1); }
+}
+/* 开始按钮:圆角方章 + 激活光晕 */
 html[data-style="neon"] .tb-start {
-  border-radius: 8px;
-  color: #7ff2ff;
+  width: 42px; height: 40px;
+  border-radius: 12px;
+  color: #8aefff;
+  border: 1px solid transparent;
+  transition: background 0.16s, box-shadow 0.16s, border-color 0.16s, color 0.16s;
 }
-html[data-style="neon"] .tb-start:hover, html[data-style="neon"] .tb-start.on {
+html[data-style="neon"] .tb-start:hover {
   color: #00f0ff;
   background: rgba(0, 240, 255, 0.1);
-  box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+  border-color: rgba(0, 240, 255, 0.28);
 }
-html[data-style="neon"] .tbtn { border-radius: 8px; border: 1px solid transparent; }
+html[data-style="neon"] .tb-start.on {
+  color: #00f0ff;
+  background: rgba(0, 240, 255, 0.14);
+  border-color: rgba(0, 240, 255, 0.45);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.28), inset 0 0 12px rgba(0, 240, 255, 0.08);
+}
+
+/* 任务芯片:现代扁平玻璃片 */
+html[data-style="neon"] .tbtn {
+  height: 40px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  transition: background 0.16s, border-color 0.16s, box-shadow 0.16s;
+}
+html[data-style="neon"] .tb-pinned .tbtn { width: 42px; height: 40px; border-radius: 11px; }
+html[data-style="neon"] .tb-tasks .tbtn { width: 150px; }
 html[data-style="neon"] .tbtn:hover {
-  background: rgba(0, 240, 255, 0.09);
-  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 55%, transparent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 26%, transparent);
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.18);
 }
-/* 活动按钮:专属双色霓虹下划线(静态) */
+/* 活动芯片:微光底 + 双色短指示条 */
 html[data-style="neon"] .tbtn.active {
-  background: color-mix(in srgb, var(--neon-a, #00f0ff) 9%, transparent);
-  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 55%, transparent);
+  background: color-mix(in srgb, var(--neon-a, #00f0ff) 12%, rgba(8, 12, 24, 0.4));
+  border-color: color-mix(in srgb, var(--neon-a, #00f0ff) 32%, transparent);
+  box-shadow: inset 0 0 16px color-mix(in srgb, var(--neon-a, #00f0ff) 10%, transparent);
 }
 html[data-style="neon"] .tbtn.active::after {
   content: ""; position: absolute;
-  left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 2px;
+  left: 50%; bottom: 4px; width: 18px; height: 2.5px;
+  transform: translateX(-50%);
+  border-radius: 2px;
   background: linear-gradient(90deg, var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4));
-  box-shadow: 0 0 6px color-mix(in srgb, var(--neon-a, #00f0ff) 70%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--neon-a, #00f0ff) 75%, transparent);
 }
-html[data-style="neon"] .tbtn .t-ico { box-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
-html[data-style="neon"] .tray-btn { color: #7fa8c8; border-radius: 8px; }
+/* 固定图标芯片的指示条更短 */
+html[data-style="neon"] .tb-pinned .tbtn.active::after { width: 14px; }
+html[data-style="neon"] .tbtn .t-ico {
+  width: 26px; height: 26px; border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+html[data-style="neon"] .tbtn.active .t-ico {
+  box-shadow: 0 0 10px color-mix(in srgb, var(--neon-a, #00f0ff) 40%, transparent),
+              0 2px 8px rgba(0, 0, 0, 0.35);
+}
+html[data-style="neon"] .tbtn .t-title {
+  color: #cfe8f8;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+html[data-style="neon"] .tbtn.active .t-title { color: #eafcff; }
+
+/* 托盘:安静、细字重时钟 */
+html[data-style="neon"] .tray { gap: 2px; }
+html[data-style="neon"] .tray-btn {
+  height: 38px; border-radius: 10px; color: #7a92b0;
+  transition: background 0.16s, color 0.16s;
+}
 html[data-style="neon"] .tray-btn:hover {
+  color: #b8f4ff;
+  background: rgba(0, 240, 255, 0.07);
+}
+html[data-style="neon"] .tray-btn.on {
   color: #00f0ff;
-  background: rgba(0, 240, 255, 0.08);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.1);
 }
-html[data-style="neon"] .tray-btn.on { color: #00f0ff; }
+html[data-style="neon"] .tray-clock {
+  padding: 0 12px; border-radius: 10px; gap: 1px;
+}
 html[data-style="neon"] .tray-clock .t {
-  color: #eafcff; font-family: var(--mono); font-size: 13px;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+  color: #eafcff;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: none;
 }
-html[data-style="neon"] .tray-clock .d { color: #6f88ad; font-family: var(--mono); }
+html[data-style="neon"] .tray-clock .d {
+  color: #6a829e;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
 html[data-style="neon"] .tb-sep {
-  width: 1px;
-  background: linear-gradient(180deg, transparent, rgba(0, 240, 255, 0.6), transparent);
+  width: 1px; height: 20px; margin: 0 6px;
+  background: linear-gradient(180deg, transparent, rgba(0, 240, 255, 0.28), transparent);
 }
 
-/* 开始菜单与弹层:暗色玻璃 + 霓虹描边 */
-html[data-style="neon"] #start-menu,
+/* ============ 开始菜单:现代双栏(左侧账号轨 + 主区所有程序) ============ */
+html[data-style="neon"] #start-menu {
+  left: 10px;
+  bottom: calc(var(--tb) + 12px);
+  width: 640px;
+  height: min(680px, calc(100vh - var(--tb) - 36px));
+  max-height: none;
+  display: grid;
+  grid-template-columns: 78px 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "rail search"
+    "rail grid";
+  border-radius: 18px;
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  background: rgba(7, 11, 22, 0.88);
+  backdrop-filter: blur(32px) saturate(1.55);
+  -webkit-backdrop-filter: blur(32px) saturate(1.55);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 0 40px rgba(0, 240, 255, 0.08),
+    0 28px 64px rgba(0, 0, 0, 0.65);
+  transform-origin: 28px calc(100% + 64px);
+  transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.15), opacity 0.16s;
+}
+/* 顶部双色细光条,与任务栏呼应 */
+html[data-style="neon"] #start-menu::before {
+  content: ""; position: absolute; left: 18px; right: 18px; top: 0; height: 1.5px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(0, 240, 255, 0.65) 25%,
+    rgba(125, 95, 255, 0.75) 50%,
+    rgba(255, 42, 212, 0.65) 75%,
+    transparent);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
+  pointer-events: none;
+  z-index: 2;
+}
+html[data-style="neon"] #start-menu:not(.open) {
+  transform: scale(0.9) translateY(22px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 左轨:用户 + 电源 */
+html[data-style="neon"] .sm-footer {
+  grid-area: rail;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 10px 16px;
+  border-top: none;
+  border-right: 1px solid rgba(0, 240, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(0, 240, 255, 0.05), transparent 36%, transparent 64%, rgba(255, 42, 212, 0.05));
+}
+html[data-style="neon"] .sm-user {
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+  padding: 10px 4px;
+  border-radius: 14px;
+  color: var(--text);
+}
+html[data-style="neon"] .sm-user:hover {
+  background: rgba(0, 240, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.15);
+}
+html[data-style="neon"] .sm-user .avatar {
+  width: 38px; height: 38px;
+  font-size: 15px;
+  background: linear-gradient(135deg, #00e5ff, #7d5fff 55%, #ff2ad4);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+}
+html[data-style="neon"] #sm-username {
+  display: block;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-2);
+}
+html[data-style="neon"] .sm-power {
+  width: 38px; height: 38px;
+  border-radius: 12px;
+  color: #7a92b0;
+}
+html[data-style="neon"] .sm-power:hover {
+  background: rgba(255, 42, 212, 0.12);
+  color: #ff5ce0;
+  box-shadow: 0 0 14px rgba(255, 42, 212, 0.25);
+}
+
+/* 搜索:大圆角玻璃条 */
+html[data-style="neon"] .sm-search {
+  grid-area: search;
+  padding: 20px 20px 8px;
+}
+html[data-style="neon"] .sm-search input {
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  background: rgba(0, 240, 255, 0.05);
+  color: var(--text);
+  font-size: 13.5px;
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
+}
+html[data-style="neon"] .sm-search input::placeholder { color: #5f7590; }
+html[data-style="neon"] .sm-search input:hover {
+  border-color: rgba(0, 240, 255, 0.28);
+  background: rgba(0, 240, 255, 0.07);
+}
+html[data-style="neon"] .sm-search input:focus {
+  border-color: rgba(0, 240, 255, 0.55);
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.1), 0 0 18px rgba(0, 240, 255, 0.12);
+}
+
+/* 所有程序网格:分区标题 + 磁贴卡片 */
+html[data-style="neon"] .sm-grid {
+  grid-area: grid;
+  min-height: 0;
+  padding: 6px 16px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+html[data-style="neon"] .sm-grid::before {
+  content: "所有程序";
+  grid-column: 1 / -1;
+  padding: 6px 8px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #5f7590;
+}
+html[data-style="neon"] .sm-item {
+  padding: 16px 8px 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  gap: 10px;
+  transition: background 0.16s, border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+}
+html[data-style="neon"] .sm-item .tile {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+html[data-style="neon"] .sm-item .name {
+  color: #d7ecf8;
+  font-size: 12px;
+  line-height: 1.3;
+}
+html[data-style="neon"] .sm-item:hover {
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.08);
+  transform: translateY(-1px);
+}
+html[data-style="neon"] .sm-item:hover .tile {
+  box-shadow:
+    0 0 18px color-mix(in srgb, var(--tile-bg, var(--accent)) 45%, transparent),
+    0 8px 18px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+html[data-style="neon"] .sm-empty {
+  color: var(--text-2);
+  padding: 40px 0;
+}
+
+/* 弹层:与开始菜单同一套玻璃语言 */
 html[data-style="neon"] .popover,
 html[data-style="neon"] #ctx,
 html[data-style="neon"] .toast,
 html[data-style="neon"] .modal-box {
-  background: rgba(8, 12, 24, 0.92);
-  backdrop-filter: blur(28px) saturate(1.4);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  border: 1px solid rgba(0, 240, 255, 0.3);
-  box-shadow: 0 0 18px rgba(0, 240, 255, 0.14), 0 16px 44px rgba(0, 0, 0, 0.6);
+  background: rgba(7, 11, 22, 0.9);
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 0 28px rgba(0, 240, 255, 0.08),
+    0 18px 48px rgba(0, 0, 0, 0.6);
 }
-html[data-style="neon"] .sm-search input { background: rgba(0, 240, 255, 0.06); color: #d9f6ff; border-color: rgba(0, 240, 255, 0.3); }
-html[data-style="neon"] .sm-search input:focus { border-color: #00f0ff; box-shadow: 0 0 12px rgba(0, 240, 255, 0.35); }
-html[data-style="neon"] .sm-item .name { color: #cfeeff; }
-html[data-style="neon"] .sm-item:hover { background: rgba(0, 240, 255, 0.1); box-shadow: inset 0 0 12px rgba(0, 240, 255, 0.12); }
-html[data-style="neon"] .sm-footer { border-top-color: rgba(0, 240, 255, 0.25); background: rgba(0, 240, 255, 0.04); }
-html[data-style="neon"] .ctx-item:hover { background: rgba(0, 240, 255, 0.1); }
+html[data-style="neon"] .popover { border-radius: 16px; }
+html[data-style="neon"] #ctx { border-radius: 14px; padding: 6px; }
+html[data-style="neon"] .toast { border-radius: 14px; }
+html[data-style="neon"] .ctx-item {
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+html[data-style="neon"] .ctx-item:hover {
+  background: rgba(0, 240, 255, 0.1);
+}
 html[data-style="neon"] .ctx-item .ci-ico { color: #52c8e8; }
 
-/* 控件:霓虹描边 + 辉光 */
-html[data-style="neon"] .btn { border-color: rgba(0, 240, 255, 0.35); }
+/* ============ 应用控件:现代玻璃零件,辉光收敛 ============ */
+html[data-style="neon"] .btn {
+  height: 32px;
+  border-radius: 10px;
+  border-color: rgba(0, 240, 255, 0.18);
+  background: rgba(0, 240, 255, 0.04);
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
 html[data-style="neon"] .btn:hover {
-  border-color: #00f0ff;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+  background: rgba(0, 240, 255, 0.1);
+  border-color: rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.12);
 }
 html[data-style="neon"] .btn.primary {
-  background: #00e5ff; border-color: #00e5ff; color: #02141a;
-  box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+  background: linear-gradient(135deg, #00e5ff, #3ecbff 55%, #5b8cff);
+  border-color: transparent;
+  color: #02141a;
+  font-weight: 600;
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.28);
 }
-html[data-style="neon"] .btn.primary:hover { background: #4df1ff; box-shadow: 0 0 20px rgba(0, 240, 255, 0.7); }
-html[data-style="neon"] .btn.danger { color: #ff5ce0; border-color: rgba(255, 42, 212, 0.45); }
-html[data-style="neon"] .btn.danger:hover { box-shadow: 0 0 10px rgba(255, 42, 212, 0.4); }
-html[data-style="neon"] .input, html[data-style="neon"] .select { background: rgba(0, 240, 255, 0.05); border-color: rgba(0, 240, 255, 0.3); }
-html[data-style="neon"] .input:focus, html[data-style="neon"] .select:focus { border-color: #00f0ff; box-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
-html[data-style="neon"] .dicon .tile { box-shadow: 0 0 14px rgba(0, 240, 255, 0.4), 0 4px 14px rgba(0, 0, 0, 0.55); }
-html[data-style="neon"] .table th { background: #0c1326; }
+html[data-style="neon"] .btn.primary:hover {
+  background: linear-gradient(135deg, #4df1ff, #6ad4ff 55%, #7aa3ff);
+  box-shadow: 0 0 22px rgba(0, 240, 255, 0.4);
+}
+html[data-style="neon"] .btn.danger {
+  color: #ff5ce0;
+  border-color: rgba(255, 42, 212, 0.35);
+}
+html[data-style="neon"] .btn.danger:hover {
+  background: rgba(255, 42, 212, 0.1);
+  box-shadow: 0 0 14px rgba(255, 42, 212, 0.18);
+}
+html[data-style="neon"] .input,
+html[data-style="neon"] .select {
+  background: rgba(0, 240, 255, 0.04);
+  border-color: rgba(0, 240, 255, 0.16);
+  border-radius: 10px;
+}
+html[data-style="neon"] .input:hover,
+html[data-style="neon"] .select:hover { border-color: rgba(0, 240, 255, 0.3); }
+html[data-style="neon"] .input:focus,
+html[data-style="neon"] .select:focus {
+  border-color: rgba(0, 240, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.1);
+}
+html[data-style="neon"] .card {
+  border-radius: 14px;
+  border-color: rgba(0, 240, 255, 0.12);
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.04), rgba(255, 255, 255, 0.01));
+}
+html[data-style="neon"] .app-toolbar,
+html[data-style="neon"] .app-side,
+html[data-style="neon"] .app-status {
+  background: rgba(10, 16, 32, 0.72);
+  border-color: rgba(0, 240, 255, 0.1);
+}
+html[data-style="neon"] .nav-item,
+html[data-style="neon"] .list-item {
+  border-radius: 10px;
+}
+html[data-style="neon"] .nav-item:hover,
+html[data-style="neon"] .list-item:hover {
+  background: rgba(0, 240, 255, 0.08);
+}
+html[data-style="neon"] .nav-item.active,
+html[data-style="neon"] .list-item.active {
+  background: rgba(0, 240, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.16);
+}
+html[data-style="neon"] .seg {
+  border-radius: 12px;
+  background: rgba(0, 240, 255, 0.05);
+}
+html[data-style="neon"] .seg-btn.active {
+  background: rgba(0, 240, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.2);
+}
+html[data-style="neon"] .switch i {
+  background: rgba(0, 240, 255, 0.18);
+}
+html[data-style="neon"] .switch input:checked + i {
+  background: linear-gradient(90deg, #00e5ff, #5b8cff);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
+}
+html[data-style="neon"] .modal-box {
+  border-radius: 16px;
+}
+html[data-style="neon"] .dicon .tile {
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+html[data-style="neon"] .table th {
+  background: #0c1326;
+  border-bottom-color: rgba(0, 240, 255, 0.12);
+}
 html[data-style="neon"] .term { background: #060a16; }
 
 /* ============ 窗头直角 + 出场编排 ============ */
