@@ -1,16 +1,12 @@
 /* ============ 全局右键菜单 ============ */
-import { el } from './utils.js';
+import { el, clamp } from './utils.js';
 import { icon } from './icons.js';
 
-/**
- * showMenu(x, y, items)
- * items: { label, icon, danger, fn } | { sep:true }
- */
-export function showMenu(x, y, items) {
+const PAD = 8;
+
+function buildMenu(items) {
   const box = document.getElementById('ctx');
   box.innerHTML = '';
-  box.hidden = false;
-
   for (const it of items) {
     if (it.sep) { box.append(el('div', { class: 'ctx-sep' })); continue; }
     box.append(el('button', {
@@ -18,11 +14,44 @@ export function showMenu(x, y, items) {
       onClick: () => { hideMenu(); it.fn?.(); },
     }, el('span', { class: 'ci-ico' }, icon(it.icon || 'chevronR', 14)), it.label));
   }
+  box.hidden = false;
+  return box;
+}
 
-  const vw = innerWidth, vh = innerHeight;
-  const r = box.getBoundingClientRect();
-  box.style.left = Math.min(x, vw - r.width - 8) + 'px';
-  box.style.top = Math.min(y, vh - r.height - 8) + 'px';
+function place(box, x, y) {
+  // offsetWidth/Height 不受 popIn 的 scale 动画影响,比 getBoundingClientRect 稳
+  const w = box.offsetWidth, h = box.offsetHeight;
+  box.style.left = clamp(x, PAD, innerWidth - w - PAD) + 'px';
+  box.style.top = clamp(y, PAD, innerHeight - h - PAD) + 'px';
+}
+
+/**
+ * showMenu(x, y, items)
+ * items: { label, icon, danger, fn } | { sep:true }
+ */
+export function showMenu(x, y, items) {
+  place(buildMenu(items), x, y);
+}
+
+/**
+ * 锚点弹出(按钮/图标):右缘对齐锚点,贴在任务栏内侧
+ * (底栏在上、顶栏在下),越界时翻转并钳入视口。
+ */
+export function showMenuAnchored(anchor, items) {
+  const box = buildMenu(items);
+  const a = anchor.getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight;
+  const tb = document.getElementById('taskbar')?.getBoundingClientRect();
+  const taskbarOnTop = !!tb && tb.top < innerHeight / 2;
+  const gap = 6;
+
+  let left = a.right - w;
+  let top = taskbarOnTop ? a.bottom + gap : a.top - h - gap;
+  // 预留空间不够则翻到另一侧
+  if (!taskbarOnTop && top < PAD) top = a.bottom + gap;
+  if (taskbarOnTop && top + h > innerHeight - PAD) top = a.top - h - gap;
+
+  place(box, left, top);
 }
 
 export function hideMenu() {

@@ -6,7 +6,7 @@ import { accounts } from '../core/accounts.js';
 import { list as listApps, prefetchOnHover } from '../core/registry.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
-import { showMenu } from '../core/menu.js';
+import { showMenu, showMenuAnchored } from '../core/menu.js';
 import { logoutSession } from './session.js';
 import { powerAction } from './tray.js';
 import { togglePin, pinnedApps } from './taskbar.js';
@@ -108,9 +108,9 @@ $('#sm-user').addEventListener('click', () => {
 $('#sm-power').innerHTML = svg('power', 17);
 $('#sm-power').addEventListener('click', (e) => {
   e.stopPropagation();
-  const r = e.currentTarget.getBoundingClientRect();
   const loggedIn = !!accounts.current();
-  showMenu(r.left - 130, r.top - 120, [
+  // 开始菜单贴底(或 Ubuntu 顶栏贴顶)时,菜单跟按钮对齐弹出,避免写死偏移错位
+  showMenuAnchored(e.currentTarget, [
     {
       label: loggedIn ? '注销' : '登录 / 切换用户', icon: loggedIn ? 'logout' : 'user',
       fn: () => { toggleStartMenu(false); logoutSession(); },

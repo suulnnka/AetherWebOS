@@ -1,7 +1,7 @@
 import { el } from '../core/utils.js';
 import { icon } from '../core/icons.js';
 import * as wm from '../core/wm.js';
-import { hideMenu, showMenu } from '../core/menu.js';
+import { hideMenu, showMenuAnchored } from '../core/menu.js';
 import { toggleStartMenu } from './startmenu.js';
 import { renderDesktopIcons, applyWallpaper } from './desktop.js';
 
@@ -11,8 +11,7 @@ export function setupLayoutButton() {
   const btn = el('button', { class: 'tray-btn', title: '窗口布局', id: 'tb-layout' }, icon('grid', 16));
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const r = e.currentTarget.getBoundingClientRect();
-    showMenu(r.left - 150, r.top - 170, [
+    showMenuAnchored(e.currentTarget, [
       { label: '网格平铺全部窗口', icon: 'grid', fn: () => wm.tile() },
       { label: '层叠排列', icon: 'restore', fn: () => wm.cascade() },
       { label: '切换活动窗口(Alt+Q)', icon: 'refresh', fn: () => wm.focusCycle() },
