@@ -110,3 +110,67 @@ subscribe('sys:modal', (p) => {
   if (locked) tb.setAttribute('inert', '');
   else tb.removeAttribute('inert');
 });
+
+/* 任务栏统一右键:固定/任务按钮已自行 preventDefault 并弹菜单,这里不干预;
+ * 其余区域(开始、窗口布局、托盘、空白/分隔条)一律拦掉浏览器默认菜单,
+ * 按命中目标给出对应系统菜单。 */
+$('#taskbar').addEventListener('contextmenu', (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  const x = e.clientX, y = e.clientY;
+  const layoutItems = [
+    { label: '网格平铺全部窗口', icon: 'grid', fn: () => wm.tile() },
+    { label: '层叠排列', icon: 'restore', fn: () => wm.cascade() },
+    { label: '切换活动窗口(Alt+Q)', icon: 'refresh', fn: () => wm.focusCycle() },
+  ];
+  const shellItems = [
+    { label: '显示桌面', icon: 'monitor', fn: () => wm.toggleShowDesktop() },
+    { sep: true },
+    { label: '任务栏设置', icon: 'settings', fn: () => wm.open('settings', { params: { section: 'desktop' } }) },
+  ];
+
+  if (e.target.closest('.tb-start')) {
+    showMenu(x, y, [
+      { label: '打开开始菜单', icon: 'grid', fn: () => $('#start-btn').click() },
+      { sep: true },
+      ...shellItems,
+    ]);
+    return;
+  }
+  if (e.target.closest('#tb-layout')) {
+    showMenu(x, y, layoutItems);
+    return;
+  }
+  if (e.target.closest('#tray-vol')) {
+    const muted = !!settings.get('muted');
+    showMenu(x, y, [
+      { label: muted ? '取消静音' : '静音', icon: muted ? 'volume2' : 'volumeX', fn: () => settings.set({ muted: !muted }) },
+      { sep: true },
+      { label: '声音设置', icon: 'settings', fn: () => wm.open('settings', { params: { section: 'sound' } }) },
+    ]);
+    return;
+  }
+  if (e.target.closest('#tray-bell')) {
+    showMenu(x, y, [
+      { label: '打开通知中心', icon: 'bell', fn: () => $('#tray-bell').click() },
+      { sep: true },
+      ...shellItems,
+    ]);
+    return;
+  }
+  if (e.target.closest('#tray-clock')) {
+    showMenu(x, y, [
+      { label: '打开日历', icon: 'calendar', fn: () => $('#tray-clock').click() },
+      {
+        label: settings.get('clockSeconds') ? '时钟不显示秒' : '时钟显示秒',
+        icon: 'clock',
+        fn: () => settings.set({ clockSeconds: !settings.get('clockSeconds') }),
+      },
+      { sep: true },
+      ...shellItems,
+    ]);
+    return;
+  }
+  // 空白任务栏 / 托盘容器 / 固定·任务区空隙 / 分隔条
+  showMenu(x, y, [...layoutItems, { sep: true }, ...shellItems]);
+});
