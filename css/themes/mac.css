@@ -21,11 +21,16 @@ html[data-style="mac"] #taskbar {
   padding: 0 12px;
 }
 html[data-style="mac"] .tb-start { border-radius: 15px; background: rgba(255, 255, 255, 0.12); color: #fff; }
-html[data-style="mac"] .tb-pinned .tbtn { background: transparent; }
 html[data-style="mac"] .tbtn {
+  width: 48px; /* Dock 图标钮:隐藏标题后仍保持固定方宽 */
+  justify-content: center; padding: 0;
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.08);
   transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.4), background 0.15s;
+}
+html[data-style="mac"] .tb-pinned .tbtn {
+  width: 48px;
+  background: transparent;
 }
 html[data-style="mac"] .tbtn:hover { transform: translateY(-5px) scale(1.12); background: rgba(255, 255, 255, 0.18); }
 html[data-style="mac"] .tbtn .t-title { display: none; }
