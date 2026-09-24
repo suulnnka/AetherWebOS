@@ -97,28 +97,28 @@
 .style-card[data-sty="win7"] .sp-task { background: rgba(16, 26, 54, 0.85); border-top: 1px solid rgba(130, 178, 255, 0.45); }
 .style-card[data-sty="win7"] .sp-start { width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 40% 32%, #a8d8ff, #1c62b4 60%, #052a56); }
 
-/* 霓虹未来:暗色 + 霓虹灯条 */
+/* 霓虹未来:暗色 + 双色流光顶线 */
 .style-card[data-sty="neon"] .sp { background: #04060e; }
 .style-card[data-sty="neon"] .sp-win {
   border-radius: 4px;
   background: #0a1020;
-  border: 1px solid rgba(0, 240, 255, 0.6);
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.45);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.25);
 }
 .style-card[data-sty="neon"] .sp-bar {
   height: 10px;
   background:
-    linear-gradient(90deg, #00f0ff, #7d5fff 55%, #ff2ad4) left top / 100% 2.5px no-repeat,
-    rgba(0, 240, 255, 0.1);
+    linear-gradient(90deg, transparent, #00f0ff 25%, #7d5fff 50%, #ff2ad4 75%, transparent) left top / 100% 2px no-repeat,
+    rgba(0, 240, 255, 0.08);
 }
 .style-card[data-sty="neon"] .sp-dot { border-radius: 2px; background: transparent; border: none; width: 4px; height: 4px; box-shadow: 0 0 3px #00f0ff; background: #00e5ff; }
 .style-card[data-sty="neon"] .sp-dot.d3 { background: #ff2ad4; box-shadow: 0 0 3px #ff2ad4; }
 .style-card[data-sty="neon"] .sp-task {
-  background: rgba(6, 10, 20, 0.95);
-  border-top: 1px solid #00f0ff;
-  box-shadow: 0 -3px 7px rgba(0, 240, 255, 0.35);
+  background: rgba(6, 10, 20, 0.9);
+  border-top: 1px solid rgba(0, 240, 255, 0.2);
+  box-shadow: 0 -3px 7px rgba(0, 0, 0, 0.35);
 }
-.style-card[data-sty="neon"] .sp-start { border-radius: 2px; background: #00e5ff; box-shadow: 0 0 5px #00f0ff; width: 8px; height: 5px; }
+.style-card[data-sty="neon"] .sp-start { border-radius: 3px; background: #00e5ff; box-shadow: 0 0 5px rgba(0, 240, 255, 0.6); width: 8px; height: 6px; }
 
 /* Win3.1:纯海军蓝标题 + 左侧菜单盒 + 更细的银条 */
 .style-card[data-sty="win31"] .sp-win { border-radius: 0; border: 1px solid #000; box-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.4); }
