@@ -2,9 +2,10 @@
  * AppData —— 应用数据落盘:/home/<user>/appdata/<app>.awdb
  *
  * · 物理位置:虚拟文件系统路径 `/home/<user>/appdata/<app>.awdb`
- * · 存储引擎:AetherWebDatabase;**不直连 OPFS**,经 VFS 字符串文件后端
- * · 整库文件以 `AWDBVFS1:<base64>` 写入 VFS;页级 AES-GCM 加密
- * · 密钥:每用户随机口令,存 `webos.appdata.key::<user>`(与库文件分离)
+ * · 存储引擎:AetherWebDatabase;**不直连 OPFS**,经 VFS 字节文件后端
+ * · 整库以**原始字节**写入 VFS(bin:true → fsdata);不再 base64 包装
+ *   (旧 AWDBVFS1:<base64> 文件读取时自动解码迁移)
+ * · 页级 AES-GCM 加密;密钥:每用户随机口令,存 webos.appdata.key::<user>
  *
  * API:
  *   openAppData(app, user?) → Promise<Database>

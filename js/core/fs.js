@@ -29,7 +29,7 @@ import { publish, subscribe } from './bus.js';
 import { debounce } from './utils.js';
 import { storageWiped, markStorageWiped } from './store.js';
 import { accounts } from './accounts.js';
-import { opfsReadText, opfsWriteText, opfsClearAll, opfsAvailable } from './opfs.js';
+import { opfsReadText, opfsWriteText, opfsReadBytes, opfsWriteBytes, opfsClearAll, opfsAvailable } from './opfs.js';
 
 /** localStorage 旧键(迁移源;迁移后删除) */
 const LS_KEY = 'webos.fs.v2';
@@ -178,10 +178,16 @@ function stripContents(node) {
   return out;
 }
 
-/** 遍历文件:yield { path, content } */
+/** 文件内容长度:二进制 byteLength,文本 length */
+function contentSize(d) {
+  if (d instanceof Uint8Array) return d.byteLength;
+  return (d || '').length;
+}
+
+/** 遍历文件:yield { path, content, bin } */
 function* walkFiles(node, path) {
   if (node.t === 'f') {
-    yield { path, content: node.d ?? '' };
+    yield { path, content: node.d ?? '', bin: node.bin === true || node.d instanceof Uint8Array };
     return;
   }
   if (!node.c) return;
@@ -200,13 +206,33 @@ function hasInlineContent(node) {
   return false;
 }
 
-/** 从 fsdata/ 水合缺失的文件内容(元数据树无 d 时) */
+/**
+ * 从 fsdata/ 水合缺失的文件内容(元数据树无 d 时)。
+ * 二进制 inode 带 bin:true → opfsReadBytes;否则读文本。
+ * 旧版 AWDBVFS1 字符串文件 → 解码为二进制并标 bin。
+ */
 async function hydrateContents(node, path) {
   if (node.t === 'f') {
-    if (node.d == null) {
-      const raw = await opfsReadText('fsdata' + path);
-      node.d = raw ?? '';
+    if (node.d != null) return;
+    if (node.bin) {
+      const bytes = await opfsReadBytes('fsdata' + path);
+      node.d = bytes ?? new Uint8Array(0);
+      return;
     }
+    const raw = await opfsReadText('fsdata' + path);
+    if (raw == null) {
+      node.d = '';
+      return;
+    }
+    // 旧 base64 包装 → 迁为二进制
+    if (raw.startsWith('AWDBVFS1:')) {
+      try {
+        node.d = Uint8Array.from(atob(raw.slice(9)), (c) => c.charCodeAt(0));
+        node.bin = true;
+        return;
+      } catch { /* 落到当文本 */ }
+    }
+    node.d = raw;
     return;
   }
   if (!node.c) return;
@@ -253,8 +279,13 @@ async function writeTree() {
   try {
     if (opfsAvailable()) {
       // 先内容后元数据:崩溃时旧元数据仍可解析(带 d 或依赖已写内容)
-      for (const { path, content } of walkFiles(root, '/')) {
-        await opfsWriteText('fsdata' + path, content);
+      for (const { path, content, bin } of walkFiles(root, '/')) {
+        if (bin || content instanceof Uint8Array) {
+          const bytes = content instanceof Uint8Array ? content : new TextEncoder().encode(String(content ?? ''));
+          await opfsWriteBytes('fsdata' + path, bytes);
+        } else {
+          await opfsWriteText('fsdata' + path, content);
+        }
       }
       await opfsWriteText(OPFS_NAME, meta);
     } else {
@@ -566,7 +597,7 @@ export const fs = {
     return {
       name: basename(p), path: normPath(p),
       dir: n.t === 'd',
-      size: n.t === 'f' ? (n.d || '').length : Object.keys(n.c).length,
+      size: n.t === 'f' ? contentSize(n.d) : Object.keys(n.c).length,
       mtime: n.m || 0,
       owner: n.o || 'root',
       mode: this.modeString(n),
@@ -588,7 +619,7 @@ export const fs = {
       .map(([name, ch]) => ({
         name, path: base + '/' + name,
         dir: ch.t === 'd',
-        size: ch.t === 'f' ? (ch.d || '').length : Object.keys(ch.c).length,
+        size: ch.t === 'f' ? contentSize(ch.d) : Object.keys(ch.c).length,
         mtime: ch.m || 0,
         owner: ch.o || 'root',
         mode: this.modeString(ch),
@@ -596,22 +627,35 @@ export const fs = {
       .sort((a, b) => (a.dir !== b.dir) ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, 'zh'));
   },
 
-  /** 读文件;无读权限或不存在返回 null。opts.as 指定执行用户 */
+  /** 读文件;无读权限或不存在返回 null。opts.as 指定执行用户
+   *  二进制文件返回 Uint8Array(bin:true),文本返回 string。 */
   read(p, opts = {}) {
     const n = node(p);
     if (n?.t !== 'f') return null;
     if (!allow(p, 'r', actor(opts))) return null;
-    return n.d ?? '';
+    return n.d ?? (n.bin ? new Uint8Array(0) : '');
   },
 
   /** 系统内部读(绕过权限;用于快捷方式解析等) */
   readRaw(p) {
     const n = node(p);
-    return n?.t === 'f' ? (n.d ?? '') : null;
+    if (n?.t !== 'f') return null;
+    return n.d ?? (n.bin ? new Uint8Array(0) : '');
+  },
+
+  /** 读二进制;文本文件按 UTF-8 编码返回;不存在 → null */
+  readBinary(p, opts = {}) {
+    const n = node(p);
+    if (n?.t !== 'f') return null;
+    if (!allow(p, 'r', actor(opts))) return null;
+    if (n.d instanceof Uint8Array) return n.d;
+    if (typeof n.d === 'string') return new TextEncoder().encode(n.d);
+    return new Uint8Array(0);
   },
 
   /**
    * 写文件(自动创建父目录)。
+   * content 支持 string | Uint8Array;二进制自动标 bin 并走 fsdata 字节路径。
    * opts.as  跳过会话身份(系统内部)
    * opts.owner 新建时的属主(默认当前用户 / root)
    * opts.mode  新建时 6 位权限
@@ -621,10 +665,14 @@ export const fs = {
     if (!name || name === '/') return false;
     const user = actor(opts);
     if (!user) return false;
+    const isBin = content instanceof Uint8Array;
+    const val = isBin ? content.slice() : String(content);
     const existing = node(p);
     if (existing) {
       if (!allow(p, 'w', user)) return false;
-      existing.d = String(content);
+      existing.d = val;
+      if (isBin) existing.bin = true;
+      else delete existing.bin;
       existing.m = Date.now();
       emit('write', p);
       return true;
@@ -640,7 +688,8 @@ export const fs = {
     if (!par) return false;
     if (par.c[name]) return false;
     const n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
-    n.d = String(content);
+    n.d = val;
+    if (isBin) n.bin = true;
     par.c[name] = n;
     par.m = Date.now();
     emit('write', p);
@@ -764,7 +813,7 @@ export const fs = {
   stats() {
     let files = 0, dirs = 0, bytes = 0;
     (function walk(n) {
-      if (n.t === 'f') { files++; bytes += (n.d || '').length; }
+      if (n.t === 'f') { files++; bytes += contentSize(n.d); }
       else { dirs++; for (const ch of Object.values(n.c)) walk(ch); }
     })(root);
     return { files, dirs, bytes };
