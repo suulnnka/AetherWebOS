@@ -29,7 +29,12 @@ import { publish, subscribe } from './bus.js';
 import { debounce } from './utils.js';
 import { storageWiped, markStorageWiped } from './store.js';
 import { accounts } from './accounts.js';
-import { opfsReadText, opfsWriteText, opfsReadBytes, opfsWriteBytes, opfsClearAll, opfsAvailable } from './opfs.js';
+import {
+  opfsReadText, opfsWriteText,
+  opfsReadBytes, opfsWriteBytes,
+  opfsReadSlice, opfsWriteAt, opfsFileSize,
+  opfsClearAll, opfsAvailable,
+} from './opfs.js';
 
 /** localStorage 旧键(迁移源;迁移后删除) */
 const LS_KEY = 'webos.fs.v2';
@@ -184,10 +189,17 @@ function contentSize(d) {
   return (d || '').length;
 }
 
+/** 文件长度:优先 inode 上记录的 s(随机写文件可能无内联 d) */
+function inodeSize(n) {
+  if (n.t !== 'f') return Object.keys(n.c).length;
+  if (n.s != null) return n.s;
+  return contentSize(n.d);
+}
+
 /** 遍历文件:yield { path, content, bin } */
 function* walkFiles(node, path) {
   if (node.t === 'f') {
-    yield { path, content: node.d ?? '', bin: node.bin === true || node.d instanceof Uint8Array };
+    yield { path, content: node.d ?? null, bin: node.bin === true || node.d instanceof Uint8Array };
     return;
   }
   if (!node.c) return;
@@ -208,27 +220,26 @@ function hasInlineContent(node) {
 
 /**
  * 从 fsdata/ 水合缺失的文件内容(元数据树无 d 时)。
- * 二进制 inode 带 bin:true → opfsReadBytes;否则读文本。
- * 旧版 AWDBVFS1 字符串文件 → 解码为二进制并标 bin。
+ * 二进制 inode 带 bin:true 且无 d → **不整文件加载**(随机读经 readAt);
+ * 旧版 AWDBVFS1 字符串 → 解码、标 bin,并重写 OPFS 为原始字节。
  */
 async function hydrateContents(node, path) {
   if (node.t === 'f') {
     if (node.d != null) return;
-    if (node.bin) {
-      const bytes = await opfsReadBytes('fsdata' + path);
-      node.d = bytes ?? new Uint8Array(0);
-      return;
-    }
+    if (node.bin) return; // 内容仅在 OPFS,由 readAt 按需读取
     const raw = await opfsReadText('fsdata' + path);
     if (raw == null) {
       node.d = '';
       return;
     }
-    // 旧 base64 包装 → 迁为二进制
+    // 旧 base64 包装 → 迁为原始二进制字节
     if (raw.startsWith('AWDBVFS1:')) {
       try {
-        node.d = Uint8Array.from(atob(raw.slice(9)), (c) => c.charCodeAt(0));
+        const bytes = Uint8Array.from(atob(raw.slice(9)), (c) => c.charCodeAt(0));
+        node.d = bytes;
         node.bin = true;
+        node.s = bytes.length;
+        await opfsWriteBytes('fsdata' + path, bytes);
         return;
       } catch { /* 落到当文本 */ }
     }
@@ -278,11 +289,14 @@ async function writeTree() {
   const full = JSON.stringify(root); // 降级用
   try {
     if (opfsAvailable()) {
-      // 先内容后元数据:崩溃时旧元数据仍可解析(带 d 或依赖已写内容)
+      // 先内容后元数据;随机访问文件(bin 且无 d)内容已在 fsdata,只写元数据
       for (const { path, content, bin } of walkFiles(root, '/')) {
+        if (bin && (content == null || content === '')) continue;
         if (bin || content instanceof Uint8Array) {
-          const bytes = content instanceof Uint8Array ? content : new TextEncoder().encode(String(content ?? ''));
-          await opfsWriteBytes('fsdata' + path, bytes);
+          const bytes = content instanceof Uint8Array
+            ? content
+            : new TextEncoder().encode(String(content ?? ''));
+          if (bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
         } else {
           await opfsWriteText('fsdata' + path, content);
         }
@@ -597,7 +611,7 @@ export const fs = {
     return {
       name: basename(p), path: normPath(p),
       dir: n.t === 'd',
-      size: n.t === 'f' ? contentSize(n.d) : Object.keys(n.c).length,
+      size: inodeSize(n),
       mtime: n.m || 0,
       owner: n.o || 'root',
       mode: this.modeString(n),
@@ -619,7 +633,7 @@ export const fs = {
       .map(([name, ch]) => ({
         name, path: base + '/' + name,
         dir: ch.t === 'd',
-        size: ch.t === 'f' ? contentSize(ch.d) : Object.keys(ch.c).length,
+        size: inodeSize(ch),
         mtime: ch.m || 0,
         owner: ch.o || 'root',
         mode: this.modeString(ch),
@@ -654,6 +668,85 @@ export const fs = {
   },
 
   /**
+   * 按偏移随机读(异步;内容在 OPFS fsdata,库不得绕过本方法直连 OPFS)。
+   * 返回该区间实际字节(可能短于 length);文件不存在/无权限 → null。
+   */
+  async readAt(p, offset, length, opts = {}) {
+    const n = node(p);
+    if (n?.t !== 'f') return null;
+    if (!allow(p, 'r', actor(opts))) return null;
+    const path = normPath(p);
+    // 仅内存(未落盘或小文本):从 d 切片
+    if (n.d != null && !n.bin) {
+      const bytes = typeof n.d === 'string'
+        ? new TextEncoder().encode(n.d)
+        : n.d;
+      return bytes.slice(offset, offset + length);
+    }
+    // 随机访问文件:直接切 OPFS fsdata,不整文件进内存
+    const slice = await opfsReadSlice('fsdata' + path, offset, length);
+    if (slice) return slice;
+    // OPFS 读失败但内存有完整二进制
+    if (n.d instanceof Uint8Array) return n.d.slice(offset, offset + length);
+    return null;
+  },
+
+  /**
+   * 按偏移随机写(异步)。自动建父目录与文件节点;标 bin、记录大小 s。
+   * 内容**不**整份驻留内存(随机写文件 d 为空),由 writeAt 直写 fsdata。
+   * @returns {Promise<boolean>}
+   */
+  async writeAt(p, offset, data, opts = {}) {
+    const name = basename(p);
+    if (!name || name === '/') return false;
+    const user = actor(opts);
+    if (!user) return false;
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const path = normPath(p);
+    const off = Math.max(0, offset | 0);
+
+    let n = node(p);
+    if (n && n.t === 'd') return false;
+    if (!n) {
+      const parPath = parentPath(p);
+      if (!allow(parPath, 'w', user) || !allow(parPath, 'x', user)) return false;
+      const mkdirOpts = { silent: true };
+      if (opts && Object.prototype.hasOwnProperty.call(opts, 'as') && opts.as !== undefined) {
+        mkdirOpts.as = opts.as;
+      }
+      const par = this.mkdir(parPath, mkdirOpts);
+      if (!par) return false;
+      if (par.c[name]) return false;
+      n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
+      n.bin = true;
+      par.c[name] = n;
+      par.m = Date.now();
+    } else if (!allow(p, 'w', user)) {
+      return false;
+    }
+
+    const ok = await opfsWriteAt('fsdata' + path, bytes, off);
+    if (!ok) return false;
+
+    n.bin = true;
+    n.d = undefined;           // 随机写文件不驻留整份内容
+    n.s = Math.max(n.s || 0, off + bytes.length);
+    n.m = Date.now();
+    emit('write', p);
+    return true;
+  },
+
+  /** 文件字节数;优先 inode.s,否则读存储;不存在 → null */
+  async fileSize(p, opts = {}) {
+    const n = node(p);
+    if (n?.t !== 'f') return null;
+    if (!allow(p, 'r', actor(opts))) return null;
+    if (n.s != null) return n.s;
+    if (n.d != null && !n.bin) return contentSize(n.d);
+    return await opfsFileSize('fsdata' + normPath(p));
+  },
+
+  /**
    * 写文件(自动创建父目录)。
    * content 支持 string | Uint8Array;二进制自动标 bin 并走 fsdata 字节路径。
    * opts.as  跳过会话身份(系统内部)
@@ -671,8 +764,13 @@ export const fs = {
     if (existing) {
       if (!allow(p, 'w', user)) return false;
       existing.d = val;
-      if (isBin) existing.bin = true;
-      else delete existing.bin;
+      if (isBin) {
+        existing.bin = true;
+        existing.s = val.length;
+      } else {
+        delete existing.bin;
+        existing.s = undefined;
+      }
       existing.m = Date.now();
       emit('write', p);
       return true;
@@ -689,7 +787,10 @@ export const fs = {
     if (par.c[name]) return false;
     const n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
     n.d = val;
-    if (isBin) n.bin = true;
+    if (isBin) {
+      n.bin = true;
+      n.s = val.length;
+    }
     par.c[name] = n;
     par.m = Date.now();
     emit('write', p);
