@@ -1,0 +1,4 @@
+/* Markdown 编辑器 —— 应用布局(渲染排版在 js/lib/mdedit.css,这里只管骨架) */
+
+.mdedit-app { display: flex; flex-direction: column; min-height: 0; }
+.mdedit-app > .md-edit { flex: 1; min-height: 0; }

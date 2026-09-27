@@ -5,7 +5,11 @@
  * · 存储引擎:AetherWebDatabase;**不直连 OPFS**,经 VFS 字节文件后端
  * · 整库以**原始字节**写入 VFS(bin:true → fsdata);不再 base64 包装
  *   (旧 AWDBVFS1:<base64> 文件读取时自动解码迁移)
- * · 页级 AES-GCM 加密;密钥:每用户随机口令,存 webos.appdata.key::<user>
+ * · 页级 AES-GCM 加密;**库口令按「用户密钥 × 应用名」派生**
+ *   (SHA-256,不同应用互不相同,且都能追溯到用户密钥;库内再做
+ *   PBKDF2 派生页密钥)。用户密钥为每用户随机口令,存
+ *   webos.appdata.key::<user>;无账号应用(共享库)以设备身份同理派生。
+ *   旧方案(整用户一个口令)的库首次打开时自动重加密迁移。
  *
  * API:
  *   openAppData(app, user?) → Promise<Database>
@@ -47,8 +51,9 @@ function ensureAppDataDir(user) {
   return fs.isDir(dir);
 }
 
-/* ---------- 每用户加密口令 ---------- */
+/* ---------- 每用户密钥与「用户 × 应用」口令派生 ---------- */
 
+/** 用户(或设备)密钥材料:每用户随机口令,存 localStorage */
 function dbPassword(user) {
   const k = KEY_PREFIX + user;
   try {
@@ -59,6 +64,31 @@ function dbPassword(user) {
   const pass = u8ToB64(raw);
   try { localStorage.setItem(k, pass); } catch { /* 忽略 */ }
   return pass;
+}
+
+/** 库口令 = SHA-256(用户密钥 :: 应用名):不同应用互不相同,且都源自用户 */
+async function appPassword(secret, app) {
+  const data = new TextEncoder().encode(`${secret}::${app}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+  return u8ToB64(digest);
+}
+
+/**
+ * 打开库并按需迁移:优先新派生口令;打不开且旧口令(整用户一个口令的
+ * 历史方案)可开 → setPassword 原地重加密为新口令。两者都失败按原错误抛出。
+ */
+async function openDerived(name, backend, secret) {
+  const modern = await appPassword(secret, name);
+  try {
+    return await open(name, { storage: backend, password: modern });
+  } catch (authErr) {
+    let db;
+    try {
+      db = await open(name, { storage: backend, password: secret });
+    } catch { throw authErr; }
+    await db.setPassword(modern);
+    return db;
+  }
 }
 
 /* ---------- VFS 文件后端(单例) ---------- */
@@ -91,15 +121,89 @@ export async function openAppData(app, user = accounts.current()) {
   if (!user) throw new Error('未登录,无法打开应用数据');
   await fsReady();
   if (!ensureAppDataDir(user)) throw new Error('无法创建 appdata 目录');
-  const path = appDataPath(app, user);
-  const backend = getBackend(path, user);
-  const handleName = String(app).endsWith(EXT)
-    ? String(app).slice(0, -EXT.length)
-    : String(app);
-  return open(handleName, {
-    storage: backend,
-    password: dbPassword(user),
-  });
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  const backend = getBackend(appDataPath(app, user), user);
+  return openDerived(base, backend, dbPassword(user));
+}
+
+/* ---------- 无账号应用的共享库 ----------
+ * 日记 / 笔记这类"跟用户无关"的应用不落在任何用户家目录:
+ * 库固定在 /home/shared/appdata/<app>.awdb,属主 root(644,仅 root 读写,
+ * 应用经 appdata 层统一以 root 身份访问),页加密密钥仍随机存于本地。
+ */
+
+const SHARED_USER = 'shared';
+const ADOPT_FLAG = 'webos.appdata.adopt::';
+
+/** `/home/shared/appdata/<app>.awdb` */
+export function sharedAppDataPath(app) {
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  return `/home/${SHARED_USER}/appdata/${base}${EXT}`;
+}
+
+function ensureSharedDir() {
+  const dir = `/home/${SHARED_USER}/appdata`;
+  if (!fs.isDir(dir)) fs.mkdir(dir, { as: 'root', owner: 'root', mode: 'rwxr-xr-x' });
+  return fs.isDir(dir);
+}
+
+export async function openSharedAppData(app) {
+  await fsReady();
+  if (!ensureSharedDir()) throw new Error('无法创建共享 appdata 目录');
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  const backend = getBackend(sharedAppDataPath(app), 'root');
+  /* 无账号应用:以设备身份(SHARED_USER 的密钥材料)按同一规则派生 */
+  return openDerived(base, backend, dbPassword(SHARED_USER));
+}
+
+export async function loadSharedState(app) {
+  const db = await openSharedAppData(app);
+  const doc = await db.collection('state').get('main');
+  return doc?.data ?? null;
+}
+
+export async function saveSharedState(app, data) {
+  const db = await openSharedAppData(app);
+  const col = db.collection('state');
+  const cur = await col.get('main');
+  if (cur) {
+    await col.update('main', { data });
+    return true;
+  }
+  try {
+    await col.insert({ id: 'main', data });
+  } catch (e) {
+    if (!/id 已存在/.test(String(e?.message))) throw e;
+    await col.update('main', { data });
+  }
+  return true;
+}
+
+/**
+ * 一次性收养:应用从"按用户存储"切换为共享库时,共享库为空则把既有
+ * 用户库里数据量最多的一份迁入(score 比较用),避免老数据凭空消失。
+ * 无论如何只跑一次(localStorage 旗标),之后不再扫描。
+ */
+export async function adoptSharedState(app, score = () => 0) {
+  const flag = ADOPT_FLAG + app;
+  const run = () => { try { localStorage.setItem(flag, '1'); } catch { /* 忽略 */ } };
+  const cur = await loadSharedState(app);
+  if (cur != null) { run(); return cur; }
+  try {
+    if (!localStorage.getItem(flag)) {
+      let best = null;
+      for (const u of fs.list('/home') || []) {
+        if (!u.dir || u.name === SHARED_USER) continue;
+        try {
+          const s = await loadState(app, u.name);
+          if (s != null && score(s) > score(best)) best = s;
+        } catch { /* 该用户库不可读,跳过 */ }
+      }
+      if (best != null) await saveSharedState(app, best);
+    }
+  } catch { /* /home 不可列(权限),跳过收养 */ }
+  run();
+  return null;
 }
 
 /* ---------- 单文档状态(应用级 KV) ---------- */
@@ -179,5 +283,10 @@ export default {
   loadState,
   saveState,
   migrateFromLocalStorage,
+  sharedAppDataPath,
+  openSharedAppData,
+  loadSharedState,
+  saveSharedState,
+  adoptSharedState,
   FILE_MAGIC,
 };

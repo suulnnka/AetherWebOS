@@ -31,7 +31,7 @@ js/apps/<id>/
 同时获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
 
 > **⚠️ import 边界**:应用只能 import `js/core/*`、`js/lib/*`(自研库,
-> 如地图内核 minimap)与自身目录的文件,
+> 如地图内核 minimap、Markdown 内核 md.js / mdedit.js)与自身目录的文件,
 > **不要 import `js/system/*` 或其他应用**。打包时 core 是独立稳定 chunk
 > (js/lib 也归入其中,开机引入),
 > 应用若引用了主包里的模块,该应用 chunk 就会跟着主包改名,破坏
@@ -205,7 +205,12 @@ settings.set({ volume: 30 })   // 写入 → 应用到 DOM → 广播 sys:settin
 
 只存应用自己的数据时,不要塞进系统设置。推荐 `js/core/appdata.js`:
 数据落在虚拟路径 `/home/<user>/appdata/<app>.awdb`(AetherWebDatabase 页加密库,
-经 VFS 写入,库不直连 OPFS);旧 localStorage 键可用 `migrateFromLocalStorage` 一次性迁入。
+经 VFS 写入,库不直连 OPFS;**库口令按「用户密钥 × 应用名」派生**,不同应用
+互不相同,旧口令库首次打开自动重加密迁移);旧 localStorage 键可用
+`migrateFromLocalStorage` 一次性迁入。
+**与账号无关的应用**(如日记/笔记)改用共享库变体:
+`loadSharedState / saveSharedState / adoptSharedState`(落在 `/home/shared/appdata/`,
+首次启用时 `adoptSharedState` 会把既有用户库中数据量最多的一份一次性迁入)。
 
 ### 系统对话框(`dialogs`,全 Promise)
 
@@ -299,6 +304,7 @@ mount({ root, onLoginRetry }) {
 | **OPFS** `webos/fs.v2.json` | 虚拟文件系统**元数据树**(inode 式,无文件内容) |
 | **OPFS** `webos/fsdata/<path>` | 各文件真实内容(如 `fsdata/home/u/appdata/sms.awdb`) |
 | **VFS** `/home/<user>/appdata/<app>.awdb` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase,不直连 OPFS) |
+| **VFS** `/home/shared/appdata/<app>.awdb` | 无账号应用的共享页加密库(`loadSharedState` / `saveSharedState`;日记/笔记) |
 | localStorage `webos.settings.v1` | 全部系统设置 |
 | localStorage `webos.iconpos.v1` | 桌面图标位置 |
 | localStorage `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |

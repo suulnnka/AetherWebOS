@@ -21,6 +21,7 @@ import mail from './mail/manifest.js';
 import todo from './todo/manifest.js';
 import sms from './sms/manifest.js';
 import notes from './notes/manifest.js';
+import mdedit from './mdedit/manifest.js';
 import settings from './settings/manifest.js';
 import calc from './calc/manifest.js';
 import terminal from './terminal/manifest.js';
@@ -51,6 +52,7 @@ const APPS = [
   [todo, () => import('./todo/index.js')],
   [sms, () => import('./sms/index.js')],
   [notes, () => import('./notes/index.js')],
+  [mdedit, () => import('./mdedit/index.js')],
   [settings, () => import('./settings/index.js')],
   [calc, () => import('./calc/index.js')],
   [terminal, () => import('./terminal/index.js')],

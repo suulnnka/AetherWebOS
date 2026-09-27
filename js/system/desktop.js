@@ -75,6 +75,10 @@ function openFsItem(item) {
     dialogs.error({ title: '快捷方式失效', message: `「${displayName(item.name)}」指向的应用不存在。` });
     return;
   }
+  if (/\.md$/i.test(item.name)) return wm.open('mdedit', { params: { path: item.path } });
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|ico|mp3|wav|ogg|flac|m4a|mp4|webm|mkv|mov|avi|pdf)$/i.test(item.name)) {
+    return wm.open('viewer', { params: { path: item.path } });   // 图片/PDF/音视频 → 预览
+  }
   wm.open('notes', { params: { path: item.path } });
 }
 

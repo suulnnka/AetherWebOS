@@ -409,11 +409,15 @@ CMDS.open = {
   },
 };
 CMDS.edit = {
-  desc: '用记事本打开文件(edit <文件>)',
+  desc: '打开文件编辑(edit <文件>;.md 进 Markdown 编辑器)',
   run(args, { resolve }) {
     const p = resolve(args[0] || '');
     if (!args[0]) throw new Error('用法: edit <文件>');
     if (!FS.exists(p)) FS.write(p, '');
+    if (/\.md$/i.test(p)) {
+      open('mdedit', { params: { path: p } });
+      return `已在 Markdown 编辑器打开 ${p}`;
+    }
     open('notes', { params: { path: p } });
     return `已在记事本打开 ${p}`;
   },

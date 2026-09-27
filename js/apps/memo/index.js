@@ -6,7 +6,8 @@
  *  - 加密后存储为密文,列表只显示锁标与标题;
  *  - 打开需输入密码,解锁后可查看与编辑(保存即重新加密);
  *  - 忘记密码无法找回(无后门),但可删除重建。
- * 数据:加密页库 ~/appdata/memo.awdb;旧键 webos.memo.v1::<user> 自动迁移。
+ * 数据:与账号无关,共享页加密库 /home/shared/appdata/memo.awdb
+ * (旧 localStorage 键与旧按用户库自动一次性迁入)。
  * ============================================================ */
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -14,10 +15,9 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './memo.css';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
-import { accounts } from '../../core/accounts.js';
-import { requireLogin, logoutButton } from '../../core/loginpanel.js';
-import { reopen } from '../../core/wm.js';
-import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
+import { adoptSharedState, saveSharedState } from '../../core/appdata.js';
+import { createMdEditor } from '../../lib/mdedit.js';
+import { render as mdRender } from '../../lib/md.js';
 
 const KEY = 'webos.memo.v1';
 const CATS = ['默认', '工作', '生活', '学习'];
@@ -40,11 +40,18 @@ function normalize(raw) {
 }
 
 async function loadAsync() {
-  const user = accounts.current();
-  if (!user) return null;
   try {
-    const data = await migrateFromLocalStorage('memo', accounts.userKey(KEY), normalize, user);
-    return data ?? normalize(await loadState('memo', user));
+    const adopted = await adoptSharedState('memo', (s) => (Array.isArray(s?.memos) ? s.memos.length : 0));
+    if (adopted) return normalize(adopted);
+    /* 旧 localStorage 遗留键(历史版本按用户命名)一次性迁入 */
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith(KEY)) continue;
+      try {
+        const data = normalize(JSON.parse(localStorage.getItem(k)));
+        if (data) { await saveSharedState('memo', data); return data; }
+      } catch { /* 坏键跳过 */ }
+    }
+    return null;
   } catch (e) {
     console.warn('[memo] 加载失败', e);
     return null;
@@ -55,9 +62,7 @@ let saveT;
 const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
-    const user = accounts.current();
-    if (!user || !state) return;
-    try { await saveState('memo', state, user); }
+    try { await saveSharedState('memo', state); }
     catch (e) { console.warn('[memo] 持久化失败', e); }
   }, 200);
 };
@@ -68,7 +73,6 @@ register({
   ...manifest,
   /* dialogs 来自 ctx:应用绑定弹框,默认二级(应用模态,只锁本应用) */
   mount({ root, setTitle, bus, onContextMenu, dialogs }) {
-    if (requireLogin(root, '笔记', () => { root.innerHTML = ''; appRemount(); })) return;
     state = defaultState();
 
     // 应用内右键:卡片 → 置顶 / 编辑 / 删除(与卡片按钮同一套操作)
@@ -109,8 +113,10 @@ register({
       }
 
       const titleIn = el('input', { class: 'input', value: memo?.title ?? '', placeholder: '标题', style: { width: '100%' } });
-      const bodyIn = el('textarea', { class: 'input', rows: '8', placeholder: '内容…', style: { width: '100%', resize: 'vertical' } });
-      bodyIn.value = body;
+      /* 正文:所见即所得 Markdown(共享 js/lib/mdedit.js 组件) */
+      const bodyIn = createMdEditor({ compact: true, placeholder: '内容…支持 Markdown' });
+      bodyIn.el.style.minHeight = '190px';
+      bodyIn.set(body);
       let color = memo?.color ?? COLORS[state.seq % COLORS.length];
       let doLock = false;
 
@@ -131,7 +137,7 @@ register({
 
       const box = el('div', { class: 'memo-editor' },
         titleIn,
-        bodyIn,
+        bodyIn.el,
         el('div', { class: 'row', style: { margin: '10px 0' } },
           el('span', { class: 'dim', style: { fontSize: '12px' } }, '颜色'), swatches,
           el('span', { class: 'grow' }),
@@ -144,7 +150,7 @@ register({
             class: 'btn primary',
             onClick: async () => {
               const title = titleIn.value.trim() || '无标题';
-              let finalBody = bodyIn.value;
+              let finalBody = bodyIn.get();
               if (lockCheck.checked) {
                 const pw = await dialogs.password({ title: '加密笔记', message: '设置密码' });
                 if (pw == null) return;
@@ -184,9 +190,12 @@ register({
       } else {
         plainCache[memo.id] = body;
       }
-      const box = el('div', { class: 'modal-box', style: { width: 'min(460px, 90%)' } },
+      const box = el('div', { class: 'modal-box', style: { width: 'min(520px, 92%)' } },
         el('h3', {}, memo.title),
-        el('div', { class: 'm-body', style: { whiteSpace: 'pre-wrap', maxHeight: '300px', overflowY: 'auto' } }, body),
+        el('div', {
+          class: 'm-body md-view', style: { maxHeight: '320px', overflowY: 'auto' },
+          html: mdRender(body),
+        }),
         el('div', { class: 'modal-actions' },
           el('button', { class: 'btn', onClick: () => box.remove() }, '关闭'),
           el('button', { class: 'btn primary', onClick: () => { box.remove(); editMemo(memo); } }, icon('pencil', 12), '编辑')));
@@ -241,7 +250,6 @@ register({
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         el('button', { class: 'btn primary', onClick: () => editMemo(null) }, icon('plus', 13), '新建'),
-        logoutButton(() => { root.innerHTML = ''; appRemount(); }),
         el('input', {
           class: 'input', placeholder: '搜索标题…', style: { width: '170px' },
           onInput: (e) => { query = e.target.value; render(); },
@@ -266,7 +274,3 @@ register({
     return { onClose() { return true; } };
   },
 });
-
-function appRemount() {
-  reopen('memo');
-}

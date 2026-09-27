@@ -82,7 +82,10 @@ register({
       render();
     }
 
-    function openItem(item) {
+    /** 双击即预览的扩展名(交给文件预览应用;与 desktop.js / viewer MIME 保持一致) */
+const PREVIEW_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|mp3|wav|ogg|flac|m4a|mp4|webm|mkv|mov|avi|pdf)$/i;
+
+function openItem(item) {
       if (item.dir) nav(item.path);
       else if (isAppLink(item.name)) {
         // 应用快捷方式:启动目标应用(单实例应用复用已有窗口)
@@ -106,6 +109,10 @@ register({
             dialogs.error({ title: '解锁失败', message: String(e.message) });
           }
         })();
+      } else if (/\.md$/i.test(item.name)) {
+        open('mdedit', { params: { path: item.path } });   // Markdown:所见即所得编辑器
+      } else if (PREVIEW_EXT.test(item.name)) {
+        open('viewer', { params: { path: item.path } });   // 图片/PDF/音视频 → 文件预览
       } else open('notes', { params: { path: item.path } }); // IPC:通过参数把文件交给记事本
     }
 
@@ -273,7 +280,12 @@ register({
             showMenu(e.clientX, e.clientY, [
               { label: '打开', icon: 'folderOpen', fn: () => openItem(item) },
               ...(item.dir ? [] : [
-                { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) },
+                ...(PREVIEW_EXT.test(item.name)
+                  ? [{ label: '预览', icon: 'image', fn: () => open('viewer', { params: { path: item.path } }) }]
+                  : []),
+                (/\.md$/i.test(item.name)
+                  ? { label: '用 Markdown 编辑器打开', icon: 'pencil', fn: () => open('mdedit', { params: { path: item.path } }) }
+                  : { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) }),
                 { label: encrypted ? '解密…' : '加密…', icon: 'lock', fn: () => toggleEncrypt(item) },
               ]),
               ...(item.dir ? [] : (/\.zip$/i.test(item.name)

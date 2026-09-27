@@ -141,6 +141,18 @@ const wipeAppData = (user, app) => ev(`(async () => {
   return true;
 })()`);
 
+/* 清空共享库(无账号应用,如日记/笔记):共享库 + 收养旗标 + 旧按用户库
+   一并清掉,否则收养逻辑会把旧用户数据搬回来,断言(种子数量)不成立 */
+const wipeSharedAppData = (app) => ev(`(async () => {
+  localStorage.removeItem('webos.appdata.adopt::' + ${JSON.stringify(app)});
+  WebOS.fs.rm('/home/shared/appdata/${app}.awdb', { as: 'root' });
+  for (const u of WebOS.fs.list('/home') || []) {
+    if (u.dir && u.name !== 'shared') WebOS.fs.rm('/home/' + u.name + '/appdata/${app}.awdb', { as: 'root' });
+  }
+  await WebOS.fs.flush();
+  return true;
+})()`);
+
 /* ---- 共享助手(从各用例组上提,跨组复用) ---- */
 
   const termType = async (cmd) => {
@@ -957,6 +969,62 @@ group('T21', '本地资源 + 文件预览', async () => {
   t('T21.3 视频/PDF/未知 路由', vw.videoEl && vw.pdfFrame && vw.unknown && vw.count === 5,
     JSON.stringify(vw));   // T21.1 文本窗 + 图片/视频/PDF/未知 4 窗 = 5
   await c.shot('t21-viewer');
+
+  // Markdown 预览:渲染成富文本,编辑入口指向 Markdown 编辑器
+  await ev(`WebOS.wm.open('viewer', { params: { file: new File(['# MD 标题\\n\\n**重要** 内容与 \`行内码\`\\n\\n- [x] 任务'], 'note.md', { type: 'text/markdown' }) } })`);
+  await sleep(500);
+  const mdv = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=viewer]')];
+    const w = wins.find(x => x.querySelector('.win-title')?.textContent.includes('note.md'));
+    return { h1: w?.querySelector('.viewer-md h1')?.textContent,
+             strong: w?.querySelector('.viewer-md strong')?.textContent,
+             code: w?.querySelector('.viewer-md p code')?.textContent,
+             check: !!w?.querySelector('.viewer-md .md-check.on'),
+             editBtn: [...(w?.querySelectorAll('.btn') || [])].some(b => b.textContent.includes('Markdown 编辑器')) };
+  })()`);
+  t('T21.4 Markdown 渲染预览(本地 File)', mdv.h1 === 'MD 标题' && mdv.strong === '重要' && mdv.code === '行内码' && mdv.check && mdv.editBtn, JSON.stringify(mdv));
+
+  // VFS 来源(params.path):md 与 png 写入虚拟文件系统后预览
+  await ev(`(async () => {
+    const home = WebOS.fs.homePath();
+    WebOS.fs.write(home + '/documents/手册.md', '# 虚拟文件系统里的 MD\\n\\n- [x] 支持任务列表');
+    const canvas = document.createElement('canvas');
+    canvas.width = 24; canvas.height = 16;
+    canvas.getContext('2d').fillStyle = '#22c55e';
+    canvas.getContext('2d').fillRect(0, 0, 24, 16);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    WebOS.fs.write(home + '/documents/图标.png', new Uint8Array(await blob.arrayBuffer()));
+    await WebOS.fs.flush();
+    return true;
+  })()`);
+  await ev(`WebOS.wm.open('viewer', { params: { path: WebOS.fs.homePath() + '/documents/手册.md' } })`);
+  await sleep(600);
+  const vmd = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=viewer]')];
+    const w = wins.find(x => x.querySelector('.win-title')?.textContent.includes('手册.md'));
+    return { h1: w?.querySelector('.viewer-md h1')?.textContent, check: !!w?.querySelector('.viewer-md .md-check.on') };
+  })()`);
+  t('T21.5 VFS Markdown 预览(params.path)', vmd.h1 === '虚拟文件系统里的 MD' && vmd.check, JSON.stringify(vmd));
+
+  // 文件管家双击 png → 文件预览(位图解码)
+  await ev(`WebOS.wm.open('files')`);
+  await sleep(500);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    [...w.querySelectorAll('.fitem')].find(f => f.textContent.trim().startsWith('documents')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(400);
+  await ev(`(() => {
+    [...document.querySelectorAll('.win[data-app=files] .fitem')].find(f => f.textContent.includes('图标.png')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(700);
+  const vpic = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=viewer]')];
+    const w = wins.find(x => x.querySelector('.win-title')?.textContent.includes('图标.png'));
+    return { img: w?.querySelector('img')?.naturalWidth ?? null };
+  })()`);
+  t('T21.6 文件管家图片双击 → 预览', vpic.img === 24, JSON.stringify(vpic));
+
   // 文本「在记事本中编辑」:落到虚拟文件系统并调起记事本
   await ev(`[...document.querySelectorAll('.win[data-app=viewer] .btn')].find(b => b.textContent.includes('在记事本中编辑')).click()`);
   await sleep(600);
@@ -964,13 +1032,13 @@ group('T21', '本地资源 + 文件预览', async () => {
     notesWin: !!document.querySelector('.win[data-app=notes]'),
     saved: WebOS.fs.read(WebOS.fs.homePath()+'/downloads/readme.txt'),
   })`);
-  t('T21.4 文本转入记事本(IPC 联动)', toNotes.notesWin && toNotes.saved === '本地文件内容 ABC', JSON.stringify(toNotes.saved));
+  t('T21.7 文本转入记事本(IPC 联动)', toNotes.notesWin && toNotes.saved === '本地文件内容 ABC', JSON.stringify(toNotes.saved));
 
   // 关闭全部预览器(对象 URL 生命周期由 onClose 回收)
   await ev(`[...document.querySelectorAll('.win[data-app=viewer]')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(500);
   const errs21 = await ev(`window.__errs.length`);
-  t('T21.5 关闭回收无错误', errs21 === 0, `errs=${errs21}`);
+  t('T21.8 关闭回收无错误', errs21 === 0, `errs=${errs21}`);
 
 });
 
@@ -2031,19 +2099,12 @@ group('T31', '压缩包支持', async () => {
 });
 
 group('T32', '笔记(含加密)', async () => {
-  /* ---- T32 笔记(含加密) ---- */
+  /* ---- T32 笔记(含加密;与账号无关,数据在共享库) ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.memo.v1')) localStorage.removeItem(k);
     return true;
   })()`);
-  await wipeAppData('memoer', 'memo');   // 数据已迁 appdata:清档,种子卡片重新播种
-  // 独立运行前置:登录测试账号(笔记数据按账号隔离,不能依赖遗留会话)
-  await ev(`(async () => {
-    const { accounts } = await import('./js/core/accounts.js');
-    if (accounts.current()) return true;
-    if (!(await accounts.login('memoer', 'memopass')).ok) await accounts.register('memoer', 'memopass');
-    return true;
-  })()`);
+  await wipeSharedAppData('memo');   // 清共享库 + 收养旗标 + 旧按用户库,种子卡片重新播种
   await fresh();
   await ev(`WebOS.wm.open('memo')`);
   await sleep(700);
@@ -2059,7 +2120,10 @@ group('T32', '笔记(含加密)', async () => {
     await new Promise(r => setTimeout(r, 450));
     const ed = document.querySelector('.memo-editor');
     ed.querySelector('input.input').value = '银行账号';
-    ed.querySelector('textarea.input').value = '6222 0000 1234 5678';
+    // 正文是 md 编辑器:写入活动块原文并走输入管线(触发 onChange/保存)
+    const raw = ed.querySelector('.md-raw');
+    raw.textContent = '6222 0000 1234 5678';
+    raw.dispatchEvent(new Event('input', { bubbles: true }));
     ed.querySelectorAll('.memo-swatch')[3].click();
     ed.querySelector('input[type=checkbox]').click();
     [...ed.querySelectorAll('.btn')].find(b => b.textContent === '保存').click();
@@ -3052,20 +3116,13 @@ group('T42', '弹框分级', async () => {
   t('T42.8 全程无错误', errs42 === 0, `errs=${errs42}`);
 });
 
-group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
-  /* ---- T43 日记:按日期记录 / 心情 / 自动保存 ---- */
+group('T43', '日记(按日期 / 自动保存 / 单页加密,无账号)', async () => {
+  /* ---- T43 日记:按日期记录 / 心情 / 自动保存 / 单页加密(与账号无关) ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.diary.v1')) localStorage.removeItem(k);
     return true;
   })()`);
-  await wipeAppData('diaryer', 'diary');   // 数据已迁 appdata:清档,断言(1 篇)不累积历史
-  // 独立运行前置:登录测试账号(日记数据按账号隔离,不能依赖遗留会话)
-  await ev(`(async () => {
-    const { accounts } = await import('./js/core/accounts.js');
-    if (accounts.current()) return true;
-    if (!(await accounts.login('diaryer', 'diarypass')).ok) await accounts.register('diaryer', 'diarypass');
-    return true;
-  })()`);
+  await wipeSharedAppData('diary');   // 清共享库 + 收养旗标 + 旧按用户库,断言(1 篇)不累积历史
   await fresh();
   await ev(`WebOS.wm.open('diary')`);
   await sleep(700);
@@ -3076,27 +3133,27 @@ group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
     const d = new Date();
     const key = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
     const win = document.querySelector('.win[data-app=diary]');
-    const ta = win.querySelector('.diary-text');
-    ta.value = '今天是终端合并成 bash 的日子,充实。';
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const raw = win.querySelector('.diary-text .md-raw');   // 正文已换 md 编辑器:写活动块原文
+    raw.textContent = '今天是终端合并成 bash 的日子,充实。';
+    raw.dispatchEvent(new Event('input', { bubbles: true }));
     return { key, dateH: win.querySelector('.diary-date').textContent };
   })()`);
   t('T43 今天默认选中(标题含日期)', d0.dateH.includes('年') && d0.dateH.includes('星期'), d0.dateH);
   await sleep(500);   // 等防抖落盘
 
   const savedTxt = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
+    const s = await WebOS.appdata.loadSharedState('diary');
     const e = s?.entries && s.entries[${JSON.stringify(d0.key)}];
     return (e && e.text || '').includes('充实') || null;
   })()`, 5000);
-  t('T43.1 输入自动落盘', savedTxt === true, '');
+  t('T43.1 输入自动落盘(共享库)', savedTxt === true, '');
 
   // 圆点标记 + 心情
   const dot = await ev(`!!document.querySelector('.win[data-app=diary] .diary-day.sel .dot')`);
   t('T43.2 月历圆点标记', dot === true);
   await ev(`document.querySelectorAll('.win[data-app=diary] .diary-mood')[1].click()`);
   const mood = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
+    const s = await WebOS.appdata.loadSharedState('diary');
     return (s?.entries?.[${JSON.stringify(d0.key)}] || {}).mood || null;
   })()`, 5000);
   t('T43.3 心情选择持久化', mood === '🙂', `mood=${mood}`);
@@ -3111,17 +3168,101 @@ group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
     return key;
   })()`);
   await sleep(350);
-  const emptyText = await ev(`document.querySelector('.win[data-app=diary] .diary-text').value`);
+  const emptyText = await ev(`document.querySelector('.win[data-app=diary] .diary-text').$md.get()`);
   t('T43.4 切换日期编辑器跟随', emptyText === '', JSON.stringify(emptyText));
 
   await ev(`[...document.querySelectorAll('.win[data-app=diary] .btn')].find(b => b.textContent.includes('今天')).click()`);
   await sleep(350);
-  const back = await ev(`document.querySelector('.win[data-app=diary] .diary-text').value`);
+  const back = await ev(`document.querySelector('.win[data-app=diary] .diary-text').$md.get()`);
   t('T43.5 「今天」回位且内容恢复', back.includes('充实'), JSON.stringify(back));
+
+  /* ---- 单页加密:设密码 → 刷新后锁定卡 → 错误密码拒绝 → 正确解锁 ---- */
+  await ev(`[...document.querySelectorAll('.win[data-app=diary] .app-toolbar .btn')].find(b => b.textContent.includes('加密本页')).click()`);
+  for (let i = 0; i < 2; i++) {
+    await waitFor(`!!document.querySelector('.win[data-app=sysdialog] .dlg-input')`);
+    await ev(`(() => {
+      const i = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+      i.value = 'diary-pw';
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    await sleep(450);
+  }
+  const locked = await waitFor(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    const cell = [...w.querySelectorAll('.diary-day')].find(c => c.classList.contains('today'));
+    return cell?.querySelector('.lockmark')?.textContent || null;
+  })()`, 5000);
+  const stillEdit = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    // .diary-text 就是 md 编辑器根节点(非容器):查自身可见 + 内部活动壳存在
+    const t = w.querySelector('.diary-text');
+    return { edit: t.style.display !== 'none' && !!t.querySelector('.md-raw'),
+             btn: [...w.querySelectorAll('.app-toolbar .btn')].some(b => b.textContent.includes('解除加密')) };
+  })()`);
+  t('T43.6 单页加密(锁标 + 会话内仍可编辑)', locked === '🔒' && stillEdit.edit && stillEdit.btn, JSON.stringify({ locked, stillEdit }));
+
+  // 落盘为密文(共享库里的 text 是 WEOS1 密文)
+  const cipher = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadSharedState('diary');
+    const e = (s?.entries || {})[${JSON.stringify(d0.key)}];
+    return e?.lock === true && String(e?.text || '').startsWith('WEOS1:') || null;
+  })()`, 5000);
+  t('T43.7 落盘为密文', cipher === true, '');
+
+  // 刷新:会话密码清空,今天变成锁定卡
+  await fresh();
+  await ev(`WebOS.wm.open('diary')`);
+  await sleep(700);
+  const lockCard = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    const card = w.querySelector('.diary-lock');
+    return { card: !!card && card.style.display !== 'none', input: !!card?.querySelector('input'),
+             editHidden: w.querySelector('.diary-text').style.display === 'none' };
+  })()`);
+  t('T43.8 刷新后出现解锁卡', lockCard.card && lockCard.input && lockCard.editHidden, JSON.stringify(lockCard));
+
+  // 错误密码被拒(sysdialog 报「解锁失败」)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    w.querySelector('.diary-lock input').value = 'wrong';
+    [...w.querySelectorAll('.diary-lock .btn')].find(b => b.textContent === '解锁').click();
+  })()`);
+  const wrong = await waitFor(`[...document.querySelectorAll('.win[data-app=sysdialog]')].some(d => d.textContent.includes('解锁失败'))`, 5000);
+  t('T43.9 错误密码被拒', wrong === true);
+  await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].pop().click()`);
+  await sleep(300);
+
+  // 正确密码解锁:内容恢复,编辑器可用
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    w.querySelector('.diary-lock input').value = 'diary-pw';
+    [...w.querySelectorAll('.diary-lock .btn')].find(b => b.textContent === '解锁').click();
+  })()`);
+  const unlocked = await waitFor(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    const md = w.querySelector('.diary-text').$md.get();
+    return w.querySelector('.diary-text').style.display !== 'none' && md.includes('充实') || null;
+  })()`, 5000);
+  t('T43.10 正确密码解锁恢复内容', unlocked === true, '');
+
+  // 解除加密:回到明文存储,锁标消失
+  await ev(`[...document.querySelectorAll('.win[data-app=diary] .app-toolbar .btn')].find(b => b.textContent.includes('解除加密')).click()`);
+  await sleep(500);
+  const plainBack = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadSharedState('diary');
+    const e = (s?.entries || {})[${JSON.stringify(d0.key)}];
+    return !e?.lock && (e?.text || '').includes('充实') || null;
+  })()`, 5000);
+  const markGone = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=diary]');
+    const cell = [...w.querySelectorAll('.diary-day')].find(c => c.classList.contains('today'));
+    return { lock: !!cell?.querySelector('.lockmark'), dot: !!cell?.querySelector('.dot') };
+  })()`);
+  t('T43.11 解除加密(明文落盘 + 圆点恢复)', plainBack === true && !markGone.lock && markGone.dot, JSON.stringify(markGone));
 
   const title = await ev(`document.querySelector('.win[data-app=diary] .win-title').textContent`);
   const errs = await ev(`window.__errs.length`);
-  t('T43.6 标题计数+无错误', title.includes('1 篇') && errs === 0, `title=${title} errs=${errs}`);
+  t('T43.12 标题计数+无错误', title.includes('1 篇') && errs === 0, `title=${title} errs=${errs}`);
   await c.shot('t43-diary');
 });
 
@@ -3492,6 +3633,130 @@ group('T47', '浏览器多标签与内外网自动分流', async () => {
 
   const errs47 = await ev(`window.__errs.length`);
   t('T47.14 全程无运行错误', errs47 === 0, `errs=${errs47}`);
+});
+
+group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)', async () => {
+  /* ---- T48 Markdown:md.js 库渲染 + mdedit 应用 + 文件管家分流 ---- */
+  await fresh();
+  await ev(`WebOS.wm.open('mdedit')`);
+  await sleep(700);
+
+  // 骨架:工具栏 + 单活动块
+  const s0 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { edit: !!w.querySelector('.md-edit'), raw: !!w.querySelector('.md-raw'),
+             btns: w.querySelectorAll('.md-tbtn').length, blocks: w.querySelectorAll('.md-block').length };
+  })()`);
+  t('T48 编辑器骨架(工具栏 + 活动块)', s0.edit && s0.raw && s0.btns >= 15 && s0.blocks === 1, JSON.stringify(s0));
+
+  // 语法渲染全景:切预览全量渲染断言(活动块在编辑态显示原文是预期行为),再回编辑
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('# 标题一\\n\\n正文 **加粗** 与 \`行内码\`\\n\\n- [ ] 任务 A\\n- [x] 任务 B\\n\\n> 引用一行\\n\\n| 甲 | 乙 |\\n| --- | --- |\\n| 1 | 2 |');
+    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '预览').click();
+  })()`);
+  await sleep(250);
+  const s1 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return {
+      h1: w.querySelector('.md-block h1')?.textContent,
+      strong: w.querySelector('.md-block strong')?.textContent,
+      code: w.querySelector('.md-block p code')?.textContent,
+      checks: w.querySelectorAll('.md-check').length,
+      on: w.querySelectorAll('.md-check.on').length,
+      quote: w.querySelector('.md-block blockquote')?.textContent,
+      table: w.querySelector('.md-block table')?.textContent,
+      blocks: w.querySelectorAll('.md-block').length,
+      head5: w.querySelector('.md-edit').$md.get().slice(0, 5),
+    };
+  })()`);
+  t('T48.1 语法渲染(标题/粗体/行内码)', s1.h1 === '标题一' && s1.strong === '加粗' && s1.code === '行内码', JSON.stringify(s1));
+  t('T48.2 任务/引用/表格渲染', s1.checks === 2 && s1.on === 1 && s1.quote.includes('引用一行') && s1.table.includes('乙') && s1.blocks === 5, '');
+  t('T48.3 源串即事实($md.get 原文可回)', s1.head5 === '# 标题一', s1.head5);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '编辑').click();
+  })()`);
+  await sleep(200);
+
+  // 任务勾选 → 回写 markdown 源码(组件监听 pointerdown)
+  await ev(`(() => {
+    document.querySelector('.win[data-app=mdedit] .md-check')
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  })()`);
+  await sleep(150);
+  const s2 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { src: w.querySelector('.md-edit').$md.get(), on: w.querySelectorAll('.md-check.on').length };
+  })()`);
+  t('T48.4 勾选回写源码', s2.src.includes('[x] 任务 A') && s2.on === 2, JSON.stringify(s2.src.match(/- \\[.\\] 任务 A/)));
+
+  // 安全:拒绝 javascript: 链接、不透传原始 HTML(加尾段并激活之,首段即渲染)
+  const s3 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('[点我](javascript:alert(1)) <script>alert(2)<\\/script> **粗**\\n\\n尾段');
+    const bs = w.querySelectorAll('.md-block');
+    bs[bs.length - 1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(250);
+  const s3b = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { a: [...w.querySelectorAll('.md-block a')].map(a => a.getAttribute('href')),
+             script: !!w.querySelector('.md-block script'), strong: !!w.querySelector('.md-block strong') };
+  })()`);
+  t('T48.5 安全(协议白名单 / HTML 转义)', s3 === true && s3b.a.length === 0 && !s3b.script && s3b.strong, JSON.stringify(s3b));
+
+  // 另存为 .md → 虚拟文件系统;文件管家双击分流回编辑器
+  const mdPath = (await ev(`WebOS.fs.homePath()`)) + '/documents/md-e2e.md';
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('# 保存测试\\n\\n内容 **在这里**');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('另存为')).click();
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const i = document.querySelector('.modal-mask input');
+    i.value = ${JSON.stringify(mdPath)};
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(400);
+  const saved = await ev(`WebOS.fs.read(${JSON.stringify(mdPath)})`);
+  t('T48.6 另存为 .md 到虚拟文件系统', typeof saved === 'string' && saved.includes('# 保存测试') && saved.includes('**在这里**'), String(saved).slice(0, 24));
+
+  await ev(`WebOS.wm.open('files')`);
+  await sleep(500);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    [...w.querySelectorAll('.fitem')].find(f => f.textContent.trim().startsWith('documents')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(400);
+  await ev(`(() => {
+    [...document.querySelectorAll('.win[data-app=files] .fitem')].find(f => f.textContent.includes('md-e2e')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  })()`);
+  await sleep(600);
+  const s4 = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=mdedit]')];
+    const last = wins[wins.length - 1];
+    return { wins: wins.length, md: last ? last.querySelector('.md-edit').$md.get() : null };
+  })()`);
+  t('T48.7 文件管家双击 .md → Markdown 编辑器', s4.wins === 2 && s4.md.includes('保存测试'), JSON.stringify(s4.md).slice(0, 30));
+
+  // 预览模式:全部落定为渲染态(无活动壳)
+  await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '预览').click();
+  })()`);
+  await sleep(200);
+  const s5 = await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    return { raw: w.querySelectorAll('.md-raw').length, h1: w.querySelectorAll('.md-block h1').length };
+  })()`);
+  t('T48.8 预览模式(全部渲染)', s5.raw === 0 && s5.h1 >= 1, JSON.stringify(s5));
+
+  const errs = await ev(`window.__errs.length`);
+  t('T48.9 全程无错误', errs === 0, `errs=${errs}`);
+  await c.shot('t48-mdedit');
 });
 
 /* ---------- 用例筛选 ---------- */

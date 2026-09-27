@@ -1,0 +1,122 @@
+/* ============================================================
+ * mdedit.css —— 所见即所得 Markdown 编辑组件样式(js/lib/mdedit.js)
+ *
+ * 颜色只用系统 CSS 变量,亮暗主题与各皮肤自动生效(约定见
+ * docs/app-dev-guide.md §7)。排版规则同时作用于:
+ *   .md-edit  —— 编辑器本体
+ *   .md-view  —— 非编辑器宿主直接渲染 md 的容器(如笔记查看弹层)
+ * ============================================================ */
+
+/* ---------- 骨架 ---------- */
+
+.md-edit { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+
+.md-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  background: var(--panel); flex-shrink: 0;
+}
+.md-tbtn {
+  min-width: 27px; height: 26px; padding: 0 6px; border-radius: 6px;
+  font-size: 12.5px; color: var(--text-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.md-tbtn:hover { background: var(--hover); color: var(--text); }
+.md-tbtn:active { transform: translateY(1px); }
+.md-tsep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+
+.md-surface { flex: 1; overflow-y: auto; position: relative; padding: 12px 18px 140px; min-height: 0; }
+.md-edit.empty .md-surface::before {
+  content: attr(data-ph);
+  position: absolute; top: 12px; left: 24px;
+  color: var(--text-2); opacity: .7; pointer-events: none;
+}
+
+/* ---------- 块与活动壳 ---------- */
+
+.md-block { padding: 2px 6px; margin: 2px 0; border-radius: var(--radius-s); min-height: 1.2em; cursor: text; }
+.md-block:empty { min-height: .85em; }                      /* 定义块渲染为空,但仍可点击编辑 */
+.md-block:not(.active):hover { box-shadow: 0 0 0 1px var(--hover); }
+.md-block.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+  padding-left: 9px;
+}
+.md-raw { outline: none; white-space: pre-wrap; word-break: break-word; min-height: 1.2em; }
+.md-edit.preview .md-block { cursor: default; }
+
+/* ---------- 渲染态排版(.md-edit 与 .md-view 共用) ---------- */
+
+:is(.md-edit, .md-view) :is(h1, h2, h3, h4, h5, h6) { margin: .55em 0 .3em; line-height: 1.28; font-weight: 700; }
+:is(.md-edit, .md-view) h1 { font-size: 1.62em; border-bottom: 1px solid var(--border); padding-bottom: .18em; }
+:is(.md-edit, .md-view) h2 { font-size: 1.38em; border-bottom: 1px solid var(--border); padding-bottom: .16em; }
+:is(.md-edit, .md-view) h3 { font-size: 1.2em; }
+:is(.md-edit, .md-view) h4 { font-size: 1.06em; }
+:is(.md-edit, .md-view) h5 { font-size: .96em; }
+:is(.md-edit, .md-view) h6 { font-size: .9em; color: var(--text-2); }
+:is(.md-edit, .md-view) p { margin: .32em 0; line-height: 1.72; }
+:is(.md-edit, .md-view) a { color: var(--accent); }
+:is(.md-edit, .md-view) img { max-width: 100%; border-radius: var(--radius-s); }
+
+:is(.md-edit, .md-view) blockquote {
+  margin: .45em 0; padding: .15em .95em;
+  border-left: 3px solid var(--accent); border-radius: 0 var(--radius-s) var(--radius-s) 0;
+  background: var(--hover);
+}
+:is(.md-edit, .md-view) blockquote > :first-child { margin-top: .15em; }
+:is(.md-edit, .md-view) blockquote > :last-child { margin-bottom: .15em; }
+
+:is(.md-edit, .md-view) pre.md-code {
+  position: relative; margin: .5em 0; padding: 11px 13px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--radius-s); overflow: auto;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px; line-height: 1.58;
+}
+:is(.md-edit, .md-view) pre.md-code[data-lang]:not([data-lang=''])::before {
+  content: attr(data-lang);
+  position: absolute; top: 5px; right: 9px;
+  font-size: 10px; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text-2); opacity: .8; pointer-events: none;
+}
+:is(.md-edit, .md-view) code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: .9em; background: var(--hover);
+  padding: 1px 5px; border-radius: 5px;
+}
+:is(.md-edit, .md-view) pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
+
+:is(.md-edit, .md-view) hr { border: none; border-top: 1px solid var(--border); margin: .95em 0; }
+
+:is(.md-edit, .md-view) :is(ul, ol) { margin: .3em 0; padding-left: 1.55em; }
+:is(.md-edit, .md-view) li { margin: .16em 0; line-height: 1.68; }
+:is(.md-edit, .md-view) li > :is(p, ul, ol, blockquote) { margin: .14em 0; }
+
+.md-table-wrap { overflow-x: auto; margin: .5em 0; }
+:is(.md-edit, .md-view) table { border-collapse: collapse; font-size: .96em; line-height: 1.5; }
+:is(.md-edit, .md-view) :is(th, td) { border: 1px solid var(--border); padding: 5px 11px; min-width: 2.4em; }
+:is(.md-edit, .md-view) th { background: var(--hover); font-weight: 600; text-align: left; }
+:is(.md-edit, .md-view) th:empty::after { content: '\00a0'; }
+
+/* 任务列表:去项目符,复选框可点(编辑态回写源码) */
+:is(.md-edit, .md-view) li.md-task-item { list-style: none; margin-left: -1.3em; }
+.md-check {
+  display: inline-block; width: 15px; height: 15px;
+  border: 1.5px solid var(--text-2); border-radius: 4px;
+  vertical-align: -2.5px; margin-right: 7px; position: relative;
+  transition: background .12s, border-color .12s;
+}
+.md-edit:not(.preview) .md-check { cursor: pointer; }
+.md-edit:not(.preview) .md-check:hover { border-color: var(--accent); }
+.md-check.on { background: var(--accent); border-color: var(--accent); }
+.md-check.on::after {
+  content: '✓'; position: absolute; inset: 0;
+  text-align: center; line-height: 12px; font-size: 11px; font-weight: 700; color: #fff;
+}
+
+/* ---------- 紧凑模式(弹层内嵌,如笔记编辑) ---------- */
+
+.md-edit.compact .md-toolbar { padding: 4px 6px; }
+.md-edit.compact .md-surface { padding: 8px 12px 64px; }
+.md-edit.compact .md-block { padding: 1px 4px; margin: 1px 0; }

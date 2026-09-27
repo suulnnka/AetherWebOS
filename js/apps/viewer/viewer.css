@@ -22,6 +22,12 @@
   white-space: pre-wrap; word-break: break-all;
   user-select: text; -webkit-user-select: text;
 }
+/* Markdown 渲染预览(排版规则来自 js/lib/mdedit.css 的 .md-view) */
+.viewer-md {
+  align-self: stretch; width: 100%; max-width: 900px;
+  margin: 0 auto; padding: 18px 26px 60px;
+  user-select: text; -webkit-user-select: text;
+}
 .viewer-empty {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   color: var(--text-2); padding: 40px; text-align: center;
