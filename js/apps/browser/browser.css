@@ -1,19 +1,105 @@
-/* ---- 浏览器(虚拟网络) ---- */
+/* ---- 浏览器(多标签 · 内/外网按虚拟 DNS 自动分流) ---- */
+/* 网络配色:内网(虚拟网络)青色 / 外网(真实互联网)琥珀色 / 起始页中性 */
+:root { --vw-in: #0ea5e9; --vw-out: #f59e0b; }
+
 .vw-addr { flex: 1; height: 32px; border-radius: 16px; padding: 0 14px; }
-.vw-badge { flex: none; }
+
 .loading-bar { height: 2.5px; overflow: hidden; background: transparent; }
 .loading-bar i {
   display: block; height: 100%; width: 34%;
   background: var(--accent); border-radius: 2px;
   animation: vwLoad 0.9s ease-in-out infinite;
 }
+.loading-bar[data-net="out"] i { background: var(--vw-out); }
 @keyframes vwLoad { 0% { transform: translateX(-110%); } 100% { transform: translateX(420%); } }
 
-.vw-body { background: var(--panel-solid); }
+/* ---- 标签栏(Firefox 式:滚动区 + 右侧固定的 + 与「列出所有标签页」) ---- */
+.vw-tabs {
+  flex: none; display: flex; align-items: flex-end; gap: 4px;
+  padding: 6px 8px 0;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.vw-tabs-scroll {
+  flex: 1; min-width: 0;
+  display: flex; align-items: flex-end; gap: 4px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.vw-tab {
+  position: relative;
+  display: flex; align-items: center; gap: 7px;
+  flex: 1 1 190px; min-width: 72px; max-width: 220px;
+  height: 30px; padding: 0 7px 0 11px;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+  color: var(--text-2); font-size: 12.5px;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  touch-action: none;
+  transition: transform 0.16s ease;
+}
+.vw-tab:hover { background: var(--hover); color: var(--text); }
+/* 拖拽排序:拖动中的标签抬升,其余标签平滑让位 */
+.vw-tab.dragging {
+  transition: none; z-index: 5;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  cursor: grabbing; opacity: 0.96;
+}
+/* 加载中:圆点变转圈(Firefox 标签转圈) */
+.vw-tab.loading .vw-tab-dot {
+  background: conic-gradient(from 0deg, transparent 32%, currentColor);
+  animation: vwTabSpin 0.7s linear infinite;
+}
+@keyframes vwTabSpin { to { transform: rotate(360deg); } }
+/* 网络色:顶部色条 + 圆点;激活标签整体染上所属网络的底色 */
+.vw-tab::before {
+  content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 2px;
+  border-radius: 0 0 2px 2px; opacity: .28;
+}
+.vw-tab.net-in::before { background: var(--vw-in); }
+.vw-tab.net-out::before { background: var(--vw-out); }
+.vw-tab.net-in.active {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--vw-in) 14%, var(--panel-solid)), var(--panel-solid) 85%);
+  border-color: var(--border); color: var(--text);
+}
+.vw-tab.net-out.active {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--vw-out) 15%, var(--panel-solid)), var(--panel-solid) 85%);
+  border-color: var(--border); color: var(--text);
+}
+.vw-tab.net-in.active::before {
+  opacity: 1; box-shadow: 0 0 6px color-mix(in srgb, var(--vw-in) 55%, transparent);
+}
+.vw-tab.net-out.active::before {
+  opacity: 1; box-shadow: 0 0 6px color-mix(in srgb, var(--vw-out) 55%, transparent);
+}
+.vw-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text-2) 60%, transparent); }
+.vw-tab.net-in .vw-tab-dot { background: var(--vw-in); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-in) 50%, transparent); }
+.vw-tab.net-out .vw-tab-dot { background: var(--vw-out); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-out) 50%, transparent); }
+.vw-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-tab-x {
+  flex: none; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center;
+  color: var(--text-2); background: transparent; border: none;
+  opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.vw-tab:hover .vw-tab-x, .vw-tab.active .vw-tab-x { opacity: 0.75; }
+.vw-tab-x:hover { opacity: 1; background: var(--hover); color: var(--text); }
+.vw-tab-plus {
+  flex: none; width: 26px; height: 26px; margin-bottom: 3px;
+  border-radius: var(--radius-s); border: none; background: transparent;
+  color: var(--text-2); display: grid; place-items: center; cursor: pointer;
+}
+.vw-tab-plus:hover { background: var(--hover); color: var(--text); }
+/* 「列出所有标签页」下拉(Firefox:与 + 之间有分隔线) */
+.vw-tabs-list { margin-left: 2px; border-left: 1px solid var(--border); border-radius: 0; padding: 0 2px; }
+
+/* ---- 内容区(每标签一个 tabroot,切换时整体换挂) ---- */
+.vw-body { background: var(--panel-solid); display: flex; flex-direction: column; overflow: hidden; }
+.vw-tabroot { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .vw-iframe { flex: 1; width: 100%; border: none; background: #fff; }
 
 /* 虚拟页面排版(游戏作者用普通 HTML 标签即可) */
-.vw-page { padding: 26px 34px; max-width: 860px; user-select: text; -webkit-user-select: text; }
+.vw-page { flex: 1 1 auto; overflow-y: auto; padding: 26px 34px; max-width: 860px; user-select: text; -webkit-user-select: text; }
 .vw-page h1 { font-size: 21px; margin-bottom: 6px; }
 .vw-page h2 { font-size: 17px; margin-bottom: 8px; }
 .vw-page h3 { font-size: 14.5px; margin: 14px 0 6px; }

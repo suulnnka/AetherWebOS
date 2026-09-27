@@ -96,7 +96,14 @@ async function ensureE2ESession() {
     }
     return { ok: false, users: acc.list().map(u => u.name) };
   })()`);
-  return !!r?.ok;
+  if (r?.ok) return true;
+  // 注册/登录与首启自动建号(bootstrap)并发时可能撞车:短暂轮询等任一会话就绪,
+  // 避免用例在"未登录"状态下写文件被静默拒绝
+  for (let i = 0; i < 20; i++) {
+    if (await ev(`WebOS.accounts?.current?.() || null`)) return true;
+    await sleep(100);
+  }
+  return false;
 }
 
 async function waitReady() {
@@ -125,6 +132,14 @@ async function waitFor(expr, timeout = 5000) {
     await sleep(120);
   }
 }
+
+/* 清掉某用户的 appdata 库文件并等元数据落盘(数据已迁 ~/appdata/*.awdb,重跑清档用;
+   root 绕过权限;flush 确保 rm 的元数据在刷新前写进 OPFS,避免文件"复活") */
+const wipeAppData = (user, app) => ev(`(async () => {
+  WebOS.fs.rm('/home/${user}/appdata/${app}.awdb', { as: 'root' });
+  await WebOS.fs.flush();
+  return true;
+})()`);
 
 /* ---- 共享助手(从各用例组上提,跨组复用) ---- */
 
@@ -493,13 +508,20 @@ group('T13', '通知中心', async () => {
 group('T14', '持久化:刷新后数据仍在', async () => {
   /* ---- T14 持久化:刷新后数据仍在 ---- */
   // 独立运行:先落一份待持久化的状态(主题 + 文件改动),刷新后应原样保留
-  await ev(`WebOS.settings.set({ theme: 'dark' });
-  WebOS.fs.write(WebOS.fs.homePath()+'/documents/欢迎使用.txt', (WebOS.fs.read(WebOS.fs.homePath()+'/documents/欢迎使用.txt') || '') + '\\n[E2E 测试行]')`);
-  await sleep(500);   // fs 落盘是 250ms 防抖,等它写进 localStorage 再刷新
+  const w14 = await ev(`(() => {
+    const p = WebOS.fs.homePath()+'/documents/欢迎使用.txt';
+    const ok = WebOS.fs.write(p, (WebOS.fs.read(p) || '') + '\\n[E2E 测试行]');
+    WebOS.settings.set({ theme: 'dark' });
+    return { ok, user: WebOS.accounts.current(), path: p, mem: (WebOS.fs.read(p) || '').slice(-16) };
+  })()`);
+  if (!w14.ok) console.log('   [T14 debug] write =', JSON.stringify(w14));
+  await sleep(500);   // fs 落盘是 250ms 防抖;并行负载下链式写可能更久,
+  await ev(`WebOS.fs.flush()`);   // 刷新前显式冲刷,别让导航拦腰打断落盘
   await fresh();
   const persisted = await ev(`({
     theme: JSON.parse(localStorage.getItem('webos.settings.v1')).theme,
     file: WebOS.fs.read(WebOS.fs.homePath()+'/documents/欢迎使用.txt').includes('[E2E 测试行]'),
+    user: WebOS.accounts.current(),
     errs: window.__errs.length,
   })`);
   t('T14 刷新后持久化', persisted.theme === 'dark' && persisted.file && persisted.errs === 0, JSON.stringify(persisted));
@@ -683,7 +705,7 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
   const catOk = await ev(`document.querySelector('.term-out').textContent.includes('blackout.nexus')`);
   t('T18.6 远程 cat(线索)', catOk === true);
   await termType('get notes.txt');
-  const got = await ev(`WebOS.fs.exists('/home/downloads/notes.txt')`);
+  const got = await ev(`WebOS.fs.exists(WebOS.fs.homePath()+'/downloads/notes.txt')`);
   t('T18.7 远程下载到本机(IPC 联动)', got === true);
   await termType('status');
   const statusRun = await ev(`document.querySelector('.term-out').textContent.includes('维护锁已释放')`);
@@ -750,10 +772,16 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
   t('T18.16 通关标志位与通知', questDone === true, `toast=${toastWin}`);
   await c.shot('t18-browser-proxy-pdf');
 
-  // 外网隔离:真实域名必须被拒绝
+  // 自动分流:真实域名(虚拟 DNS 无记录)直达外网 iframe
   await nav('www.google.com');
-  const blocked = await ev(`document.querySelector('.vw-page').textContent.includes('无法解析主机')`);
-  t('T18.17 外网域名被拒(隔离验证)', blocked === true);
+  const routed = await ev(`(() => {
+    const f = document.querySelector('.vw-iframe');
+    const tab = document.querySelector('.vw-tab.active');
+    return { out: !!tab && tab.classList.contains('net-out'),
+             src: f && !f.hidden ? (f.src || '') : '' };
+  })()`);
+  t('T18.17 真实域名自动分流到外网(DNS 判定)',
+    routed.out === true && routed.src.startsWith('https://www.google.com'), JSON.stringify(routed));
 
   const errs18 = await ev(`window.__errs.length`);
   t('T18.18 全程无运行错误', errs18 === 0, `errs=${errs18}`);
@@ -934,7 +962,7 @@ group('T21', '本地资源 + 文件预览', async () => {
   await sleep(600);
   const toNotes = await ev(`({
     notesWin: !!document.querySelector('.win[data-app=notes]'),
-    saved: WebOS.fs.read('/home/downloads/readme.txt'),
+    saved: WebOS.fs.read(WebOS.fs.homePath()+'/downloads/readme.txt'),
   })`);
   t('T21.4 文本转入记事本(IPC 联动)', toNotes.notesWin && toNotes.saved === '本地文件内容 ABC', JSON.stringify(toNotes.saved));
 
@@ -1406,6 +1434,7 @@ group('T26', '邮件应用', async () => {
   await ev(`WebOS.vnet.resetState();
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.mail.v1')) localStorage.removeItem(k);
     localStorage.removeItem('webos.account-session.v1')`);
+  await wipeAppData('mailuser', 'mail');   // 数据已迁 appdata:清掉库文件,种子邮件重新播种
   await fresh();   // 重载后清会话 → 需重新登录(测试随后注册 mailuser)
   // 账号门:注册并登录邮件用户(种子邮件将播种到该用户空间)
   await ev(`(async () => {
@@ -1524,6 +1553,7 @@ group('T27', '任务(Todo)应用', async () => {
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.todo.v1') || k === 'webos.account-session.v1') localStorage.removeItem(k);
   })()`);
+  await wipeAppData('todoer', 'todo');   // 数据已迁 appdata:清档,种子任务重新播种
   await fresh();   // 清档重载(含账号会话),种子数据从零开始
   // 登录测试用户(todo 现在需要账号)
   await ev(`(async () => {
@@ -1556,11 +1586,14 @@ group('T27', '任务(Todo)应用', async () => {
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(600);   // persist 防抖 200ms
-  const td1 = await ev(`({
-    added: [...document.querySelectorAll('.todo-t')].some(t => t.textContent === '写周报'),
-    store: Object.keys(localStorage).filter(k => k.startsWith('webos.todo.v1'))
-      .some(k => JSON.parse(localStorage.getItem(k) || '{}').tasks?.some(t => t.text === '写周报' && t.project === '工作')),
-  })`);
+  const stored1 = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return (s?.tasks || []).some(t => t.text === '写周报' && t.project === '工作') || null;
+  })()`, 5000);
+  const td1 = {
+    added: await ev(`[...document.querySelectorAll('.todo-t')].some(t => t.textContent === '写周报')`),
+    store: stored1 === true,
+  };
   t('T27.1 添加任务(项目下拉→回车→持久化)', td1.added && td1.store, JSON.stringify(td1));
 
   // 完成任务 → 通知 + 进度更新
@@ -1585,21 +1618,26 @@ group('T27', '任务(Todo)应用', async () => {
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(500);
-  const td3 = await ev(`(() => ({
-    projects: (Object.keys(localStorage).filter(k => k.startsWith('webos.todo.v1'))
-      .map(k => JSON.parse(localStorage.getItem(k) || '{}')).find(s => s.projects) || {}).projects || [],
-    active: document.querySelector('.app-side .nav-item.active')?.textContent.replace(/\s+/g, '') || '',
-  }))()`);
+  const stored3 = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return (s?.projects || []).includes('解谜') || null;
+  })()`, 5000);
+  const td3 = {
+    projects: stored3 === true ? ['解谜'] : [],
+    active: await ev(`document.querySelector('.app-side .nav-item.active')?.textContent.replace(/\\s+/g, '') || ''`),
+  };
   t('T27.3 新建项目并切换', td3.projects.includes('解谜') && td3.active?.startsWith('解谜'), JSON.stringify(td3));
 
-  // 逾期任务:直接在存储中注入一条,重新渲染验证
-  await ev(`(() => {
-    const key = Object.keys(localStorage).find(k => k.startsWith('webos.todo.v1') && JSON.parse(localStorage.getItem(k) || '{}').tasks);
-    const s = JSON.parse(localStorage.getItem(key));
+  // 逾期任务:注入一条到 appdata(模拟另一实例写入),重开后验证
+  await ev(`(async () => {
+    const { loadState, saveState } = WebOS.appdata;
+    const user = WebOS.accounts.current();
+    const s = (await loadState('todo', user)) || { seq: 0, projects: ['个人', '工作'], tasks: [] };
     s.seq = (s.seq || 0) + 1;   // 提升版本号,让运行中的 todo 实例同步采纳
-    s.tasks.push({ id: 't99', project: '解谜', text: '过期任务', done: false, prio: 2, due: '2020-01-01', starred: false, created: Date.now() });
-    localStorage.setItem(key, JSON.stringify(s));
-    WebOS.wm.close(document.querySelector('.win[data-app=sokoban]')?.dataset.id || 'x');
+    if (!s.tasks.some(t => t.text === '过期任务')) {
+      s.tasks.push({ id: 't99', project: '解谜', text: '过期任务', done: false, prio: 2, due: '2020-01-01', starred: false, created: Date.now() });
+    }
+    await saveState('todo', s, user);
     WebOS.wm.close(document.querySelector('.win[data-app=todo]').dataset.id);
     WebOS.wm.open('todo');
   })()`);
@@ -1623,14 +1661,10 @@ group('T27', '任务(Todo)应用', async () => {
 
   // 持久化:刷新后任务仍在
   await fresh();
-  const td6 = await ev(`(() => {
-    let maxn = 0;
-    for (const k of Object.keys(localStorage)) {
-      if (!k.startsWith('webos.todo.v1')) continue;
-      const n = ((JSON.parse(localStorage.getItem(k) || '{}').tasks) || []).length;
-      if (n > maxn) maxn = n;
-    }
-    return maxn;
+  const td6 = await ev(`(async () => {
+    const { loadState } = WebOS.appdata;
+    const s = await loadState('todo', WebOS.accounts.current());
+    return ((s?.tasks) || []).length;
   })()`);
   t('T27.6 持久化(刷新后任务保留)', td6 >= 5, `tasks=${td6}`);
   await ev(`WebOS.wm.open('todo')`);
@@ -1643,7 +1677,9 @@ group('T27', '任务(Todo)应用', async () => {
 
 group('T28', '短信应用', async () => {
   /* ---- T28 短信应用 ---- */
+  const prevUser = await ev(`WebOS.accounts.current()`);   // 记住会话用户(T28.4 会切到 todoer)
   await ev(`localStorage.removeItem('webos.sms.v1')`);
+  if (prevUser) await wipeAppData(prevUser, 'sms');   // 数据已迁 appdata:清档,种子短信重新播种
   await fresh();   // 种子短信播种
   await ev(`WebOS.wm.open('sms')`);
   await sleep(700);
@@ -1697,14 +1733,21 @@ group('T28', '短信应用', async () => {
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
     if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
-    const key = accounts.userKey('webos.todo.v1');
-    const s = JSON.parse(localStorage.getItem(key) || '{}');
+    return true;
+  })()`);
+  await wipeAppData('todoer', 'todo');   // 只注入一条逾期任务,不依赖 T27 遗留(也清掉可能的坏档)
+  await wipeAppData('todoer', 'sms');    // 提醒短信要新建库,避免旧坏档导致静默写失败
+  await ev(`(async () => {
+    const { loadState, saveState } = WebOS.appdata;
+    let s = null;
+    try { s = await loadState('todo', 'todoer'); } catch { s = null; }
+    s = s || { seq: 0, projects: ['个人', '工作'], tasks: [] };
     s.tasks = s.tasks || [];
     if (!s.tasks.some(t => t.text === '过期任务')) {
       s.seq = (s.seq || 0) + 1;
       s.tasks.push({ id: 't' + s.seq, project: '工作', text: '过期任务', done: false, prio: 2, due: '2020-01-01', starred: false, created: Date.now() });
-      localStorage.setItem(key, JSON.stringify(s));
     }
+    await saveState('todo', s, 'todoer');
   })()`);
   await sleep(300);
   await ev(`WebOS.wm.open('todo')`);
@@ -1719,11 +1762,29 @@ group('T28', '短信应用', async () => {
   })()`); }
   if (!s4.text?.includes('任务提醒')) console.log('   [T28.4 debug] s4 =', JSON.stringify(s4));
   t('T28.4 Todo 到期短信提醒(应用联动)', s4.exists === true && s4.text?.includes('任务提醒'), s4.text);
+  // 提醒已在内存:直接把当前短信态写盘并冲刷元数据
+  // (数据页经 writeAt 直写 OPFS,但 inode 元数据是 250ms 防抖 —— 不 flush 会
+  //  被随后的刷新打断,重载后文件"不存在")
+  await ev(`(async () => {
+    await WebOS.appdata.saveState('sms', { chats: WebOS.sms.chats() }, 'todoer');
+    await WebOS.fs.flush();
+    return true;
+  })()`);
 
-  // 刷新持久化
+  // 刷新持久化:原会话用户的会话 + todoer 的提醒短信都落在各自 appdata
   await fresh();
-  const s5 = await ev(`WebOS.sms.stats()`);
-  t('T28.5 持久化(刷新后会话保留)', s5.chats >= 3 && s5.msgs >= 4, JSON.stringify(s5));
+  const s5 = await ev(`(async () => {
+    const { loadState } = WebOS.appdata;
+    const prev = ${JSON.stringify(prevUser)};
+    const mine = prev ? await loadState('sms', prev) : null;
+    const todoer = await loadState('sms', 'todoer');
+    return {
+      myChats: (mine?.chats || []).length,
+      myMsgs: (mine?.chats || []).reduce((s, c) => s + (c.msgs || []).length, 0),
+      reminder: (todoer?.chats || []).some(c => c.addr === 'todo-reminder' && c.msgs.some(m => m.text.includes('任务提醒'))),
+    };
+  })()`);
+  t('T28.5 持久化(刷新后会话保留)', s5.myChats >= 2 && s5.myMsgs >= 4 && s5.reminder === true, JSON.stringify(s5));
   await ev(`WebOS.wm.open('sms')`);
   await sleep(600);
   await c.shot('t28-sms');
@@ -1975,6 +2036,7 @@ group('T32', '笔记(含加密)', async () => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.memo.v1')) localStorage.removeItem(k);
     return true;
   })()`);
+  await wipeAppData('memoer', 'memo');   // 数据已迁 appdata:清档,种子卡片重新播种
   // 独立运行前置:登录测试账号(笔记数据按账号隔离,不能依赖遗留会话)
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
@@ -2452,6 +2514,7 @@ group('T38', '账号系统', async () => {
     const r2 = await acc.register('alice', 'other');   // 重复注册被拒
     return { r1, dupRejected: !r2.ok };
   })()`);
+  await wipeAppData('alice', 'todo');   // 上一轮的 alice 任务库:清掉,本轮重新播种
   t('T38 注册账号(重复注册被拒)', reg.r1?.ok === true && reg.dupRejected === true, JSON.stringify(reg));
 
   // 打开 todo(未登录状态:alice 已登录) → 添加任务 → 数据落在 alice 命名空间
@@ -2463,9 +2526,13 @@ group('T38', '账号系统', async () => {
     inp.value = 'alice 的任务';
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await new Promise(r => setTimeout(r, 600));
-    const aliceKey = Object.keys(localStorage).find(k => k.includes('webos.todo.v1::alice'));
-    const bobTask = Object.keys(localStorage).some(k => k.includes('::bob'));
-    return { aliceKey, bobTask, inStore: aliceKey ? JSON.parse(localStorage.getItem(aliceKey)).tasks.some(t => t.text === 'alice 的任务') : false };
+    const { loadState } = WebOS.appdata;
+    const alice = await loadState('todo', 'alice');
+    const bob = await loadState('todo', 'bob').catch(() => null);
+    return {
+      inStore: (alice?.tasks || []).some(t => t.text === 'alice 的任务'),
+      bobTask: (bob?.tasks || []).some(t => t.text === 'alice 的任务'),
+    };
   })()`);
   t('T38.1 每用户数据隔离(alice 命名空间)', iso.inStore === true && iso.bobTask === false, JSON.stringify(iso));
 
@@ -2746,16 +2813,12 @@ group('T41', '应用内右键', async () => {
   // 41.4 任务应用:任务行自定义右键(标记完成 / 删除任务)
   // 任务数据按用户持久化:历史轮次的「删除任务」会耗尽种子任务,
   // 先清该用户的任务存储再打开(应用检测不到存储即重新播种),并用轮询等行渲染
-  await ev(`(() => {
-    for (const k of Object.keys(localStorage)) if (k.startsWith('webos.todo.v1')) localStorage.removeItem(k);
-    return true;
-  })()`);
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
     if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
     return true;
   })()`);
-  await sleep(300);
+  await wipeAppData('todoer', 'todo');
   await ev(`WebOS.wm.open('todo')`);
   await waitFor(`!!document.querySelector('.todo-item')`);
   const ctx3 = await ev(`(() => {
@@ -2995,6 +3058,7 @@ group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.diary.v1')) localStorage.removeItem(k);
     return true;
   })()`);
+  await wipeAppData('diaryer', 'diary');   // 数据已迁 appdata:清档,断言(1 篇)不累积历史
   // 独立运行前置:登录测试账号(日记数据按账号隔离,不能依赖遗留会话)
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
@@ -3020,24 +3084,21 @@ group('T43', '日记(按日期记录 / 心情 / 自动保存)', async () => {
   t('T43 今天默认选中(标题含日期)', d0.dateH.includes('年') && d0.dateH.includes('星期'), d0.dateH);
   await sleep(500);   // 等防抖落盘
 
-  const saved = await ev(`(() => {
-    const k = Object.keys(localStorage).find(k => k.startsWith('webos.diary.v1'));
-    const s = JSON.parse(localStorage.getItem(k) || '{}');
-    const e = s.entries && s.entries[${JSON.stringify(d0.key)}];
-    return { has: !!e, text: (e && e.text) || '' };
-  })()`);
-  t('T43.1 输入自动落盘', saved.has && saved.text.includes('充实'), JSON.stringify(saved));
+  const savedTxt = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
+    const e = s?.entries && s.entries[${JSON.stringify(d0.key)}];
+    return (e && e.text || '').includes('充实') || null;
+  })()`, 5000);
+  t('T43.1 输入自动落盘', savedTxt === true, '');
 
   // 圆点标记 + 心情
   const dot = await ev(`!!document.querySelector('.win[data-app=diary] .diary-day.sel .dot')`);
   t('T43.2 月历圆点标记', dot === true);
   await ev(`document.querySelectorAll('.win[data-app=diary] .diary-mood')[1].click()`);
-  await sleep(450);
-  const mood = await ev(`(() => {
-    const k = Object.keys(localStorage).find(k => k.startsWith('webos.diary.v1'));
-    const s = JSON.parse(localStorage.getItem(k) || '{}');
-    return (s.entries[${JSON.stringify(d0.key)}] || {}).mood;
-  })()`);
+  const mood = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
+    return (s?.entries?.[${JSON.stringify(d0.key)}] || {}).mood || null;
+  })()`, 5000);
   t('T43.3 心情选择持久化', mood === '🙂', `mood=${mood}`);
 
   // 切到昨天(空)再切回今天(内容仍在)
@@ -3305,6 +3366,133 @@ group('T46', '应用内弹框为二级(五子棋终局)', async () => {
   await c.shot('t46-gomoku-endgame');
 });
 
+group('T47', '浏览器多标签与内外网自动分流', async () => {
+  /* ---- T47 浏览器:多标签页;地址按虚拟 DNS 自动分流——
+   * 能解析 → 内网(虚拟网络游戏世界),不能 → 直达真实互联网;
+   * 标签页随当前页面所在网络变色(内网青 / 外网琥珀 / 起始页中性) ---- */
+  await fresh();
+
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(700);
+  t('T47.1 初始单标签(起始页)',
+    await ev(`document.querySelectorAll('.vw-tab').length === 1 &&
+      document.querySelector('.vw-page').textContent.includes('NEXUS 导航')`));
+
+  // 新建标签页
+  await ev(`document.querySelector('.vw-tab-plus').click()`);
+  await sleep(400);
+  t('T47.2 新建标签页(唯一激活)',
+    await ev(`document.querySelectorAll('.vw-tab').length === 2 &&
+      [...document.querySelectorAll('.vw-tab')].filter(x => x.classList.contains('active')).length === 1`));
+
+  // 内网域名(DNS 可解析)→ 虚拟网络页面
+  await nav('portal.nexus');
+  const inState = await ev(`(() => ({
+    tab: document.querySelector('.vw-tab.active').classList.contains('net-in'),
+    page: document.querySelector('.vw-page').textContent.includes('NEXUS 集团内网门户'),
+    frameHidden: document.querySelector('.vw-iframe').hidden,
+  }))()`);
+  t('T47.3 内网域名走虚拟网络', inState.tab && inState.page && inState.frameHidden,
+    JSON.stringify(inState));
+
+  // 真实域名(DNS 无记录)→ 自动转外网 iframe,同一标签换琥珀色
+  await nav('example.com');
+  const outState = await ev(`(() => ({
+    tab: document.querySelector('.vw-tab.active').classList.contains('net-out'),
+    title: document.querySelector('.vw-tab.active .vw-tab-title').textContent,
+    src: (() => { const f = document.querySelector('.vw-iframe'); return !f.hidden ? (f.src || '') : ''; })(),
+  }))()`);
+  t('T47.4 同一标签按地址自动切外网(变琥珀色)',
+    outState.tab === true && outState.src.startsWith('https://example.com'), JSON.stringify(outState));
+
+  // 后退:回到内网门户,标签恢复内网色
+  await ev(`document.querySelector('.win[data-app=browser] .app-toolbar .btn[title="后退"]').click()`);
+  await sleep(1300);
+  t('T47.5 后退回内网页(标签恢复内网色)',
+    await ev(`document.querySelector('.vw-tab.active').classList.contains('net-in') &&
+      document.querySelector('.vw-page').textContent.includes('NEXUS 集团内网门户')`));
+
+  // 再开一个标签页访问外网:两类标签颜色不同(圆点 computed style)
+  await ev(`document.querySelector('.vw-tab-plus').click()`);
+  await sleep(300);
+  await nav('example.com');
+  const colors = await ev(`(() => {
+    const a = document.querySelector('.vw-tab.net-in .vw-tab-dot');
+    const b = document.querySelector('.vw-tab.net-out .vw-tab-dot');
+    return a && b ? [getComputedStyle(a).backgroundColor, getComputedStyle(b).backgroundColor] : null;
+  })()`);
+  t('T47.6 内外网标签颜色不同', Array.isArray(colors) && colors[0] !== colors[1],
+    JSON.stringify(colors));
+
+  // Firefox:滚轮在标签栏上切换标签(未溢出时向上滚 → 上一个)
+  const wheelIdx = await ev(`(() => {
+    const s = document.querySelector('.vw-tabs-scroll');
+    s.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+    return [...document.querySelectorAll('.vw-tab')].findIndex(t => t.classList.contains('active'));
+  })()`);
+  t('T47.7 滚轮切换标签(Firefox)', wheelIdx === 1, `idx=${wheelIdx}`);
+
+  // Firefox:拖拽标签排序(CDP 真实鼠标:把中间的门户标签拖到最右)
+  const rects = await ev(`(() =>
+    [...document.querySelectorAll('.win[data-app=browser] .vw-tab')]
+      .map(t => { const r = t.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
+  )()`);
+  const dr1 = rects[1], dr2 = rects[2];
+  const sx = Math.round(dr1.x + dr1.w / 2), sy = Math.round(dr1.y + dr1.h / 2);
+  const ex = Math.round(dr2.x + dr2.w - 8);
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sx, y: sy, button: 'left', buttons: 1, clickCount: 1 });
+  for (let k = 1; k <= 6; k++) {
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(sx + (ex - sx) * k / 6), y: sy, button: 'left', buttons: 1 });
+    await sleep(40);
+  }
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ex, y: sy, button: 'left', buttons: 1, clickCount: 1 });
+  await sleep(300);
+  const order = await ev(`[...document.querySelectorAll('.vw-tab .vw-tab-title')].map(t => t.textContent)`);
+  const actIdx = await ev(`[...document.querySelectorAll('.vw-tab')].findIndex(t => t.classList.contains('active'))`);
+  t('T47.8 拖拽标签排序(Firefox)', order[order.length - 1] === 'NEXUS 内网门户' && actIdx === order.length - 1,
+    `${order.join('|')} act=${actIdx}`);
+
+  // 标签右键菜单
+  await ev(`(() => {
+    const tab = document.querySelector('.vw-tab.active');
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 500, clientY: 150 }));
+  })()`);
+  const tabMenu = await ev(`[...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim())`);
+  t('T47.9 标签右键菜单(含复制标签页)',
+    (tabMenu || []).includes('关闭标签页') && (tabMenu || []).includes('关闭其他标签页') && (tabMenu || []).includes('复制标签页'),
+    JSON.stringify(tabMenu));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('关闭其他')).click()`);
+  await sleep(300);
+  t('T47.10 关闭其他标签页', await ev(`document.querySelectorAll('.vw-tab').length === 1 &&
+    document.querySelector('.vw-tab').classList.contains('net-in')`));
+
+  // Firefox:点击地址栏即全选(用户路径;focus 事件在无头环境不派发,不作为断言路径)
+  const sel = await ev(`(() => {
+    const a = document.querySelector('.vw-addr');
+    a.click();
+    return { s: a.selectionStart, e: a.selectionEnd, len: a.value.length };
+  })()`);
+  t('T47.11 地址栏聚焦全选(Firefox)', sel.s === 0 && sel.e === sel.len && sel.len > 0, JSON.stringify(sel));
+
+  // Firefox:Esc 还原地址栏为当前地址(当前停留在内网门户)
+  const esc = await ev(`(() => {
+    const a = document.querySelector('.vw-addr');
+    a.value = 'modified-input';
+    a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return a.value;
+  })()`);
+  t('T47.12 Esc 还原地址栏(Firefox)', esc === 'portal.nexus', esc);
+  await c.shot('t47-browser-tabs');
+
+  // Firefox:关闭最后一个标签页即关闭窗口
+  await ev(`document.querySelector('.vw-tab .vw-tab-x').click()`);
+  await sleep(500);
+  t('T47.13 关闭最后一个标签页关闭窗口',
+    await ev(`!document.querySelector('.win[data-app=browser]')`));
+
+  const errs47 = await ev(`window.__errs.length`);
+  t('T47.14 全程无运行错误', errs47 === 0, `errs=${errs47}`);
+});
 
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {

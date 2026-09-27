@@ -1,29 +1,70 @@
 /* ============================================================
- * 应用:浏览器(虚拟网络专用)
+ * 应用:浏览器(多标签 · 内/外网按虚拟 DNS 自动分流)
  *
- * 只能访问虚拟网络(vnet)中注册的站点:
- *  - 输入的域名必须能被虚拟 DNS 解析,否则显示 DNS 错误页;
- *  - 游戏作者可以把某个路径「代理」到真实互联网地址(如 PDF),
- *    这是唯一触达外网的方式,且完全由作者数据决定;
- *  - 页面内的 <a> 链接与 <form> 表单都被拦截,转为虚拟导航。
+ * 标签栏与地址栏的操作逻辑对齐 Firefox:
+ *  - 标签栏:滚轮切换标签(标签溢出时改为滚动标签栏)、拖拽排序、
+ *    中键关闭、右键菜单(新建 / 重载 / 复制 / 关闭)、「列出所有
+ *    标签页」下拉、加载中的标签显示转圈;关闭最后一个标签页即
+ *    关闭窗口;
+ *  - 地址栏:点击 / 聚焦全选(Firefox urlbar 行为)、Esc 还原当前
+ *    地址、Ctrl+L 聚焦;
+ *  - 快捷键:Ctrl+T 新建、Ctrl+W 关闭、Ctrl+Tab / Ctrl+PgUp/PgDn
+ *    切换、Ctrl+1..9 定位、Alt+←/→ 与 Backspace 前进后退
+ *    (宿主浏览器保留的组合键无法拦截,属正常);
+ *  - 刷新按钮在加载中变为「停止」。
+ *
+ * 分流:域名能被虚拟 DNS 解析(或私网 IP)→ 内网(vnet 游戏世界,
+ * 含作者的 proxy 路径转换);否则直达真实互联网(iframe,跨源页面
+ * 读不到标题 / 拦截跳转,部分站点拒绝被嵌入,可用「在系统外打开」)。
  * ============================================================ */
-import { el, escapeHtml } from '../../core/utils.js';
+import { el, escapeHtml, clamp } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './browser.css';
-import { httpGet, dnsList } from '../../core/vnet.js';
-import { copyText } from '../../core/menu.js';
+import { httpGet, dnsList, dnsResolve } from '../../core/vnet.js';
+import { copyText, showMenuAnchored } from '../../core/menu.js';
 
-/** 内网导航起始页(由 DNS 中 listed 的记录生成) */
+const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+/** 私网 / 回环地址 → 属于虚拟内网;公网 IP → 外网 */
+const isPrivateIP = (h) =>
+  /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+  /^127\./.test(h) || /^0\./.test(h);
+
+/** 主机是否属于内网:虚拟 DNS 可解析,或私网 IP 字面量 */
+function hostIsIntranet(host) {
+  const h = String(host || '').toLowerCase();
+  if (IP_RE.test(h)) return isPrivateIP(h);
+  return !!dnsResolve(h);
+}
+
+/**
+ * 地址分流:'start'(起始页)| 'in'(内网)| 'out'(外网)| 'badurl'
+ * 规则:虚拟 DNS 能解析的主机 / 私网 IP → 内网;其余 → 外网。
+ */
+function routeNet(url) {
+  if (url === 'about:start') return 'start';
+  let u;
+  try { u = new URL(url); } catch { return 'badurl'; }
+  if (!/^https?:$/.test(u.protocol)) return 'badurl';
+  return hostIsIntranet(u.hostname) ? 'in' : 'out';
+}
+
+/** 起始页:内网站点(虚拟 DNS listed 记录)+ 外网常用站点 */
+const WEB_LINKS = [
+  { url: 'https://example.com', name: 'Example.com', note: '演示站点(总是允许嵌入)' },
+  { url: 'https://www.wikipedia.org', name: 'Wikipedia', note: '自由的百科全书' },
+  { url: 'https://www.openstreetmap.org', name: 'OpenStreetMap', note: '开源世界地图' },
+  { url: 'https://archive.org', name: 'Internet Archive', note: '互联网档案馆' },
+];
 function startPage() {
   const hosts = dnsList();
   return `<div class="vw-hero">
-      <h1>NEXUS 内网导航</h1>
-      <p>NEXUS-ISP 虚拟网络 · 仅限内部访问</p>
+      <h1>NEXUS 导航</h1>
+      <p>虚拟内网与真实外网 · 地址按虚拟 DNS 自动分流</p>
     </div>
     <div class="card" style="margin-top:18px">
-      <div class="card-title">${'<span></span>'}已知站点</div>
+      <div class="card-title">${'<span></span>'}内网站点(虚拟 DNS)</div>
       ${hosts.length ? hosts.map(h => `
         <div class="vw-link-row">
           <a href="http://${h.host}/" class="vw-link">${h.host}</a>
@@ -31,77 +72,325 @@ function startPage() {
           <span class="dim">${escapeHtml(h.note)}</span>
         </div>`).join('') : '<p class="dim">虚拟网络中没有已登记的站点。</p>'}
     </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">${'<span></span>'}外网常用站点</div>
+      ${WEB_LINKS.map(l => `
+        <div class="vw-link-row">
+          <a href="${l.url}" class="vw-link">${l.name}</a>
+          <span class="vw-ip mono">${escapeHtml(l.url.replace(/^https?:\/\//, ''))}</span>
+          <span class="dim">${escapeHtml(l.note)}</span>
+        </div>`).join('')}
+    </div>
     <p class="dim" style="margin-top:16px;font-size:12px">
-      提示:浏览器与终端只能访问虚拟网络;未解析的主机将被拒绝。
+      提示:域名能被虚拟 DNS 解析即入内网,其余直达真实互联网。
+      部分真实站点会拒绝被嵌入(X-Frame-Options),页面空白或报错时,
+      可用工具栏 ↗ 在系统外打开。
     </p>`;
 }
 
 const ERRORS = {
-  dns: (h) => ({ title: '无法解析主机', body: `虚拟 DNS 中没有 «${escapeHtml(h)}» 的记录。这个主机可能不存在,或在现实互联网上 —— 本浏览器无法访问外网。` }),
+  dns: (h) => ({
+    title: '无法解析主机',
+    body: `虚拟 DNS 中没有 «${escapeHtml(h)}» 的记录。`,
+  }),
   refused: (h, ip) => ({ title: '连接被拒绝', body: `${escapeHtml(h)} (${ip}) 没有运行 Web 服务。` }),
   404: (r) => ({ title: '404 Not Found', body: `${escapeHtml(r.host)} 上不存在路径 <span class="mono">${escapeHtml(r.path)}</span>。` }),
   403: (r) => ({ title: '403 Forbidden', body: `拒绝访问 <span class="mono">${escapeHtml(r.path)}</span> —— 你可能还没有获得授权(线索?)。` }),
-  badurl: () => ({ title: '无效的地址', body: '仅支持 http:// 与 https:// 虚拟地址。' }),
+  badurl: () => ({ title: '无效的地址', body: '仅支持 http:// 与 https:// 地址。' }),
 };
+
+/** 键盘事件目标是否正在文字输入(Backspace 后退不适用) */
+const isTypingTarget = (t) =>
+  !t || !t.closest ? false : !!t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus, params, onContextMenu }) {
-    let history = ['about:start'];
-    let hIdx = 0;
-    let loadSeq = 0;
+  mount({ root, close: closeWin, setTitle, bus, params, onContextMenu }) {
+    /** 标签页:{ history, hIdx, title, seq, net('in'|'out'|null), loading, page, frame, root, sl, sr }
+     *  net 由当前地址经 routeNet 派生,仅用于着色与状态展示。 */
+    const tabs = [];
+    let active = -1;
+    let tabSeq = 0;
 
-    const addr = el('input', { class: 'input vw-addr', placeholder: '输入内网地址,如 portal.nexus', spellcheck: 'false' });
+    const addr = el('input', { class: 'input vw-addr', placeholder: '输入地址:内网如 portal.nexus,外网如 example.com', spellcheck: 'false' });
     const statusL = el('span', {}, '就绪');
     const statusR = el('span', { class: 'dim mono' }, '');
     const back = el('button', { class: 'btn icon', title: '后退', onClick: () => go(-1) }, icon('chevronL', 15));
     const fwd = el('button', { class: 'btn icon', title: '前进', onClick: () => go(1) }, icon('chevronR', 15));
-    const reload = el('button', { class: 'btn icon', title: '刷新', onClick: () => navigate(history[hIdx], { push: false }) }, icon('refresh', 14));
-    const home = el('button', { class: 'btn icon', title: '内网导航', onClick: () => navigate('about:start') }, icon('home', 14));
+    const reload = el('button', { class: 'btn icon', title: '刷新', onClick: () => {
+      const tb = tabs[active];
+      if (!tb) return;
+      if (tb.loading) stopLoad(tb);
+      else nav(tb, tb.history[tb.hIdx], { push: false });
+    } });
+    const home = el('button', { class: 'btn icon', title: '起始页', onClick: () => nav(tabs[active], 'about:start') }, icon('home', 14));
+    const openExt = el('button', { class: 'btn icon', title: '在系统外打开(新浏览器窗口)', onClick: () => {
+      const tb = tabs[active];
+      const u = tb?.history[tb.hIdx] || '';
+      if (routeNet(u) === 'out') window.open(u, '_blank', 'noopener');
+    } }, icon('external', 14));
+    paintReloadIcon(false);
 
-    // 应用内右键:页面/地址栏 → 刷新;地址栏附带复制地址
+    /* ---- 标签栏:滚动区(标签)+ 固定的 + 与「列出所有标签页」 ---- */
+    const scroller = el('div', { class: 'vw-tabs-scroll' });
+    const plus = el('button', { class: 'vw-tab-plus', title: '新建标签页 (Ctrl+T)', onClick: () => makeTab() }, icon('plus', 13));
+    const listBtn = el('button', { class: 'vw-tab-plus vw-tabs-list', title: '列出所有标签页', onClick: () => {
+      showMenuAnchored(listBtn, tabs.map((tb, i) => ({
+        label: `${tb.net === 'out' ? '外网 · ' : tb.net === 'in' ? '内网 · ' : ''}${tb.title || '新标签页'}`,
+        icon: tb.net === 'out' ? 'external' : 'globe',
+        fn: () => activateTab(i),
+      })));
+    } }, icon('grid', 12));
+    const tabstrip = el('div', { class: 'vw-tabs' }, scroller, plus, listBtn);
+
+    // 应用内右键:标签栏(标签管理)/ 页面地址栏(刷新 / 复制 / 转外网打开)
     onContextMenu(({ target }) => {
+      const tabEl = target.closest('.vw-tab');
+      if (tabEl) {
+        const i = +tabEl.dataset.idx;
+        return [
+          { label: '新建标签页', icon: 'plus', fn: () => makeTab() },
+          { label: '重新载入标签页', icon: 'refresh', fn: () => { const tb = tabs[i]; if (tb) nav(tb, tb.history[tb.hIdx], { push: false }); } },
+          { label: '复制标签页', icon: 'copy', fn: () => { const tb = tabs[i]; if (tb) makeTab(tb.history[tb.hIdx]); } },
+          { label: '关闭其他标签页', icon: 'trash', fn: () => closeOthers(i) },
+          { label: '关闭标签页', icon: 'close', fn: () => closeTab(i) },
+        ];
+      }
       if (!target.closest('.vw-page, .vw-addr, .app-toolbar')) return null;
+      const tb = tabs[active];
+      const outItem = tb && routeNet(tb.history[tb.hIdx] || '') === 'out'
+        ? [{ label: '在系统外打开', icon: 'external', fn: () => openExt.click() }] : [];
       return [
         { label: '刷新', icon: 'refresh', fn: () => reload.click() },
         ...(target.closest('.vw-addr') ? [{ label: '复制页面地址', icon: 'copy', fn: () => copyText(addr.value) }] : []),
+        ...outItem,
       ];
     });
 
-    const page = el('div', { class: 'vw-page' });
-    const frame = el('iframe', { class: 'vw-iframe', hidden: '' });
-    const content = el('div', { class: 'app-body vw-body' }, page, frame);
+    const content = el('div', { class: 'app-body vw-body' });
     const bar = el('div', { class: 'loading-bar', hidden: '' }, el('i'));
 
+    /** 共享 UI(地址栏/状态栏/加载条/标题)只在标签页处于前台时更新 */
+    function live(tb, fn) { if (tb === tabs[active]) fn(); }
+    function setStatus(tb, l, r) {
+      if (l != null) { tb.sl = l; live(tb, () => { statusL.textContent = l; }); }
+      if (r !== undefined) { tb.sr = r; live(tb, () => { statusR.textContent = r; }); }
+    }
+    function setTabTitle(tb, title) {
+      tb.title = title || '';
+      renderTabs();
+      live(tb, () => setTitle(tb.title ? `${tb.title} — 浏览器` : '浏览器'));
+    }
+    /** 加载条显隐同时维护标签转圈与「刷新↔停止」按钮 */
+    function showBar(tb, on) {
+      tb.loading = on;
+      if (!(tabDrag && tabDrag.moved)) renderTabs();
+      live(tb, () => { bar.hidden = !on; paintReloadIcon(on); });
+    }
+    function paintReloadIcon(loading) {
+      reload.title = loading ? '停止' : '刷新';
+      reload.innerHTML = '';
+      reload.append(icon(loading ? 'close' : 'refresh', 14));
+    }
+
     function go(delta) {
-      const ni = hIdx + delta;
-      if (ni < 0 || ni >= history.length) return;
-      hIdx = ni;
-      navigate(history[hIdx], { push: false });
+      const tb = tabs[active];
+      const ni = tb.hIdx + delta;
+      if (ni < 0 || ni >= tb.history.length) return;
+      tb.hIdx = ni;
+      nav(tb, tb.history[tb.hIdx], { push: false });
+    }
+
+    /** 中止加载:取消未完成的虚拟加载阶段;外网页面退回空白并回到前一页 */
+    function stopLoad(tb) {
+      tb.seq++;
+      showBar(tb, false);
+      if (tb.net === 'out') {
+        tb.frame.src = 'about:blank';
+        if (tb.hIdx > 0) { tb.hIdx--; paintChrome(); nav(tb, tb.history[tb.hIdx], { push: false }); }
+        else setStatus(tb, '已取消');
+      } else {
+        setStatus(tb, '已取消');
+      }
     }
 
     function paintChrome() {
-      back.disabled = hIdx <= 0;
-      fwd.disabled = hIdx >= history.length - 1;
-      addr.value = history[hIdx] === 'about:start' ? '' : history[hIdx].replace(/^https?:\/\//, '');
+      const tb = tabs[active];
+      if (!tb) return;
+      back.disabled = tb.hIdx <= 0;
+      fwd.disabled = tb.hIdx >= tb.history.length - 1;
+      const cur = tb.history[tb.hIdx];
+      addr.value = !cur || cur === 'about:start' ? '' : cur.replace(/^https?:\/\//, '');
+      openExt.disabled = routeNet(cur || '') !== 'out';
     }
 
-    function renderError(kind, r) {
-      frame.hidden = true;
-      page.hidden = false;
-      const e = (ERRORS[kind] || ERRORS.badurl)(r?.host, r?.ip, r);
-      page.innerHTML = `<div class="vw-error">
-        <h2>${e.title}</h2><p>${e.body}</p></div>`;
-      setTitle(`${e.title} — 浏览器`);
+    /* ---- 标签页生命周期 ---- */
+
+    function makeTab(url) {
+      const t = {
+        id: ++tabSeq, net: null, loading: false,
+        history: [url || 'about:start'], hIdx: 0,
+        title: '', seq: 0, sl: '就绪', sr: '',
+        page: el('div', { class: 'vw-page' }),
+        frame: el('iframe', { class: 'vw-iframe', hidden: '' }),
+      };
+      t.root = el('div', { class: 'vw-tabroot' }, t.page, t.frame);
+      tabs.push(t);
+      activateTab(tabs.length - 1);
+      nav(t, t.history[0], { push: false });
+      if (!url) setTimeout(() => { addr.focus(); addr.select(); }, 0);   // Firefox:新标签页聚焦地址栏
+      return t;
     }
 
-    /** 拦截虚拟页面里的链接与表单(相对路径基于当前页解析) */
-    function wirePage() {
-      const base = () => (history[hIdx] && !history[hIdx].startsWith('about:')) ? history[hIdx] : null;
-      page.querySelectorAll('a[href]').forEach(a => {
-        a.addEventListener('click', (ev) => { ev.preventDefault(); navigate(a.getAttribute('href'), { base: base() }); });
+    function activateTab(i) {
+      if (i < 0 || i >= tabs.length || i === active) return;
+      const prev = tabs[active];
+      if (prev) { prev.root.remove(); showBar(prev, false); }
+      active = i;
+      const tb = tabs[active];
+      content.append(tb.root);
+      renderTabs();
+      paintChrome();
+      statusL.textContent = tb.sl;
+      statusR.textContent = tb.sr;
+      setTitle(tb.title ? `${tb.title} — 浏览器` : '浏览器');
+    }
+
+    function closeTab(i) {
+      const tb = tabs[i];
+      if (!tb) return;
+      if (tabs.length === 1) { closeWin(); return; }   // Firefox:关闭最后一个标签页即关闭窗口
+      const wasActive = i === active;
+      tb.root.remove();
+      tabs.splice(i, 1);
+      if (wasActive) { active = -1; activateTab(Math.min(i, tabs.length - 1)); }
+      else {
+        if (i < active) active--;
+        renderTabs();
+      }
+    }
+
+    function closeOthers(i) {
+      const keep = tabs[i];
+      if (!keep || tabs.length === 1) return;
+      tabs.forEach(tb => { if (tb !== keep) tb.root.remove(); });
+      tabs.length = 0;
+      tabs.push(keep);
+      active = -1;
+      activateTab(0);
+    }
+
+    function renderTabs() {
+      scroller.innerHTML = '';
+      tabs.forEach((tb, i) => {
+        const netCls = tb.net === 'out' ? 'net-out' : tb.net === 'in' ? 'net-in' : '';
+        scroller.append(el('div', {
+          class: `vw-tab ${netCls}${i === active ? ' active' : ''}${tb.loading ? ' loading' : ''}`,
+          dataset: { idx: i },
+          title: `${tb.net === 'out' ? '外网' : tb.net === 'in' ? '内网' : '起始页'} · ${tb.title || '新标签页'}`,
+          onClick: () => { if (!suppressTabClick) activateTab(i); },
+          onAuxclick: (e) => { if (e.button === 1) closeTab(i); },   // Firefox:中键关闭
+          onPointerdown: (e) => startTabDrag(e, i),
+        },
+          el('span', { class: 'vw-tab-dot' }),
+          el('span', { class: 'vw-tab-title' }, tb.title || '新标签页'),
+          el('button', {
+            class: 'vw-tab-x', title: '关闭标签页',
+            onClick: (e) => { e.stopPropagation(); closeTab(i); },
+          }, icon('close', 10))));
       });
-      page.querySelectorAll('form').forEach(f => {
+    }
+
+    /* ---- 标签拖拽排序(Firefox:按住左键左右拖动) ---- */
+    let tabDrag = null;
+    let suppressTabClick = false;
+
+    function startTabDrag(e, i) {
+      if (e.button !== 0 || e.target.closest('.vw-tab-x')) return;
+      tabDrag = { i, node: e.currentTarget, startX: e.clientX, pid: e.pointerId, w: e.currentTarget.offsetWidth, moved: false };
+    }
+    const onTabPointerMove = (e) => {
+      if (!tabDrag || e.pointerId !== tabDrag.pid) return;
+      const dx = e.clientX - tabDrag.startX;
+      if (!tabDrag.moved) {
+        if (Math.abs(dx) < 6) return;
+        tabDrag.moved = true;
+        tabDrag.node.classList.add('dragging');
+        try { tabDrag.node.setPointerCapture(tabDrag.pid); } catch { /* 忽略 */ }
+        tabDrag.rects = [...scroller.querySelectorAll('.vw-tab')].map((n, k) => ({ n, k, left: n.offsetLeft, w: n.offsetWidth }));
+        tabDrag.self = tabDrag.rects.find(r => r.n === tabDrag.node);
+      }
+      // 拖拽限制在滚动区内;其余标签按经过的位置让位
+      const lo = -tabDrag.self.left;
+      const hi = scroller.clientWidth - tabDrag.self.left - tabDrag.self.w;
+      const cx = clamp(dx, lo, hi);
+      tabDrag.node.style.transform = `translateX(${cx}px)`;
+      const center = tabDrag.self.left + cx + tabDrag.self.w / 2;
+      tabDrag.rects.forEach(r => {
+        if (r.n === tabDrag.node) return;
+        const mid = r.left + r.w / 2;
+        const after = r.k > tabDrag.self.k;
+        const shift = after && center > mid ? -tabDrag.w : (!after && center < mid ? tabDrag.w : 0);
+        r.n.style.transform = shift ? `translateX(${shift}px)` : '';
+      });
+    };
+    const endTabDrag = (e) => {
+      if (!tabDrag || e.pointerId !== tabDrag.pid) return;
+      const d = tabDrag;
+      tabDrag = null;
+      d.node.classList.remove('dragging');
+      d.node.style.transform = '';
+      if (!d.moved) return;
+      (d.rects || []).forEach(r => { r.n.style.transform = ''; });
+      suppressTabClick = true;
+      setTimeout(() => { suppressTabClick = false; }, 0);
+      // 落点 = 中心位于其左侧的标签数
+      const lo = -d.self.left;
+      const hi = scroller.clientWidth - d.self.left - d.self.w;
+      const center = d.self.left + clamp(e.clientX - d.startX, lo, hi) + d.w / 2;
+      const to = d.rects.filter(r => r.n !== d.node && r.left + r.w / 2 < center).length;
+      const cur = tabs[active];
+      const tb = tabs.splice(d.i, 1)[0];
+      tabs.splice(clamp(to, 0, tabs.length), 0, tb);
+      active = Math.max(0, tabs.indexOf(cur));
+      renderTabs();
+    };
+    window.addEventListener('pointermove', onTabPointerMove);
+    window.addEventListener('pointerup', endTabDrag);
+    window.addEventListener('pointercancel', endTabDrag);
+
+    // Firefox:滚轮在标签栏上切换标签;标签溢出时滚动标签栏
+    scroller.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (scroller.scrollWidth > scroller.clientWidth + 4) {
+        scroller.scrollLeft += e.deltaY || e.deltaX;
+        return;
+      }
+      activateTab(clamp(active + (e.deltaY > 0 ? 1 : -1), 0, tabs.length - 1));
+    }, { passive: false });
+
+    /* ---- 渲染 ---- */
+
+    function renderError(tb, kind, r) {
+      tb.frame.hidden = true;
+      tb.frame.src = 'about:blank';
+      tb.page.hidden = false;
+      const e = (ERRORS[kind] || ERRORS.badurl)(r?.host, r?.ip, r);
+      tb.page.innerHTML = `<div class="vw-error">
+        <h2>${e.title}</h2><p>${e.body}</p></div>`;
+      setTabTitle(tb, e.title);
+    }
+
+    /** 拦截页面里的链接与表单(相对路径基于当前页解析) */
+    function wirePage(tb) {
+      const base = () => {
+        const cur = tb.history[tb.hIdx];
+        return cur && !cur.startsWith('about:') ? cur : null;
+      };
+      tb.page.querySelectorAll('a[href]').forEach(a => {
+        a.addEventListener('click', (ev) => { ev.preventDefault(); nav(tb, a.getAttribute('href'), { base: base() }); });
+      });
+      tb.page.querySelectorAll('form').forEach(f => {
         f.addEventListener('submit', (ev) => {
           ev.preventDefault();
           const q = [...new FormData(f)]
@@ -109,102 +398,192 @@ register({
             .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
             .join('&');
           const action = f.getAttribute('action') || (base() ? base().split('?')[0] : '/');
-          navigate(action + (q ? '?' + q : ''), { base: base() });
+          nav(tb, action + (q ? '?' + q : ''), { base: base() });
         });
       });
     }
 
+    /* ---- 导航 ---- */
+
     /**
-     * 导航。base 供页面内相对链接使用;
-     * 来自地址栏(无 base)时,裸文本视为主机名。
+     * 导航到指定标签页(自动分流)。base 供页面内相对链接使用;
+     * 来自地址栏(无 base)的裸文本按 DNS 判定补协议:内网 http / 外网 https。
      */
-    function navigate(input, { push = true, base } = {}) {
-      const seq = ++loadSeq;
-      frame.hidden = true;
-      frame.src = 'about:blank';
-      bar.hidden = false;
+    function nav(tb, input, { push = true, base } = {}) {
+      const seq = ++tb.seq;
       let url = String(input).trim();
       if (!/^([a-z][a-z0-9+.-]*:|about:)/i.test(url)) {
         if (base) { try { url = new URL(url, base).href; } catch { /* 保持原样 */ } }
-        else url = 'http://' + url;
+        else {
+          const hostLike = url.split(/[/?#]/)[0].split(':')[0];
+          url = (hostIsIntranet(hostLike) ? 'http://' : 'https://') + url;
+        }
       }
-      if (push) { history = history.slice(0, hIdx + 1); history.push(url); hIdx = history.length - 1; }
-      paintChrome();
+      if (push) { tb.history = tb.history.slice(0, tb.hIdx + 1); tb.history.push(url); tb.hIdx = tb.history.length - 1; }
 
-      // 起始页
-      if (url === 'about:start') {
-        setTimeout(() => {
-          if (seq !== loadSeq) return;
-          bar.hidden = true;
-          page.hidden = false;
-          page.innerHTML = startPage();
-          wirePage();
-          statusL.textContent = '内网导航';
-          statusR.textContent = '';
-          setTitle('浏览器');
-        }, 120);
-        return;
-      }
+      const kind = routeNet(url);
+      tb.net = kind === 'in' || kind === 'out' ? kind : null;
+      renderTabs();
+      live(tb, paintChrome);
+      live(tb, () => { bar.dataset.net = tb.net || ''; });
+      showBar(tb, true);
+
+      if (kind === 'start') return navStart(tb, seq);
+      if (kind === 'badurl') { showBar(tb, false); return renderError(tb, 'badurl', {}); }
+      if (kind === 'out') return navOut(tb, url, seq);
+      navIn(tb, url, seq);
+    }
+
+    function navStart(tb, seq) {
+      tb.frame.hidden = true;
+      tb.frame.src = 'about:blank';
+      setTimeout(() => {
+        if (seq !== tb.seq) return;
+        showBar(tb, false);
+        tb.page.hidden = false;
+        tb.page.innerHTML = startPage();
+        wirePage(tb);
+        setStatus(tb, '导航页', '');
+        setTabTitle(tb, '起始页');
+      }, 120);
+    }
+
+    function navIn(tb, url, seq) {
+      tb.frame.hidden = true;
+      tb.frame.src = 'about:blank';
 
       // 模拟加载阶段(DNS → 连接 → 响应)
-      statusL.textContent = '正在解析 DNS…';
+      setStatus(tb, '正在解析 DNS…');
       let r;
       try { r = httpGet(url); } catch { r = { status: 'badurl' }; }
 
-      const step = (ms, fn) => setTimeout(() => { if (seq === loadSeq) fn(); }, ms);
+      const step = (ms, fn) => setTimeout(() => { if (seq === tb.seq) fn(); }, ms);
       step(220, () => {
-        if (r.status === 'redirect') return navigate(r.location, { push: false });
-        if (r.status === 'dns') { bar.hidden = true; statusL.textContent = 'DNS 解析失败'; return renderError('dns', r); }
-        statusL.textContent = `正在连接 ${r.ip}…`;
+        if (r.status === 'redirect') return nav(tb, r.location, { push: false });
+        if (r.status === 'dns') { showBar(tb, false); setStatus(tb, 'DNS 解析失败'); return renderError(tb, 'dns', r); }
+        setStatus(tb, `正在连接 ${r.ip}…`);
         step(240, () => {
-          if (r.status === 'refused') { bar.hidden = true; statusL.textContent = '连接被拒绝'; return renderError('refused', r); }
-          statusL.textContent = '等待响应…';
+          if (r.status === 'refused') { showBar(tb, false); setStatus(tb, '连接被拒绝'); return renderError(tb, 'refused', r); }
+          setStatus(tb, '等待响应…');
           step(260, () => {
-            bar.hidden = true;
-            if (r.status === '404') { statusL.textContent = '404'; return renderError('404', r); }
-            if (r.status === '403') { statusL.textContent = '403'; return renderError('403', r); }
-            if (r.status !== 'ok') { statusL.textContent = '错误'; return renderError('badurl', r); }
-            statusL.textContent = '完成';
-            statusR.textContent = `${r.ip} · ${r.ms}ms`;
-            setTitle(`${r.title} — 浏览器`);
+            showBar(tb, false);
+            if (r.status === '404') { setStatus(tb, '404'); return renderError(tb, '404', r); }
+            if (r.status === '403') { setStatus(tb, '403'); return renderError(tb, '403', r); }
+            if (r.status !== 'ok') { setStatus(tb, '错误'); return renderError(tb, 'badurl', r); }
+            setStatus(tb, '完成', `${r.ip} · ${r.ms}ms`);
+            setTabTitle(tb, r.title);
             if (r.type === 'proxy') {
               // 路径转换:虚拟 URL → 作者指定的真实互联网资源
-              page.hidden = true;
-              frame.hidden = false;
-              frame.src = r.proxyUrl;
+              tb.page.hidden = true;
+              tb.frame.hidden = false;
+              tb.frame.src = r.proxyUrl;
               bus.notify('代理资源已加载', `${r.url} → ${r.proxyUrl}`);
             } else {
-              page.hidden = false;
-              page.innerHTML = r.body || '<p class="dim">(空白页)</p>';
-              wirePage();
+              tb.page.hidden = false;
+              tb.page.innerHTML = r.body || '<p class="dim">(空白页)</p>';
+              wirePage(tb);
             }
           });
         });
       });
     }
 
+    function navOut(tb, url, seq) {
+      tb.page.hidden = true;
+
+      let u;
+      try { u = new URL(url); } catch { return renderError(tb, 'badurl', {}); }
+
+      setTabTitle(tb, u.hostname);
+      setStatus(tb, `正在连接 ${u.hostname}…`, '外网');
+      tb.frame.hidden = false;
+      tb.frame.src = u.href;
+      // 跨源 iframe 读不到内容:load 事件隐藏加载条,12s 兜底
+      let settled = false;
+      const done = () => {
+        if (settled || seq !== tb.seq) return;
+        settled = true;
+        showBar(tb, false);
+        setStatus(tb, '完成(外网)', `${u.hostname} · 外网`);
+      };
+      tb.frame.addEventListener('load', done, { once: true });
+      setTimeout(done, 12000);
+    }
+
+    /* ---- 地址栏(Firefox urlbar 行为) ---- */
+
+    // 点击 / 聚焦即全选(Firefox;双击 / 三击仍按默认选词 / 选段)。
+    // 程序化 focus() 会在事件后再放一次光标,须延迟一拍再选。
+    addr.addEventListener('focus', () => { setTimeout(() => addr.select(), 0); });
+    addr.addEventListener('click', (e) => { if (e.detail < 2) addr.select(); });
     addr.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      const v = addr.value.trim();
-      if (!v) return;
-      navigate(v.startsWith('about:') ? v : v);
+      if (e.key === 'Enter') {
+        const v = addr.value.trim();
+        if (!v) return;
+        nav(tabs[active], v);
+        addr.blur();
+      } else if (e.key === 'Escape') {
+        // Esc:有未提交的修改 → 还原为当前地址;无修改 → 失焦
+        const tb = tabs[active];
+        const cur = tb ? tb.history[tb.hIdx] : '';
+        const want = !cur || cur === 'about:start' ? '' : cur.replace(/^https?:\/\//, '');
+        if (addr.value !== want) { addr.value = want; addr.select(); }
+        else addr.blur();
+      }
     });
 
+    /* ---- 快捷键(document 级,仅在窗口聚焦时生效;宿主保留键除外) ---- */
+    const winEl = root.closest('.win');
+    const onKey = (e) => {
+      if (!root.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      if (!winEl || !winEl.classList.contains('focused')) return;
+      const k = e.key;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && (k === 't' || k === 'T')) { e.preventDefault(); return makeTab(); }
+      if (ctrl && (k === 'w' || k === 'W')) { e.preventDefault(); return closeTab(active); }
+      if (ctrl && k === 'Tab') { e.preventDefault(); return cycleTab(e.shiftKey ? -1 : 1); }
+      if (ctrl && (k === 'PageDown' || k === 'PageUp')) { e.preventDefault(); return cycleTab(k === 'PageDown' ? 1 : -1); }
+      if (ctrl && /^[1-9]$/.test(k)) {
+        e.preventDefault();
+        return activateTab(Math.min(k === '9' ? tabs.length - 1 : +k - 1, tabs.length - 1));
+      }
+      if ((ctrl && (k === 'l' || k === 'L')) || k === 'F6' || (e.altKey && (k === 'd' || k === 'D'))) {
+        e.preventDefault(); addr.focus(); addr.select(); return;
+      }
+      if (e.altKey && k === 'ArrowLeft') { e.preventDefault(); return go(-1); }
+      if (e.altKey && k === 'ArrowRight') { e.preventDefault(); return go(1); }
+      if (k === 'Backspace' && !isTypingTarget(e.target)) { e.preventDefault(); return go(-1); }
+    };
+    function cycleTab(d) { activateTab((active + d + tabs.length) % tabs.length); }   // Ctrl+Tab 循环
+    document.addEventListener('keydown', onKey);
+
     root.append(el('div', { class: 'app' },
+      tabstrip,
       el('div', { class: 'app-toolbar' },
         back, fwd, reload, home,
         addr,
-        el('span', { class: 'badge-pill vw-badge' }, '虚拟网络')),
+        openExt),
       el('div', { style: { position: 'relative' } }, bar),
       content,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }), statusR)));
 
-    navigate(params.url || 'about:start', { push: !params.url });
+    makeTab(params?.url);
 
-    // 外部导航:其他应用(邮件附件/正文链接等)请求打开虚拟地址
-    bus.on('params', (p) => { if (p?.url) navigate(p.url); });
-    bus.on('navigate', (p) => { if (p?.url) navigate(p.url); });
+    // 外部导航:其他应用(邮件附件/正文链接等)请求打开地址,同样自动分流
+    const navTo = (url) => { if (tabs[active]) nav(tabs[active], url); };
+    bus.on('params', (p) => { if (p?.url) navTo(p.url); });
+    bus.on('navigate', (p) => { if (p?.url) navTo(p.url); });
     setTimeout(() => addr.focus(), 60);
+
+    // 窗口关闭时清理 document 级监听
+    return {
+      onClose() {
+        document.removeEventListener('keydown', onKey);
+        window.removeEventListener('pointermove', onTabPointerMove);
+        window.removeEventListener('pointerup', endTabDrag);
+        window.removeEventListener('pointercancel', endTabDrag);
+      },
+    };
   },
 });

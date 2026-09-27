@@ -5,7 +5,7 @@ export default {
   name: '浏览器',
   icon: 'globe',
   color: 'linear-gradient(135deg,#06b6d4,#0284c7)',
-  width: 900, height: 620,
+  width: 940, height: 660,
   min: { w: 520, h: 360 },
   singleton: true,
   prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
