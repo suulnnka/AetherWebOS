@@ -267,8 +267,9 @@ export function sshConnect(hostInput, user, password) {
           if (!parts[0]) { say('用法: get <远程文件> [本地名]', 't-err'); break; }
           const node = fsGet(this.fsRoot, path(parts[0]));
           if (node == null || typeof node !== 'string') { say(`get: ${parts[0]}: 不可下载的文件`, 't-err'); break; }
-          const local = '/home/downloads/' + (parts[1] || String(parts[0]).split('/').pop());
-          fs.write(local, node);
+          // 落到当前登录用户的 ~/downloads(/home 对普通用户不可写,不能写死共享路径)
+          const local = (fs.homePath() || '/home') + '/downloads/' + (parts[1] || String(parts[0]).split('/').pop());
+          if (!fs.write(local, node)) { say(`get: 下载失败(无写入权限)`, 't-err'); break; }
           say(`已下载 → ${local}`, 't-ok');
           break;
         }

@@ -21,6 +21,7 @@ const KEY = 'webos.sms.v1';
 let state = { chats: [] };
 let hydratedUser = null;
 let saveTimer = null;
+let hydrating = null;   // 进行中的水合(并发去重)
 
 /** 按联系人归并的会话(最近活跃在前) */
 function chatFor(addr, name) {
@@ -46,32 +47,39 @@ function scheduleSave() {
   }, 200);
 }
 
-/** 登录后从 appdata 水合(幂等);保留尚未入库的新会话 */
-export async function hydrate(user = accounts.current()) {
-  if (!user) return;
-  try {
-    await fsReady();
-    const data = await migrateFromLocalStorage('sms', KEY, (raw) => raw, user);
-    const next = data ?? (await loadState('sms', user));
-    if (next && Array.isArray(next.chats)) {
-      if (hydratedUser === user && state.chats.length) {
-        // 已有内存数据:合并本地新会话(按 addr,以内容多的一侧为准)
-        const seen = new Set(state.chats.map((c) => c.addr));
-        for (const c of next.chats) {
-          if (!seen.has(c.addr)) state.chats.push(c);
+/** 登录后从 appdata 水合(幂等);保留尚未入库的新会话。
+ *  并发调用共享同一次水合;种子投递等依赖"数据已就绪"的调用方应 await 本函数。 */
+export function hydrate(user = accounts.current()) {
+  if (!user) return Promise.resolve();
+  if (hydrating) return hydrating;
+  hydrating = (async () => {
+    try {
+      await fsReady();
+      const data = await migrateFromLocalStorage('sms', KEY, (raw) => raw, user);
+      const next = data ?? (await loadState('sms', user));
+      if (next && Array.isArray(next.chats)) {
+        if (hydratedUser === user && state.chats.length) {
+          // 已有内存数据:合并本地新会话(按 addr,以内容多的一侧为准)
+          const seen = new Set(state.chats.map((c) => c.addr));
+          for (const c of next.chats) {
+            if (!seen.has(c.addr)) state.chats.push(c);
+          }
+          state.chats.sort((a, b) => lastTs(b) - lastTs(a));
+        } else {
+          state = { chats: next.chats };
         }
-        state.chats.sort((a, b) => lastTs(b) - lastTs(a));
-      } else {
-        state = { chats: next.chats };
+      } else if (hydratedUser !== user && !state.chats.length) {
+        state = { chats: [] };
+        await saveState('sms', state, user);
       }
-    } else if (hydratedUser !== user && !state.chats.length) {
-      state = { chats: [] };
-      await saveState('sms', state, user);
+      hydratedUser = user;
+    } catch (e) {
+      console.warn('[sms] 水合失败:', e);
+    } finally {
+      hydrating = null;
     }
-    hydratedUser = user;
-  } catch (e) {
-    console.warn('[sms] 水合失败:', e);
-  }
+  })();
+  return hydrating;
 }
 
 /** 送达一条短信(from=联系人地址) */

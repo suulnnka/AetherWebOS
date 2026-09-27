@@ -33,7 +33,7 @@ import {
   opfsReadText, opfsWriteText,
   opfsReadBytes, opfsWriteBytes,
   opfsReadSlice, opfsWriteAt, opfsFileSize,
-  opfsClearAll, opfsAvailable,
+  opfsRemovePath, opfsClearAll, opfsAvailable,
 } from './opfs.js';
 
 /** localStorage 旧键(迁移源;迁移后删除) */
@@ -196,15 +196,24 @@ function inodeSize(n) {
   return contentSize(n.d);
 }
 
-/** 遍历文件:yield { path, content, bin } */
+/** 遍历文件:yield { path, content, bin, m } */
 function* walkFiles(node, path) {
   if (node.t === 'f') {
-    yield { path, content: node.d ?? null, bin: node.bin === true || node.d instanceof Uint8Array };
+    yield { path, content: node.d ?? null, bin: node.bin === true || node.d instanceof Uint8Array, m: node.m || 0 };
     return;
   }
   if (!node.c) return;
   for (const [name, ch] of Object.entries(node.c)) {
     yield* walkFiles(ch, childPath(path, name));
+  }
+}
+
+/** 收集某子树下的全部文件:yield { path(绝对), rel(相对子树根) } */
+function* walkSubtree(node, base, rel = '') {
+  if (node.t === 'f') { yield { path: rel ? childPath(base, rel) : normPath(base), rel }; return; }
+  if (!node.c) return;
+  for (const [name, ch] of Object.entries(node.c)) {
+    yield* walkSubtree(ch, base, rel ? rel + '/' + name : name);
   }
 }
 
@@ -278,20 +287,41 @@ export function fsReady() {
   return new Promise((res) => bootWaiters.push(res));
 }
 
+/* ---------- 增量落盘簿记 ----------
+ * 每次全量重写全部文件在大目录下要秒级(201 文件 ≈ 1.3s),
+ * 防抖窗口内容易被导航/强杀打断 → 改为只写"变化过的文件":
+ *   · mtime:m >= persistMark 的文件内容重写(写/建/chmod 都会刷新 m)
+ *   · dirtyPaths:显式脏(重命名移入的子树),bin 文件从 copyFrom 复制字节
+ *   · removedPaths:rm/改名遗留的 fsdata 垃圾,成功后递归清理 */
+let persistMark = Infinity;                  // boot 完成前不增量:首写全量
+const dirtyPaths = new Map();                // 绝对路径 → { copyFrom?: 旧绝对路径 }
+const removedPaths = new Set();              // 待清理的旧绝对路径(文件或目录)
+
 /**
- * 落盘:
- *  1) 每个文件内容 → OPFS fsdata/<path>
- *  2) 元数据树(无 d) → fs.v2.json
+ * 落盘(增量):
+ *  1) 变化过的文件内容 → OPFS fsdata/<path>(未变的跳过)
+ *  2) 元数据树(无 d) → fs.v2.json(每次都写,单文件)
+ *  3) 清理 removedPaths 对应的 fsdata 遗留
  * OPFS 不可用时整树(含 d)写入 localStorage 键作回退。
  */
 async function writeTree() {
+  const t0 = Date.now();
   const meta = JSON.stringify(stripContents(root));
   const full = JSON.stringify(root); // 降级用
   try {
     if (opfsAvailable()) {
       // 先内容后元数据;随机访问文件(bin 且无 d)内容已在 fsdata,只写元数据
-      for (const { path, content, bin } of walkFiles(root, '/')) {
-        if (bin && (content == null || content === '')) continue;
+      for (const { path, content, bin, m } of walkFiles(root, '/')) {
+        const explicit = dirtyPaths.get(path);
+        if (explicit == null && m < persistMark) continue;   // 未变:与 OPFS 一致
+        if (bin && (content == null || content === '')) {
+          // 重命名移入的随机写文件:从旧路径复制字节
+          if (explicit?.copyFrom != null) {
+            const bytes = await opfsReadBytes('fsdata' + explicit.copyFrom);
+            if (bytes && bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
+          }
+          continue;
+        }
         if (bin || content instanceof Uint8Array) {
           const bytes = content instanceof Uint8Array
             ? content
@@ -302,6 +332,7 @@ async function writeTree() {
         }
       }
       await opfsWriteText(OPFS_NAME, meta);
+      for (const gone of removedPaths) await opfsRemovePath('fsdata' + gone);
     } else {
       await opfsWriteText(OPFS_NAME, full);
     }
@@ -316,7 +347,11 @@ async function writeTree() {
       console.warn('[fs] 持久化失败:', e2);
       publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
     }
+    return;   // 失败:保留脏簿记,下次再试
   }
+  dirtyPaths.clear();
+  removedPaths.clear();
+  persistMark = t0;
 }
 
 function schedulePersist() {
@@ -347,6 +382,7 @@ async function bootLoad() {
   const fromOpfs = parseTree(await opfsReadText(OPFS_NAME));
   if (fromOpfs) {
     await adoptTree(fromOpfs);
+    persistMark = Date.now();   // 已与 OPFS 一致:此后只写变化过的文件
     markBooted();
     if (pendingPersist) {
       pendingPersist = false;
@@ -362,8 +398,9 @@ async function bootLoad() {
   }
   const fromLs = parseTree(localStorage.getItem(LS_KEY));
   if (fromLs) {
-    // 旧整树:保留内存中的 d,立刻拆到 OPFS
+    // 旧整树:保留内存中的 d,立刻拆到 OPFS(persistMark=0 → 首写全量)
     root = fromLs;
+    persistMark = 0;
     markBooted();
     writeChain = writeChain.then(writeTree, writeTree);
     await writeChain;
@@ -372,6 +409,7 @@ async function bootLoad() {
 
   // 3) 全新:写入默认树
   root = freshRoot();
+  persistMark = Date.now();
   markBooted();
   writeChain = writeChain.then(writeTree, writeTree);
 }
@@ -394,7 +432,17 @@ function wipeAllAndReload() {
 // 模块加载即开始水合(不阻塞 import)
 bootLoad().catch((e) => {
   console.warn('[fs] 初始化失败:', e);
+  persistMark = 0;   // 状态不明:首写全量,避免增量跳过
   markBooted();
+});
+
+/* 关页/导航前尽力冲刷(防抖窗口内的最后机会;异步写能完成多少算多少) */
+addEventListener('pagehide', () => {
+  if (!fsBooted || storageWiped()) return;
+  if (pendingPersist || dirtyPaths.size || removedPaths.size) {
+    pendingPersist = false;
+    writeChain = writeTree();
+  }
 });
 
 /* ---------- 路径工具 ---------- */
@@ -835,6 +883,7 @@ export const fs = {
     const victim = par.c[name];
     if (victim.o !== user && !modeFor(victim, user).w) return false;
     delete par.c[name];
+    removedPaths.add(normPath(p));   // fsdata 遗留待清理
     par.m = Date.now();
     emit('rm', p);
     return true;
@@ -855,6 +904,12 @@ export const fs = {
     if (!dstPar) { par.c[name] = n; return false; }
     dstPar.c[basename(newP)] = n;
     n.m = Date.now();
+    // 子树搬移:文本文件靠 mtime 即可重写;随机写文件(内容仅在 OPFS)需按 copyFrom 复制字节
+    const oldNorm = normPath(oldP), newNorm = normPath(newP);
+    for (const f of walkSubtree(n, newNorm)) {
+      dirtyPaths.set(f.path, { copyFrom: f.rel ? oldNorm + '/' + f.rel : oldNorm });
+    }
+    removedPaths.add(oldNorm);
     emit('rename', newP);
     return true;
   },
@@ -922,7 +977,12 @@ export const fs = {
 
   exportAll: () => root,
   importAll(tree) {
-    if (tree?.t === 'd') { root = tree; emit('import', '/'); return true; }
+    if (tree?.t === 'd') {
+      root = tree;
+      persistMark = 0;   // 外部整树导入:内容全部重写一次
+      emit('import', '/');
+      return true;
+    }
     return false;
   },
   /** 立即落盘(测试 / 关页前);返回 Promise */

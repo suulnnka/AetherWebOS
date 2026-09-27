@@ -16,6 +16,7 @@ import { list as listApps } from '../core/registry.js';
 import * as wm from '../core/wm.js';
 import { dialogs } from '../core/dialogs.js';
 import weatherSvc from '../core/weather.js';
+import * as appdata from '../core/appdata.js';
 import { WebOS as SYS } from '../core/exports.js';
 import { renderStartMenu, renderStartUser } from './startmenu.js';
 import { renderPinned, renderTasks } from './taskbar.js';
@@ -54,10 +55,12 @@ function boot() {
   };
   start();
 
-  // 调试 / 自动化接口
+  // 调试 / 自动化接口(appdata 必须经此拿应用图同一实例:
+  // 开发服务器 HMR 会给改过的模块加 ?t= 后缀,另行动态 import 会得到
+  // 带独立 Database 缓存的第二个实例,读到陈旧数据)
   Object.assign(SYS, {
     bus: { subscribe, publish, send: (from, to, type, payload) => publish(`app:${to}`, { from, to, type, payload }) },
-    wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc,
+    wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc, appdata,
     __weatherDaily: weatherSvc.daily,
     apps: { list: listApps },
     ensureDesktopShortcuts,

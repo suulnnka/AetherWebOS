@@ -165,7 +165,9 @@ export async function opfsWriteAt(path, data, offset) {
     const fh = await fileHandle(path, true);
     const w = await fh.createWritable({ keepExistingData: true });
     try {
-      await w.write(off, bytes);
+      // 注意:write(offset, data) 两参形式不受支持(offset 会被当数据写入)，
+      // 必须用 WriteParams 形式 { type:'write', position, data }
+      await w.write({ type: 'write', position: off, data: bytes });
     } finally {
       await w.close();
     }
@@ -203,6 +205,28 @@ export async function opfsRemove(name) {
     const dir = await root.getDirectoryHandle(DIR, { create: false });
     await dir.removeEntry(name);
   } catch { /* 不存在 */ }
+  return true;
+}
+
+/**
+ * 按多级路径删除 webos/ 下的文件或目录(递归)。
+ * path 形如 'fsdata/home/<user>/x'(不含 webos 前缀);不存在也返回 true。
+ */
+export async function opfsRemovePath(path) {
+  const segs = String(path).split('/').filter(Boolean);
+  if (!segs.length) return false;
+  if (!hasOpfs()) {
+    try { localStorage.removeItem(LS_PREFIX + segs.join('/')); } catch { /* 忽略 */ }
+    return true;
+  }
+  try {
+    let dir = await navigator.storage.getDirectory();
+    dir = await dir.getDirectoryHandle(DIR, { create: false });
+    const name = segs.pop();
+    for (const s of segs) dir = await dir.getDirectoryHandle(s, { create: false });
+    await dir.removeEntry(name, { recursive: true });
+    return true;
+  } catch { /* 不存在或父目录已删 */ }
   return true;
 }
 

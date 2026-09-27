@@ -111,13 +111,25 @@ export async function loadState(app, user = accounts.current()) {
   return doc?.data ?? null;
 }
 
-/** 写 `state/main`(upsert) */
+/**
+ * 写 `state/main`(upsert)。
+ * get 与 insert 之间隔 await,并发保存(如短信投递的防抖落盘)可能恰好在
+ * 此间提交 → insert 撞「id 已存在」:撞上即转 update(后写覆盖,语义正确)。
+ */
 export async function saveState(app, data, user = accounts.current()) {
   const db = await openAppData(app, user);
   const col = db.collection('state');
   const cur = await col.get('main');
-  if (cur) await col.update('main', { data });
-  else await col.insert({ id: 'main', data });
+  if (cur) {
+    await col.update('main', { data });
+    return true;
+  }
+  try {
+    await col.insert({ id: 'main', data });
+  } catch (e) {
+    if (!/id 已存在/.test(String(e?.message))) throw e;
+    await col.update('main', { data });
+  }
   return true;
 }
 
@@ -143,7 +155,12 @@ export async function migrateFromLocalStorage(app, legacyKey, normalize, user = 
   if (legacy == null) return null;
 
   const data = normalize ? normalize(legacy) : legacy;
-  await col.insert({ id: 'main', data });
+  try {
+    await col.insert({ id: 'main', data });
+  } catch (e) {
+    if (!/id 已存在/.test(String(e?.message))) throw e;
+    await col.update('main', { data });   // 并发初始化已建文档:改为覆盖
+  }
   try { localStorage.removeItem(legacyKey); } catch { /* 忽略 */ }
   return data;
 }

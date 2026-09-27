@@ -230,19 +230,23 @@ mail.onSend((m) => {
 
 
 /* ================= 短信:种子会话 + 服务台短信钩子 ================= */
-if (sms.stats().msgs === 0) {
-  const H = 3600e3;
-  sms.deliver({
-    from: '10086', fromName: 'NEXUS 运营商',
-    text: '欢迎接入 NEXUS 虚拟网络!本机号码 10-0000-0002。流量不限量,但仅限内网 :)',
-    date: Date.now() - 26 * H,
-  });
-  sms.deliver({
-    from: 'nexus-guard', fromName: '安全中心',
-    text: '检测到新设备登录。验证码 823741,5 分钟内有效。若非本人操作请忽略。',
-    date: Date.now() - 2 * H,
-  });
-}
+/* 种子要等水合完成后再判断:模块加载时短信还在从 appdata 异步装载,
+ * 不等就投递会把种子重复写进当前会话用户的库,甚至覆盖已有会话。 */
+sms.hydrate().then(() => {
+  if (sms.stats().msgs === 0) {
+    const H = 3600e3;
+    sms.deliver({
+      from: '10086', fromName: 'NEXUS 运营商',
+      text: '欢迎接入 NEXUS 虚拟网络!本机号码 10-0000-0002。流量不限量,但仅限内网 :)',
+      date: Date.now() - 26 * H,
+    });
+    sms.deliver({
+      from: 'nexus-guard', fromName: '安全中心',
+      text: '检测到新设备登录。验证码 823741,5 分钟内有效。若非本人操作请忽略。',
+      date: Date.now() - 2 * H,
+    });
+  }
+});
 
 // 短信服务台:给 nexus-hint 发短信自动回信(玩家发信钩子)
 sms.onSend(({ to, text }) => {
