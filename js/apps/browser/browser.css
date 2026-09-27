@@ -1,97 +1,117 @@
-/* ---- 浏览器(多标签 · 内/外网按虚拟 DNS 自动分流) ---- */
+/* ---- 浏览器(多标签 · 内/外网按虚拟 DNS 自动分流 · Firefox Proton 风格) ---- */
 /* 网络配色:内网(虚拟网络)青色 / 外网(真实互联网)琥珀色 / 起始页中性 */
 :root { --vw-in: #0ea5e9; --vw-out: #f59e0b; }
 
-.vw-addr { flex: 1; height: 32px; border-radius: 16px; padding: 0 14px; }
-
-.loading-bar { height: 2.5px; overflow: hidden; background: transparent; }
-.loading-bar i {
-  display: block; height: 100%; width: 34%;
-  background: var(--accent); border-radius: 2px;
-  animation: vwLoad 0.9s ease-in-out infinite;
-}
-.loading-bar[data-net="out"] i { background: var(--vw-out); }
-@keyframes vwLoad { 0% { transform: translateX(-110%); } 100% { transform: translateX(420%); } }
-
-/* ---- 标签栏(Firefox 式:滚动区 + 右侧固定的 + 与「列出所有标签页」) ---- */
+/* ---- 标签栏:背景比工具栏略深,活动标签与工具栏同色无缝衔接 ---- */
 .vw-tabs {
-  flex: none; display: flex; align-items: flex-end; gap: 4px;
-  padding: 6px 8px 0;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
+  flex: none; display: flex; align-items: flex-end; gap: 6px;
+  padding: 5px 6px 0;
+  background: color-mix(in srgb, var(--panel-solid) 93%, #000);
 }
 .vw-tabs-scroll {
   flex: 1; min-width: 0;
-  display: flex; align-items: flex-end; gap: 4px;
+  display: flex; align-items: flex-end; gap: 2px;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin;
 }
 .vw-tab {
   position: relative;
-  display: flex; align-items: center; gap: 7px;
-  flex: 1 1 190px; min-width: 72px; max-width: 220px;
-  height: 30px; padding: 0 7px 0 11px;
-  border: 1px solid transparent; border-bottom: none;
-  border-radius: var(--radius-s) var(--radius-s) 0 0;
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 190px; min-width: 76px; max-width: 220px;
+  height: 33px; padding: 0 7px 0 11px;
   color: var(--text-2); font-size: 12.5px;
   cursor: pointer; user-select: none; -webkit-user-select: none;
   touch-action: none;
-  transition: transform 0.16s ease;
+  border-radius: 8px 8px 0 0;
+  transition: transform 0.16s ease, background 0.12s;
 }
-.vw-tab:hover { background: var(--hover); color: var(--text); }
+/* 非活动标签:平时只有细分隔线,悬停浮起圆角底 */
+.vw-tab:not(.active):hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+}
+.vw-tab::before {
+  content: ''; position: absolute; left: -1.5px; top: 9px; bottom: 9px; width: 1px;
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+}
+.vw-tab:first-child::before,
+.vw-tab.active::before, .vw-tab:hover::before,
+.vw-tab.active + .vw-tab::before, .vw-tab:hover + .vw-tab::before { display: none; }
+/* 活动标签:圆角顶边,底边与工具栏融为一体 */
+.vw-tab.active {
+  background: var(--panel-solid);
+  border: 1px solid var(--border); border-bottom: none;
+  margin-bottom: -1px;
+  color: var(--text);
+}
+/* 网络色:favicon 位圆点 + 活动标签底部彩色下划线 */
+.vw-tab-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--text-2) 60%, transparent); }
+.vw-tab.net-in .vw-tab-dot { background: var(--vw-in); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-in) 50%, transparent); }
+.vw-tab.net-out .vw-tab-dot { background: var(--vw-out); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-out) 50%, transparent); }
+.vw-tab.active::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px;
+  border-radius: 2px; background: transparent;
+}
+.vw-tab.net-in.active::after { background: var(--vw-in); }
+.vw-tab.net-out.active::after { background: var(--vw-out); }
+.vw-tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 关闭按钮:固定在标签右端(Firefox),悬停 / 活动时可见 */
+.vw-tab-x {
+  flex: none; width: 20px; height: 20px; border-radius: 6px;
+  display: grid; place-items: center;
+  color: var(--text-2); background: transparent; border: none;
+  opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.vw-tab:hover .vw-tab-x, .vw-tab.active .vw-tab-x { opacity: 0.8; }
+.vw-tab-x:hover { opacity: 1; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
 /* 拖拽排序:拖动中的标签抬升,其余标签平滑让位 */
 .vw-tab.dragging {
   transition: none; z-index: 5;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
   cursor: grabbing; opacity: 0.96;
 }
-/* 加载中:圆点变转圈(Firefox 标签转圈) */
+/* 加载中:圆点变转圈(Firefox 标签转圈,替代进度条) */
 .vw-tab.loading .vw-tab-dot {
   background: conic-gradient(from 0deg, transparent 32%, currentColor);
   animation: vwTabSpin 0.7s linear infinite;
 }
 @keyframes vwTabSpin { to { transform: rotate(360deg); } }
-/* 网络色:顶部色条 + 圆点;激活标签整体染上所属网络的底色 */
-.vw-tab::before {
-  content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 2px;
-  border-radius: 0 0 2px 2px; opacity: .28;
-}
-.vw-tab.net-in::before { background: var(--vw-in); }
-.vw-tab.net-out::before { background: var(--vw-out); }
-.vw-tab.net-in.active {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--vw-in) 14%, var(--panel-solid)), var(--panel-solid) 85%);
-  border-color: var(--border); color: var(--text);
-}
-.vw-tab.net-out.active {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--vw-out) 15%, var(--panel-solid)), var(--panel-solid) 85%);
-  border-color: var(--border); color: var(--text);
-}
-.vw-tab.net-in.active::before {
-  opacity: 1; box-shadow: 0 0 6px color-mix(in srgb, var(--vw-in) 55%, transparent);
-}
-.vw-tab.net-out.active::before {
-  opacity: 1; box-shadow: 0 0 6px color-mix(in srgb, var(--vw-out) 55%, transparent);
-}
-.vw-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text-2) 60%, transparent); }
-.vw-tab.net-in .vw-tab-dot { background: var(--vw-in); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-in) 50%, transparent); }
-.vw-tab.net-out .vw-tab-dot { background: var(--vw-out); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-out) 50%, transparent); }
-.vw-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vw-tab-x {
-  flex: none; width: 17px; height: 17px; border-radius: 50%;
-  display: grid; place-items: center;
-  color: var(--text-2); background: transparent; border: none;
-  opacity: 0; transition: opacity 0.12s, background 0.12s;
-}
-.vw-tab:hover .vw-tab-x, .vw-tab.active .vw-tab-x { opacity: 0.75; }
-.vw-tab-x:hover { opacity: 1; background: var(--hover); color: var(--text); }
 .vw-tab-plus {
-  flex: none; width: 26px; height: 26px; margin-bottom: 3px;
-  border-radius: var(--radius-s); border: none; background: transparent;
+  flex: none; width: 28px; height: 28px; margin-bottom: 3px;
+  border-radius: 6px; border: none; background: transparent;
   color: var(--text-2); display: grid; place-items: center; cursor: pointer;
 }
-.vw-tab-plus:hover { background: var(--hover); color: var(--text); }
-/* 「列出所有标签页」下拉(Firefox:与 + 之间有分隔线) */
-.vw-tabs-list { margin-left: 2px; border-left: 1px solid var(--border); border-radius: 0; padding: 0 2px; }
+.vw-tab-plus:hover { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.vw-tabs-list { margin-left: 2px; }
+
+/* ---- 工具栏:与活动标签同色;无边框图标按钮(Firefox Proton) ---- */
+.vw-toolbar { background: var(--panel-solid); gap: 4px; }
+.vw-toolbar .btn.icon {
+  width: 32px; height: 32px; min-width: 32px; padding: 0;
+  border: none; background: transparent; border-radius: 8px;
+}
+.vw-toolbar .btn.icon:not(:disabled):hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.vw-toolbar .btn.icon:disabled { opacity: 0.4; background: none; }
+
+/* ---- 地址栏:内凹圆角矩形,左端网络指示(挂锁位) ---- */
+.vw-urlwrap { flex: 1; min-width: 0; display: flex; position: relative; }
+.vw-url-ico {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  display: flex; color: var(--text-2); pointer-events: none; z-index: 1;
+}
+.vw-url-ico.out { color: var(--vw-out); }
+.vw-addr {
+  flex: 1; width: 100%; height: 32px;
+  border-radius: 6px; padding: 0 10px 0 32px;
+  background: color-mix(in srgb, var(--panel-solid) 94%, #000);
+  border: 1px solid var(--border);
+}
+.vw-addr:focus {
+  background: var(--panel-solid);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
 
 /* ---- 内容区(每标签一个 tabroot,切换时整体换挂) ---- */
 .vw-body { background: var(--panel-solid); display: flex; flex-direction: column; overflow: hidden; }

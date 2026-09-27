@@ -113,6 +113,9 @@ register({
     let tabSeq = 0;
 
     const addr = el('input', { class: 'input vw-addr', placeholder: '输入地址:内网如 portal.nexus,外网如 example.com', spellcheck: 'false' });
+    // 地址栏左侧网络指示(挂锁位):外网 https 挂锁 / 内网地球
+    const urlIco = el('span', { class: 'vw-url-ico' }, icon('globe', 13));
+    const urlwrap = el('div', { class: 'vw-urlwrap' }, urlIco, addr);
     const statusL = el('span', {}, '就绪');
     const statusR = el('span', { class: 'dim mono' }, '');
     const back = el('button', { class: 'btn icon', title: '后退', onClick: () => go(-1) }, icon('chevronL', 15));
@@ -168,9 +171,8 @@ register({
     });
 
     const content = el('div', { class: 'app-body vw-body' });
-    const bar = el('div', { class: 'loading-bar', hidden: '' }, el('i'));
 
-    /** 共享 UI(地址栏/状态栏/加载条/标题)只在标签页处于前台时更新 */
+    /** 共享 UI(地址栏/状态栏/标题)只在标签页处于前台时更新 */
     function live(tb, fn) { if (tb === tabs[active]) fn(); }
     function setStatus(tb, l, r) {
       if (l != null) { tb.sl = l; live(tb, () => { statusL.textContent = l; }); }
@@ -181,11 +183,11 @@ register({
       renderTabs();
       live(tb, () => setTitle(tb.title ? `${tb.title} — 浏览器` : '浏览器'));
     }
-    /** 加载条显隐同时维护标签转圈与「刷新↔停止」按钮 */
-    function showBar(tb, on) {
+    /** 加载状态:标签转圈 + 「刷新↔停止」按钮(Firefox 无顶部进度条) */
+    function setLoading(tb, on) {
       tb.loading = on;
       if (!(tabDrag && tabDrag.moved)) renderTabs();
-      live(tb, () => { bar.hidden = !on; paintReloadIcon(on); });
+      live(tb, () => paintReloadIcon(on));
     }
     function paintReloadIcon(loading) {
       reload.title = loading ? '停止' : '刷新';
@@ -204,7 +206,7 @@ register({
     /** 中止加载:取消未完成的虚拟加载阶段;外网页面退回空白并回到前一页 */
     function stopLoad(tb) {
       tb.seq++;
-      showBar(tb, false);
+      setLoading(tb, false);
       if (tb.net === 'out') {
         tb.frame.src = 'about:blank';
         if (tb.hIdx > 0) { tb.hIdx--; paintChrome(); nav(tb, tb.history[tb.hIdx], { push: false }); }
@@ -221,7 +223,13 @@ register({
       fwd.disabled = tb.hIdx >= tb.history.length - 1;
       const cur = tb.history[tb.hIdx];
       addr.value = !cur || cur === 'about:start' ? '' : cur.replace(/^https?:\/\//, '');
-      openExt.disabled = routeNet(cur || '') !== 'out';
+      const kind = routeNet(cur || '');
+      openExt.disabled = kind !== 'out';
+      // 地址栏左侧网络指示(Firefox 的挂锁位):外网 https 挂锁 / 内网地球
+      urlIco.innerHTML = '';
+      urlIco.append(icon(kind === 'out' ? 'lock' : 'globe', 13));
+      urlIco.title = kind === 'in' ? '内网 · 虚拟 DNS' : kind === 'out' ? '外网 · 真实互联网' : '';
+      urlIco.classList.toggle('out', kind === 'out');
     }
 
     /* ---- 标签页生命周期 ---- */
@@ -245,7 +253,7 @@ register({
     function activateTab(i) {
       if (i < 0 || i >= tabs.length || i === active) return;
       const prev = tabs[active];
-      if (prev) { prev.root.remove(); showBar(prev, false); }
+      if (prev) { prev.root.remove(); setLoading(prev, false); }
       active = i;
       const tb = tabs[active];
       content.append(tb.root);
@@ -425,11 +433,10 @@ register({
       tb.net = kind === 'in' || kind === 'out' ? kind : null;
       renderTabs();
       live(tb, paintChrome);
-      live(tb, () => { bar.dataset.net = tb.net || ''; });
-      showBar(tb, true);
+      setLoading(tb, true);
 
       if (kind === 'start') return navStart(tb, seq);
-      if (kind === 'badurl') { showBar(tb, false); return renderError(tb, 'badurl', {}); }
+      if (kind === 'badurl') { setLoading(tb, false); return renderError(tb, 'badurl', {}); }
       if (kind === 'out') return navOut(tb, url, seq);
       navIn(tb, url, seq);
     }
@@ -439,7 +446,7 @@ register({
       tb.frame.src = 'about:blank';
       setTimeout(() => {
         if (seq !== tb.seq) return;
-        showBar(tb, false);
+        setLoading(tb, false);
         tb.page.hidden = false;
         tb.page.innerHTML = startPage();
         wirePage(tb);
@@ -460,13 +467,13 @@ register({
       const step = (ms, fn) => setTimeout(() => { if (seq === tb.seq) fn(); }, ms);
       step(220, () => {
         if (r.status === 'redirect') return nav(tb, r.location, { push: false });
-        if (r.status === 'dns') { showBar(tb, false); setStatus(tb, 'DNS 解析失败'); return renderError(tb, 'dns', r); }
+        if (r.status === 'dns') { setLoading(tb, false); setStatus(tb, 'DNS 解析失败'); return renderError(tb, 'dns', r); }
         setStatus(tb, `正在连接 ${r.ip}…`);
         step(240, () => {
-          if (r.status === 'refused') { showBar(tb, false); setStatus(tb, '连接被拒绝'); return renderError(tb, 'refused', r); }
+          if (r.status === 'refused') { setLoading(tb, false); setStatus(tb, '连接被拒绝'); return renderError(tb, 'refused', r); }
           setStatus(tb, '等待响应…');
           step(260, () => {
-            showBar(tb, false);
+            setLoading(tb, false);
             if (r.status === '404') { setStatus(tb, '404'); return renderError(tb, '404', r); }
             if (r.status === '403') { setStatus(tb, '403'); return renderError(tb, '403', r); }
             if (r.status !== 'ok') { setStatus(tb, '错误'); return renderError(tb, 'badurl', r); }
@@ -503,7 +510,7 @@ register({
       const done = () => {
         if (settled || seq !== tb.seq) return;
         settled = true;
-        showBar(tb, false);
+        setLoading(tb, false);
         setStatus(tb, '完成(外网)', `${u.hostname} · 外网`);
       };
       tb.frame.addEventListener('load', done, { once: true });
@@ -559,11 +566,10 @@ register({
 
     root.append(el('div', { class: 'app' },
       tabstrip,
-      el('div', { class: 'app-toolbar' },
+      el('div', { class: 'app-toolbar vw-toolbar' },
         back, fwd, reload, home,
-        addr,
+        urlwrap,
         openExt),
-      el('div', { style: { position: 'relative' } }, bar),
       content,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }), statusR)));
