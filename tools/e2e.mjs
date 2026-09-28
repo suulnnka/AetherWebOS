@@ -1312,7 +1312,7 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   const liveIcon = await ev(`[...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/终端创建.txt')`);
   t('T24.2 终端写桌面 → 图标实时刷新', liveIcon === true);
 
-  // d. F2 重命名(选中 → 键盘 → 对话框);先让输入框失焦,模拟用户点击桌面后的状态
+  // d. F2 重命名(选中 → 键盘 → 就地输入框);先让输入框失焦,模拟用户点击桌面后的状态
   await ev(`(() => {
     document.activeElement && document.activeElement.blur();
     const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/测试便签.txt');
@@ -1320,15 +1320,15 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   })()`);
   await sleep(200);
   await ev(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))`);
-  await sleep(450);
+  await sleep(350);
   await ev(`(() => {
-    const inp = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+    const inp = document.querySelector('body > .rename-input');
     inp.value = '改名后.txt';
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(600);
   const renamed = await ev(`WebOS.fs.exists(WebOS.fs.desktopPath()+'/改名后.txt')`);
-  t('T24.3 F2 重命名', renamed === true);
+  t('T24.3 F2 重命名(就地输入框)', renamed === true);
 
   // e. Delete 删除(确认对话框)
   await ev(`(() => {
@@ -2132,10 +2132,13 @@ group('T32', '笔记(含加密)', async () => {
     await new Promise(r => setTimeout(r, 450));
     const ed = document.querySelector('.memo-editor');
     ed.querySelector('input.input').value = '银行账号';
-    // 正文是 md 编辑器:写入活动块原文并走输入管线(触发 onChange/保存)
-    const raw = ed.querySelector('.md-raw');
-    raw.textContent = '6222 0000 1234 5678';
-    raw.dispatchEvent(new Event('input', { bubbles: true }));
+    // 正文是渲染态直编的 md 编辑器:光标放末块末尾,真实输入管线写入
+    const surf = ed.querySelector('.md-surface');
+    const p = surf.querySelector('.md-block:last-child p');
+    surf.focus();
+    const r = document.createRange(); r.selectNodeContents(p); r.collapse(false);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    document.execCommand('insertText', false, '6222 0000 1234 5678');
     ed.querySelectorAll('.memo-swatch')[3].click();
     ed.querySelector('input[type=checkbox]').click();
     [...ed.querySelectorAll('.btn')].find(b => b.textContent === '保存').click();
@@ -3155,9 +3158,13 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,按用户存储免�
     const d = new Date();
     const key = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
     const win = document.querySelector('.win[data-app=diary]');
-    const raw = win.querySelector('.diary-text .md-raw');   // 正文已换 md 编辑器:写活动块原文
-    raw.textContent = '今天是终端合并成 bash 的日子,充实。';
-    raw.dispatchEvent(new Event('input', { bubbles: true }));
+    // 正文是渲染态直编的 md 编辑器:光标放末块末尾,真实输入管线写入
+    const surf = win.querySelector('.diary-text .md-surface');
+    const p = surf.querySelector('.md-block:last-child p');
+    surf.focus();
+    const r = document.createRange(); r.selectNodeContents(p); r.collapse(false);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    document.execCommand('insertText', false, '今天是终端合并成 bash 的日子,充实。');
     return { key, dateH: win.querySelector('.diary-date').textContent };
   })()`);
   t('T43 今天默认选中(标题含日期)', d0.dateH.includes('年') && d0.dateH.includes('星期'), d0.dateH);
@@ -3216,9 +3223,9 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,按用户存储免�
   })()`, 5000);
   const stillEdit = await ev(`(() => {
     const w = document.querySelector('.win[data-app=diary]');
-    // .diary-text 就是 md 编辑器根节点(非容器):查自身可见 + 内部活动壳存在
+    // .diary-text 就是 md 编辑器根节点(非容器):查自身可见 + 编辑面可写
     const t = w.querySelector('.diary-text');
-    return { edit: t.style.display !== 'none' && !!t.querySelector('.md-raw'),
+    return { edit: t.style.display !== 'none' && t.querySelector('.md-surface').contentEditable === 'true',
              btn: [...w.querySelectorAll('.app-toolbar .btn')].some(b => b.textContent.includes('解除加密')) };
   })()`);
   t('T43.6 单页加密(锁标 + 会话内仍可编辑)', locked === '🔒' && stillEdit.edit && stillEdit.btn, JSON.stringify({ locked, stillEdit }));
@@ -3679,15 +3686,16 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   // 标记首窗口:后续多窗口步骤按标记区分,不依赖 DOM 顺序(聚焦会重排 z 序)
   await ev(`document.querySelector('.win[data-app=mdedit]').__first = true`);
 
-  // 骨架:无文字工具栏;只读起步(无活动壳),编辑键可点
+  // 骨架:无文字工具栏;只读起步(编辑面只读),编辑键可点
   const s0 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
     const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
-    return { edit: !!w.querySelector('.md-edit'), raw: w.querySelectorAll('.md-raw').length,
+    const surf = w.querySelector('.md-surface');
+    return { edit: !!w.querySelector('.md-edit'), ro: surf?.contentEditable,
              btns: w.querySelectorAll('.md-tbtn').length, blocks: w.querySelectorAll('.md-block').length,
              eb: !!eb, ebOn: eb ? !eb.disabled : false };
   })()`);
-  t('T48 编辑器骨架(无工具栏;只读起步,编辑键可点)', s0.edit && s0.raw === 0 && s0.btns === 0 && s0.blocks === 1 && s0.eb && s0.ebOn, JSON.stringify(s0));
+  t('T48 编辑器骨架(无工具栏;只读起步,编辑键可点)', s0.edit && s0.ro === 'false' && s0.btns === 0 && s0.blocks === 1 && s0.eb && s0.ebOn, JSON.stringify(s0));
 
   // 语法渲染全景:编辑键解锁写入 →「完成」回只读,整篇渲染断言
   await ev(`(() => {
@@ -3732,12 +3740,52 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   })()`);
   t('T48.4 勾选回写源码', s2.src.includes('[x] 任务 A') && s2.on === 2, JSON.stringify(s2.src.match(/- \\[.\\] 任务 A/)));
 
-  // 安全:拒绝 javascript: 链接、不透传原始 HTML(加尾段并激活之,首段即渲染)
+  // 渲染态直编:解锁后真实输入 # 实时标题 → 即时变标题(Notion/Typora 式)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('');
+    const surf = w.querySelector('.md-surface');
+    surf.focus();
+    const p = surf.querySelector('.md-block p');
+    const r = document.createRange(); r.selectNodeContents(p); r.collapse(false);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    document.execCommand('insertText', false, '# 实时标题');
+    return true;
+  })()`);
+  await sleep(350);                                            // rAF 局部重渲染
+  const s2b = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    const blk = w.querySelector('.md-block');
+    const h = blk.querySelector('h1');
+    return { h1: h?.textContent, src: w.querySelector('.md-edit').$md.get(),
+             radius: getComputedStyle(blk).borderRadius,
+             ce: w.querySelector('.md-surface').contentEditable };
+  })()`);
+  t('T48.4a 输入即转标题(渲染态直编 / 指示条直角)',
+    s2b.h1 === '实时标题' && s2b.src === '# 实时标题' && s2b.radius === '0px' && s2b.ce === 'true', JSON.stringify(s2b));
+
+  // 回归:桌面图标选中态下在编辑器内回车,不得打开桌面选中项(曾致弹窗不止)
+  await ev(`(() => {
+    document.querySelector('.dicon')?.classList.add('selected');
+    const surf = document.querySelector('.win[data-app=mdedit] .md-surface');
+    surf.focus();
+    surf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    return true;
+  })()`);;
+  await sleep(300);
+  const s2c = await ev(`(() => {
+    document.querySelectorAll('.dicon.selected').forEach(d => d.classList.remove('selected'));
+    return { apps: [...document.querySelectorAll('.win')].map(w => w.dataset.app),
+             src: document.querySelector('.win[data-app=mdedit] .md-edit').$md.get() };
+  })()`);
+  t('T48.4b 编辑器内回车不触发桌面选中项',
+    s2c.apps.filter(a => a === 'mdedit').length === 1 && !s2c.apps.includes('files') && !s2c.apps.includes('notes')
+    && s2c.src.includes('\n'), JSON.stringify(s2c.apps));
+
+  // 安全:拒绝 javascript: 链接、不透传原始 HTML
   const s3 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
     w.querySelector('.md-edit').$md.set('[点我](javascript:alert(1)) <script>alert(2)<\\/script> **粗**\\n\\n尾段');
-    const bs = w.querySelectorAll('.md-block');
-    bs[bs.length - 1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     return true;
   })()`);
   await sleep(250);
@@ -3786,7 +3834,7 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   })()`);
   t('T48.7 文件管家双击 .md → Markdown 编辑器(只读装载)', s4.wins === 2 && s4.md.includes('保存测试'), JSON.stringify(s4.md).slice(0, 30));
 
-  // 编辑键切换:第二窗口只读起步 → 编辑出现活动壳 → 完成回只读渲染
+  // 编辑键切换:第二窗口只读起步 → 解锁可编辑 → 完成回只读渲染
   await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
     [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
@@ -3794,7 +3842,7 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await sleep(200);
   const s5a = await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
-    return { raw: w.querySelectorAll('.md-raw').length };
+    return { ce: w.querySelector('.md-surface').contentEditable };
   })()`);
   await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
@@ -3803,9 +3851,9 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await sleep(200);
   const s5 = await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
-    return { raw: w.querySelectorAll('.md-raw').length, h1: w.querySelectorAll('.md-block h1').length };
+    return { ce: w.querySelector('.md-surface').contentEditable, h1: w.querySelectorAll('.md-block h1').length };
   })()`);
-  t('T48.8 编辑键切换(解锁出现活动壳 / 完成整篇渲染)', s5a.raw === 1 && s5.raw === 0 && s5.h1 >= 1, JSON.stringify({ s5a, s5 }));
+  t('T48.8 编辑键切换(解锁可编辑 / 完成回只读)', s5a.ce === 'true' && s5.ce === 'false' && s5.h1 >= 1, JSON.stringify({ s5a, s5 }));
 
   // 文件不可写:chmod 去写权限后新开窗口 → 编辑键置灰,内容仍可读
   await ev(`(() => {
@@ -3820,9 +3868,9 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
     const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
     return { dis: eb ? eb.disabled : null, h1: w.querySelectorAll('.md-block h1').length,
-             raw: w.querySelectorAll('.md-raw').length };
+             ce: w.querySelector('.md-surface').contentEditable };
   })()`);
-  t('T48.9 文件不可写 → 编辑键置灰(内容仍可读)', s6.dis === true && s6.h1 >= 1 && s6.raw === 0, JSON.stringify(s6));
+  t('T48.9 文件不可写 → 编辑键置灰(内容仍可读)', s6.dis === true && s6.h1 >= 1 && s6.ce === 'false', JSON.stringify(s6));
   await ev(`WebOS.fs.chmod(${JSON.stringify(mdPath)}, 'rw-r--')`);   // 还原权限,不污染后续轮次
 
   const errs = await ev(`window.__errs.length`);

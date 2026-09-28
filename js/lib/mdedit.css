@@ -3,7 +3,7 @@
  *
  * 颜色只用系统 CSS 变量,亮暗主题与各皮肤自动生效(约定见
  * docs/app-dev-guide.md §7)。排版规则同时作用于:
- *   .md-edit  —— 编辑器本体
+ *   .md-edit  —— 编辑器本体(整面 contenteditable 渲染态直编)
  *   .md-view  —— 非编辑器宿主直接渲染 md 的容器(如笔记查看弹层)
  * ============================================================ */
 
@@ -11,27 +11,36 @@
 
 .md-edit { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 
-.md-surface { flex: 1; overflow-y: auto; position: relative; padding: 12px 18px 140px; min-height: 0; }
+/* 编辑面:整篇渲染 + contenteditable;光标与选区全原生 */
+.md-surface { flex: 1; overflow-y: auto; position: relative; padding: 12px 18px 140px; min-height: 0; outline: none; }
 .md-edit.empty .md-surface::before {
   content: attr(data-ph);
   position: absolute; top: 12px; left: 24px;
   color: var(--text-2); opacity: .7; pointer-events: none;
 }
-/* 只读态即文档的真实渲染:空文档不显示占位文案 */
-.md-edit.preview.empty .md-surface::before { display: none; }
 
-/* ---------- 块与活动壳 ---------- */
+/* ---------- 块 ---------- */
 
 .md-block { padding: 2px 6px; margin: 2px 0; border-radius: var(--radius-s); min-height: 1.2em; cursor: text; }
-.md-block:empty { min-height: .85em; }                      /* 定义块渲染为空,但仍可点击编辑 */
+.md-block:empty { min-height: .85em; }
 .md-block:not(.active):hover { box-shadow: 0 0 0 1px var(--hover); }
 .md-block.active {
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);                  /* 左侧指示灯条:方形直角 */
   background: color-mix(in srgb, var(--hover) 55%, transparent);
   padding-left: 9px;
+  border-radius: 0;
 }
-.md-raw { outline: none; white-space: pre-wrap; word-break: break-word; min-height: 1.2em; }
 .md-edit.preview .md-block { cursor: default; }
+.md-edit.preview .md-block.active { box-shadow: none; background: none; }
+
+/* 链接定义块:以原文展示编辑(渲染无输出,反序列化需可回源) */
+:is(.md-edit, .md-view) pre.md-defraw {
+  margin: .4em 0; padding: 6px 10px;
+  background: var(--panel-2); border: 1px dashed var(--border);
+  border-radius: var(--radius-s);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px; color: var(--text-2); white-space: pre-wrap;
+}
 
 /* ---------- 渲染态排版(.md-edit 与 .md-view 共用) ---------- */
 
