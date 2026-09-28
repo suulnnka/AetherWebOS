@@ -50,10 +50,10 @@ function routeNet(url) {
   return hostIsIntranet(u.hostname) ? 'in' : 'out';
 }
 
-/** 起始页:内网站点(虚拟 DNS listed 记录)+ 外网常用站点 */
+/** 起始页:内网站点(虚拟 DNS listed 记录)+ 外网常用站点(均允许嵌入) */
 const WEB_LINKS = [
   { url: 'https://example.com', name: 'Example.com', note: '演示站点(总是允许嵌入)' },
-  { url: 'https://www.wikipedia.org', name: 'Wikipedia', note: '自由的百科全书' },
+  { url: 'https://www.w3.org', name: 'W3C', note: '万维网联盟' },
   { url: 'https://www.openstreetmap.org', name: 'OpenStreetMap', note: '开源世界地图' },
   { url: 'https://archive.org', name: 'Internet Archive', note: '互联网档案馆' },
 ];
@@ -84,7 +84,8 @@ function startPage() {
     <p class="dim" style="margin-top:16px;font-size:12px">
       提示:域名能被虚拟 DNS 解析即入内网,其余直达真实互联网。
       部分真实站点会拒绝被嵌入(X-Frame-Options),页面空白或报错时,
-      可用工具栏 ↗ 在系统外打开。
+      可用工具栏 ↗ 在系统外打开;外网页面内的链接在本页内跳转,
+      「打开新窗口」类的链接会跳出系统浏览器。
     </p>`;
 }
 
@@ -113,9 +114,6 @@ register({
     let tabSeq = 0;
 
     const addr = el('input', { class: 'input vw-addr', placeholder: '输入地址:内网如 portal.nexus,外网如 example.com', spellcheck: 'false' });
-    // 地址栏左侧网络指示(挂锁位):外网 https 挂锁 / 内网地球
-    const urlIco = el('span', { class: 'vw-url-ico' }, icon('globe', 13));
-    const urlwrap = el('div', { class: 'vw-urlwrap' }, urlIco, addr);
     const statusL = el('span', {}, '就绪');
     const statusR = el('span', { class: 'dim mono' }, '');
     const back = el('button', { class: 'btn icon', title: '后退', onClick: () => go(-1) }, icon('chevronL', 15));
@@ -151,10 +149,15 @@ register({
       const tabEl = target.closest('.vw-tab');
       if (tabEl) {
         const i = +tabEl.dataset.idx;
+        const tb = tabs[i];
+        // 静音仅对内网页面可控(跨源 iframe 无法编程静音,浏览器安全模型限制)
+        const muteItem = tb && tb.net !== 'out'
+          ? [{ label: tb.muted ? '取消静音标签页' : '静音标签页', icon: tb.muted ? 'volume' : 'volumeX', fn: () => toggleMute(i) }] : [];
         return [
           { label: '新建标签页', icon: 'plus', fn: () => makeTab() },
-          { label: '重新载入标签页', icon: 'refresh', fn: () => { const tb = tabs[i]; if (tb) nav(tb, tb.history[tb.hIdx], { push: false }); } },
-          { label: '复制标签页', icon: 'copy', fn: () => { const tb = tabs[i]; if (tb) makeTab(tb.history[tb.hIdx]); } },
+          { label: '重新载入标签页', icon: 'refresh', fn: () => { if (tb) nav(tb, tb.history[tb.hIdx], { push: false }); } },
+          { label: '复制标签页', icon: 'copy', fn: () => { if (tb) makeTab(tb.history[tb.hIdx]); } },
+          ...muteItem,
           { label: '关闭其他标签页', icon: 'trash', fn: () => closeOthers(i) },
           { label: '关闭标签页', icon: 'close', fn: () => closeTab(i) },
         ];
@@ -223,24 +226,27 @@ register({
       fwd.disabled = tb.hIdx >= tb.history.length - 1;
       const cur = tb.history[tb.hIdx];
       addr.value = !cur || cur === 'about:start' ? '' : cur.replace(/^https?:\/\//, '');
-      const kind = routeNet(cur || '');
-      openExt.disabled = kind !== 'out';
-      // 地址栏左侧网络指示(Firefox 的挂锁位):外网 https 挂锁 / 内网地球
-      urlIco.innerHTML = '';
-      urlIco.append(icon(kind === 'out' ? 'lock' : 'globe', 13));
-      urlIco.title = kind === 'in' ? '内网 · 虚拟 DNS' : kind === 'out' ? '外网 · 真实互联网' : '';
-      urlIco.classList.toggle('out', kind === 'out');
+      openExt.disabled = routeNet(cur || '') !== 'out';
     }
 
     /* ---- 标签页生命周期 ---- */
 
     function makeTab(url) {
       const t = {
-        id: ++tabSeq, net: null, loading: false,
+        id: ++tabSeq, net: null, loading: false, muted: false,
         history: [url || 'about:start'], hIdx: 0,
         title: '', seq: 0, sl: '就绪', sr: '',
         page: el('div', { class: 'vw-page' }),
-        frame: el('iframe', { class: 'vw-iframe', hidden: '' }),
+        // 外网/代理 iframe:禁止自动出声;sandbox 只剥夺「顶层导航权」
+        // (阻止 target=_top 链接把整个 webos 页面劫持走,页面被迫留在标签内),
+        // 其余能力(脚本/表单/弹窗/下载/对话框)全部保留,站点功能不受影响。
+        // 注:跨源页面内的链接点击无法被网页 JS 感知或拦截(浏览器安全模型),
+        // _self 链接在页内跳转、_blank 会在真实浏览器开新标签——均不可改道。
+        frame: el('iframe', {
+          class: 'vw-iframe', hidden: '',
+          allow: "autoplay 'none'",
+          sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads',
+        }),
       };
       t.root = el('div', { class: 'vw-tabroot' }, t.page, t.frame);
       tabs.push(t);
@@ -248,6 +254,18 @@ register({
       nav(t, t.history[0], { push: false });
       if (!url) setTimeout(() => { addr.focus(); addr.select(); }, 0);   // Firefox:新标签页聚焦地址栏
       return t;
+    }
+
+    /* ---- 标签静音(Firefox 式;仅内网页面的 audio/video 可控,跨源 iframe 无解) ---- */
+    function applyMute(tb) {
+      tb.page.querySelectorAll('audio, video').forEach(m => { m.muted = tb.muted; });
+    }
+    function toggleMute(i) {
+      const tb = tabs[i];
+      if (!tb) return;
+      tb.muted = !tb.muted;
+      applyMute(tb);
+      renderTabs();
     }
 
     function activateTab(i) {
@@ -302,6 +320,7 @@ register({
         },
           el('span', { class: 'vw-tab-dot' }),
           el('span', { class: 'vw-tab-title' }, tb.title || '新标签页'),
+          tb.muted ? el('span', { class: 'vw-tab-mute', title: '已静音' }, icon('volumeX', 10)) : null,
           el('button', {
             class: 'vw-tab-x', title: '关闭标签页',
             onClick: (e) => { e.stopPropagation(); closeTab(i); },
@@ -450,6 +469,7 @@ register({
         tb.page.hidden = false;
         tb.page.innerHTML = startPage();
         wirePage(tb);
+        applyMute(tb);
         setStatus(tb, '导航页', '');
         setTabTitle(tb, '起始页');
       }, 120);
@@ -489,14 +509,40 @@ register({
               tb.page.hidden = false;
               tb.page.innerHTML = r.body || '<p class="dim">(空白页)</p>';
               wirePage(tb);
+              applyMute(tb);
             }
           });
         });
       });
     }
 
+    /** 外网页面右上角的非阻塞提示:部分站点拒绝被嵌入(X-Frame-Options)会显示空白 */
+    function showEmbedHint(tb) {
+      tb.hint?.remove();
+      const u = tb.history[tb.hIdx] || '';
+      tb.hint = el('div', { class: 'vw-embed-hint' },
+        el('span', {}, '页面空白?该站点可能拒绝被嵌入'),
+        el('button', {
+          class: 'btn', onClick: () => {
+            if (/^https?:/.test(u)) window.open(u, '_blank', 'noopener');
+            tb.hint?.remove();
+          },
+        }, '在系统外打开 ↗'),
+        el('button', {
+          class: 'btn icon', title: '关闭提示',
+          onClick: () => tb.hint?.remove(),
+        }, icon('close', 12)));
+      tb.root.append(tb.hint);
+      setTimeout(() => {
+        if (!tb.hint) return;
+        tb.hint.classList.add('fade');
+        setTimeout(() => tb.hint?.remove(), 400);
+      }, 8000);
+    }
+
     function navOut(tb, url, seq) {
       tb.page.hidden = true;
+      tb.hint?.remove();
 
       let u;
       try { u = new URL(url); } catch { return renderError(tb, 'badurl', {}); }
@@ -505,16 +551,29 @@ register({
       setStatus(tb, `正在连接 ${u.hostname}…`, '外网');
       tb.frame.hidden = false;
       tb.frame.src = u.href;
-      // 跨源 iframe 读不到内容:load 事件隐藏加载条,12s 兜底
+      // 跨源 iframe 读不到内容、URL 与错误;load 事件是我们唯一的信号。
+      // 首次 load 结束加载态,后续 load = 页面内跳转(地址栏无法同步)。
       let settled = false;
-      const done = () => {
+      if (tb.onFrameLoad) tb.frame.removeEventListener('load', tb.onFrameLoad);
+      tb.onFrameLoad = () => {
+        if (seq !== tb.seq) return;
+        if (!settled) {
+          settled = true;
+          setLoading(tb, false);
+          setStatus(tb, '完成(外网)', `${u.hostname} · 外网`);
+          showEmbedHint(tb);
+        } else {
+          setStatus(tb, '页内已跳转(地址栏未同步)');
+        }
+      };
+      tb.frame.addEventListener('load', tb.onFrameLoad);
+      setTimeout(() => {
         if (settled || seq !== tb.seq) return;
         settled = true;
         setLoading(tb, false);
-        setStatus(tb, '完成(外网)', `${u.hostname} · 外网`);
-      };
-      tb.frame.addEventListener('load', done, { once: true });
-      setTimeout(done, 12000);
+        setStatus(tb, '仍在加载或无法嵌入', `${u.hostname} · 外网`);
+        showEmbedHint(tb);
+      }, 6000);
     }
 
     /* ---- 地址栏(Firefox urlbar 行为) ---- */
@@ -568,7 +627,7 @@ register({
       tabstrip,
       el('div', { class: 'app-toolbar vw-toolbar' },
         back, fwd, reload, home,
-        urlwrap,
+        addr,
         openExt),
       content,
       el('div', { class: 'app-status' }, statusL,

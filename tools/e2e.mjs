@@ -3564,9 +3564,11 @@ group('T47', '浏览器多标签与内外网自动分流', async () => {
     tab: document.querySelector('.vw-tab.active').classList.contains('net-out'),
     title: document.querySelector('.vw-tab.active .vw-tab-title').textContent,
     src: (() => { const f = document.querySelector('.vw-iframe'); return !f.hidden ? (f.src || '') : ''; })(),
+    sandbox: (() => { const s = document.querySelector('.vw-iframe')?.getAttribute('sandbox') || ''; return s.includes('allow-scripts') && !s.includes('allow-top-navigation'); })(),
   }))()`);
-  t('T47.4 同一标签按地址自动切外网(变琥珀色)',
-    outState.tab === true && outState.src.startsWith('https://example.com'), JSON.stringify(outState));
+  t('T47.4 同一标签按地址自动切外网(变琥珀色,sandbox 防顶层劫持)',
+    outState.tab === true && outState.src.startsWith('https://example.com') && outState.sandbox === true,
+    JSON.stringify(outState));
 
   // 后退:回到内网门户,标签恢复内网色
   await ev(`document.querySelector('.win[data-app=browser] .app-toolbar .btn[title="后退"]').click()`);
@@ -3629,13 +3631,25 @@ group('T47', '浏览器多标签与内外网自动分流', async () => {
   t('T47.10 关闭其他标签页', await ev(`document.querySelectorAll('.vw-tab').length === 1 &&
     document.querySelector('.vw-tab').classList.contains('net-in')`));
 
+  // Firefox:标签静音(内网页面的 audio/video 可控;跨源外网页面无法编程静音)
+  const muted = await ev(`(async () => {
+    const tab = document.querySelector('.vw-tab.active');
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 500, clientY: 150 }));
+    const items = [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
+    const has = items.includes('静音标签页');
+    [...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('静音标签页'))?.click();
+    await new Promise(r => setTimeout(r, 150));
+    return { has, badge: !!document.querySelector('.vw-tab .vw-tab-mute') };
+  })()`);
+  t('T47.11 标签静音(Firefox)', muted.has && muted.badge, JSON.stringify(muted));
+
   // Firefox:点击地址栏即全选(用户路径;focus 事件在无头环境不派发,不作为断言路径)
   const sel = await ev(`(() => {
     const a = document.querySelector('.vw-addr');
     a.click();
     return { s: a.selectionStart, e: a.selectionEnd, len: a.value.length };
   })()`);
-  t('T47.11 地址栏聚焦全选(Firefox)', sel.s === 0 && sel.e === sel.len && sel.len > 0, JSON.stringify(sel));
+  t('T47.12 地址栏聚焦全选(Firefox)', sel.s === 0 && sel.e === sel.len && sel.len > 0, JSON.stringify(sel));
 
   // Firefox:Esc 还原地址栏为当前地址(当前停留在内网门户)
   const esc = await ev(`(() => {
@@ -3644,17 +3658,17 @@ group('T47', '浏览器多标签与内外网自动分流', async () => {
     a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return a.value;
   })()`);
-  t('T47.12 Esc 还原地址栏(Firefox)', esc === 'portal.nexus', esc);
+  t('T47.13 Esc 还原地址栏(Firefox)', esc === 'portal.nexus', esc);
   await c.shot('t47-browser-tabs');
 
   // Firefox:关闭最后一个标签页即关闭窗口
   await ev(`document.querySelector('.vw-tab .vw-tab-x').click()`);
   await sleep(500);
-  t('T47.13 关闭最后一个标签页关闭窗口',
+  t('T47.14 关闭最后一个标签页关闭窗口',
     await ev(`!document.querySelector('.win[data-app=browser]')`));
 
   const errs47 = await ev(`window.__errs.length`);
-  t('T47.14 全程无运行错误', errs47 === 0, `errs=${errs47}`);
+  t('T47.15 全程无运行错误', errs47 === 0, `errs=${errs47}`);
 });
 
 group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)', async () => {
