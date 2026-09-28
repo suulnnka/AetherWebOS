@@ -377,9 +377,17 @@ $('#desktop').addEventListener('contextmenu', (e) => {
 });
 
 /* ---- 桌面键盘操作:F2 重命名 / Delete 删除 / Enter 打开 / Ctrl+A 全选 ---- */
+/* 捕获相监听:必须在应用处理器之前判定 —— 应用(如 md 编辑器)可能在
+ * keydown 处理中重建 DOM,把事件 target 摘出文档树,使冒泡相的
+ * closest('.win') 与 activeElement 双双失效(曾致编辑器内回车反复
+ * 打开桌面选中项,弹个不停)。 */
 document.addEventListener('keydown', (e) => {
-  const tag = document.activeElement?.tagName;
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+  /* 仅桌面上下文生效:按键源自应用窗口(含 md 编辑器的 contenteditable
+   * 活动壳)、弹层或开始菜单时属于应用,不接管桌面选中项。 */
+  if (e.target?.closest?.('.win, .modal-mask, .modal-box, #start-menu, #ctx')) return;
+  const ae = document.activeElement;
+  const tag = ae?.tagName;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || ae?.isContentEditable) return;
   if (document.querySelector('.modal-shade')) return;
   const sel = selectedItems();
   if (!sel.length) {
@@ -403,4 +411,4 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     document.querySelectorAll('.dicon').forEach(d => d.classList.add('selected'));
   }
-});
+}, true);
