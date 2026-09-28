@@ -1,10 +1,12 @@
 /* ============================================================
  * 应用:Markdown 编辑器
  *
- * 基于 js/lib/mdedit.js 的所见即所得组件(Typora 式):单栏,
- * 活动块显示 markdown 原文,其余块实时渲染。文件读写走虚拟文件
- * 系统(ctx.fs),支持 .md 双击直达(文件管家/桌面/终端 edit 命令
- * 均已分流)、导出自包含 HTML。骨架参考记事本(notes)。
+ * 基于 js/lib/mdedit.js 的所见即所得组件(Typora 式):单栏即写即
+ * 现,没有独立的预览页 —— 阅读与书写是同一份渲染。应用层加「编辑」
+ * 键解锁:默认只读浏览(整篇渲染),点「编辑」后方可落笔,再点一次
+ * 「完成」回到只读;文件不可写(无写权限 / 未登录)时编辑键置灰。
+ * 文件读写走虚拟文件系统(ctx.fs),支持 .md 双击直达(文件管家/
+ * 桌面/终端 edit 命令均已分流)、导出自包含 HTML。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -54,22 +56,29 @@ register({
     const nameEl = el('span', { class: 'dim', style: { fontSize: '12.5px', marginLeft: '8px' } });
     const stat = el('span', {}, '');
 
-    /* 编辑 / 预览 分段切换 */
-    const segEdit = el('button', { class: 'seg-btn active' }, '编辑');
-    const segPrev = el('button', { class: 'seg-btn' }, '预览');
-    const setMode = (preview) => {
-      segEdit.classList.toggle('active', !preview);
-      segPrev.classList.toggle('active', preview);
-      ed.preview(preview);
+    /* 编辑锁:默认只读浏览,「编辑」键解锁(无独立预览页,同一份渲染) */
+    let editing = false;
+    const editBtn = el('button', { class: 'btn', onClick: () => setEditing(!editing) });
+    /** 未保存的新文档可写(可另存);已有文件按执行用户的写权限判定 */
+    const writable = () => (path ? fs.can(path, 'w') : true);
+
+    function setEditing(on) {
+      if (on && !writable()) return;                        // 置灰兜底(权限可能在会话中变化)
+      editing = on;
+      ed.preview(!on);
+      editBtn.classList.toggle('primary', on);
+      editBtn.replaceChildren(icon(on ? 'check' : 'pencil', 13), on ? '完成' : '编辑');
+      if (on) setTimeout(() => ed.focus(), 30);
       refreshChrome();
-    };
-    segEdit.onclick = () => setMode(false);
-    segPrev.onclick = () => setMode(true);
+    }
 
     function refreshChrome() {
       const name = path ? fs.basename(path) : '未命名';
       nameEl.textContent = path || '尚未保存到文件系统';
       setTitle((dirty ? '● ' : '') + name + ' — Markdown 编辑器');
+      editBtn.disabled = editing ? false : !writable();     // 编辑中保持可点(「完成」退出)
+      editBtn.title = editing ? '退出编辑,回到只读'
+        : writable() ? '点击开始编辑' : '当前用户对此文件无写权限';
       const md = ed.get();
       const chars = md.length;
       const lines = md.split('\n').length;
@@ -84,7 +93,7 @@ register({
       path = p;
       ed.set(c);
       dirty = false;
-      setMode(false);
+      setEditing(false);                                    // 打开即只读浏览
       refreshChrome();
     }
 
@@ -154,23 +163,21 @@ register({
         el('button', { class: 'btn', onClick: () => save(false) }, icon('save', 13), '保存'),
         el('button', { class: 'btn', onClick: () => save(true) }, icon('filePlus', 13), '另存为'),
         el('button', { class: 'btn', onClick: exportHtml }, icon('external', 13), '导出 HTML'),
-        el('span', { style: { width: '6px' } }),
-        el('div', { class: 'seg' }, segEdit, segPrev),
+        editBtn,
         el('span', { class: 'grow' }),
         nameEl),
       ed.el,
       el('div', { class: 'app-status' }, stat,
         el('span', { class: 'grow' }),
-        el('span', {}, '所见即所得 · Ctrl+S 保存'))));
+        el('span', {}, '所见即所得 · 「编辑」解锁修改 · Ctrl+S 保存'))));
 
-    /* 打开已有文件(文件管家 / 桌面 / 终端推送) */
+    /* 打开已有文件(文件管家 / 桌面 / 终端推送):默认只读浏览 */
     if (path) {
       const content = fs.read(path);
       if (content == null) { bus.notify('文件不存在', path); path = null; }
       else ed.set(content);
     }
-    refreshChrome();
-    setTimeout(() => ed.focus(), 60);
+    setEditing(false);
 
     const off = bus.on('params', (p) => { if (p?.path) loadPath(p.path); });
 

@@ -16,9 +16,11 @@
  * 在 DOM 重建后不可靠)。中文输入法:composition 期间不重建 DOM。
  *
  * API:
- *   createMdEditor({ value, placeholder, toolbar, compact, onInput })
+ *   createMdEditor({ value, placeholder, compact, onInput })
  *     → { el, get(), set(text), focus(), preview(on), undo(), redo(), exec(cmd) }
  *   同时挂在 el.$md 上,宿主应用与 e2e 可直接取用。
+ *   preview(true) 为只读态(整篇渲染、点击不激活):宿主应用以此为
+ *   默认浏览态,由应用层的「编辑」按钮解锁进入编辑(无独立预览页)。
  *
  * 依赖:仅 js/lib/md.js 与同目录 mdedit.css(不 import core,保持
  * 自研库自包含,与 minimap 同约定)。
@@ -136,7 +138,7 @@ function setCaret(el, off) {
   sel.addRange(r);
 }
 
-/** 选中 [a, z) 文本(工具栏插入占位符后便于直接键入替换) */
+/** 选中 [a, z) 文本(格式命令插入占位符后便于直接键入替换) */
 function setSel(el, a, z) {
   el.focus();
   const sel = document.getSelection();
@@ -161,33 +163,10 @@ function setSel(el, a, z) {
   sel.addRange(r);
 }
 
-/* ---------- 工具栏定义 ---------- */
-
-const BTNS = [
-  ['bold', 'B', '粗体 **(Ctrl+B)'],
-  ['italic', 'I', '斜体 *(Ctrl+I)'],
-  ['strike', 'S', '删除线 ~~'],
-  ['code', '‹›', '行内代码 `'],
-  ['h1', 'H1', '一级标题'],
-  ['h2', 'H2', '二级标题'],
-  ['h3', 'H3', '三级标题'],
-  ['sep'],
-  ['ul', '•', '无序列表'],
-  ['ol', '1.', '有序列表'],
-  ['task', '☑', '任务列表'],
-  ['quote', '❝', '引用'],
-  ['sep'],
-  ['link', '🔗', '链接(Ctrl+K)'],
-  ['image', '🖼', '图片'],
-  ['table', '⊞', '表格'],
-  ['codeblock', '{ }', '代码块'],
-  ['hr', '―', '分隔线'],
-];
-
 /* ---------- 组件 ---------- */
 
 export function createMdEditor(opts = {}) {
-  const { placeholder = '', toolbar = true, compact = false, onInput = null } = opts;
+  const { placeholder = '', compact = false, onInput = null } = opts;
   let src = String(opts.value ?? '').replace(/\r\n?/g, '\n');
   let doc = parse(src);
   let active = 0;             // 活动块下标(与 surface 子节点一一对应)
@@ -204,8 +183,7 @@ export function createMdEditor(opts = {}) {
 
   const surface = h('div', 'md-surface');
   if (placeholder) surface.setAttribute('data-ph', placeholder);
-  const root = h('div', 'md-edit' + (compact ? ' compact' : '') + (toolbar ? '' : ' no-bar'));
-  if (toolbar) root.append(makeToolbar());
+  const root = h('div', 'md-edit' + (compact ? ' compact' : ''));
   root.append(surface);
 
   /* ---------- 基础 ---------- */
@@ -603,7 +581,7 @@ export function createMdEditor(opts = {}) {
     }
   }
 
-  /* ---------- 工具栏命令(也供宿主 exec 调用) ---------- */
+  /* ---------- 格式命令(Ctrl+B/I/K 快捷键与宿主 exec 调用) ---------- */
 
   function exec(cmd) {
     if (previewing || !rawEl) return;
@@ -695,21 +673,6 @@ export function createMdEditor(opts = {}) {
       setCaret(rawEl, t.split('\n').slice(0, line).join('\n').length + (line ? 1 : 0));
     });
     fireInput();
-  }
-
-  function makeToolbar() {
-    const bar = h('div', 'md-toolbar');
-    for (const item of BTNS) {
-      if (item[0] === 'sep') { bar.append(h('span', 'md-tsep')); continue; }
-      const [cmd, label, tip] = item;
-      const btn = h('button', 'md-tbtn', label);
-      btn.type = 'button';
-      btn.title = tip;
-      btn.addEventListener('pointerdown', (e) => e.preventDefault());   // 不抢活动壳焦点
-      btn.addEventListener('click', () => exec(cmd));
-      bar.append(btn);
-    }
-    return bar;
   }
 
   /* ---------- 任务勾选 / 点击定位 ---------- */
@@ -824,13 +787,14 @@ export function createMdEditor(opts = {}) {
   const api = {
     el: root,
     get: () => src,
-    /** 整体替换(打开文件 / 切换日记日期):重置 undo 栈 */
+    /** 整体替换(打开文件 / 切换日记日期):重置 undo 栈;只读态保持全渲染 */
     set(text) {
       src = String(text ?? '').replace(/\r\n?/g, '\n');
       ephLine = -1;
       reparse();
       undoS = []; redoS = []; pendingRebuild = null;
       renderAll(0);
+      if (previewing) deactivate();
       refreshEmpty();
     },
     focus() {

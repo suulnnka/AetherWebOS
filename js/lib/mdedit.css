@@ -11,27 +11,14 @@
 
 .md-edit { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 
-.md-toolbar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-  padding: 6px 8px; border-bottom: 1px solid var(--border);
-  background: var(--panel); flex-shrink: 0;
-}
-.md-tbtn {
-  min-width: 27px; height: 26px; padding: 0 6px; border-radius: 6px;
-  font-size: 12.5px; color: var(--text-2);
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background .12s, color .12s;
-}
-.md-tbtn:hover { background: var(--hover); color: var(--text); }
-.md-tbtn:active { transform: translateY(1px); }
-.md-tsep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
-
 .md-surface { flex: 1; overflow-y: auto; position: relative; padding: 12px 18px 140px; min-height: 0; }
 .md-edit.empty .md-surface::before {
   content: attr(data-ph);
   position: absolute; top: 12px; left: 24px;
   color: var(--text-2); opacity: .7; pointer-events: none;
 }
+/* 只读态即文档的真实渲染:空文档不显示占位文案 */
+.md-edit.preview.empty .md-surface::before { display: none; }
 
 /* ---------- 块与活动壳 ---------- */
 
@@ -117,6 +104,5 @@
 
 /* ---------- 紧凑模式(弹层内嵌,如笔记编辑) ---------- */
 
-.md-edit.compact .md-toolbar { padding: 4px 6px; }
 .md-edit.compact .md-surface { padding: 8px 12px 64px; }
 .md-edit.compact .md-block { padding: 1px 4px; margin: 1px 0; }

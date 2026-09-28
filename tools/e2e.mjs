@@ -3662,6 +3662,8 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await fresh();
   await ev(`WebOS.wm.open('mdedit')`);
   await sleep(700);
+  // 标记首窗口:后续多窗口步骤按标记区分,不依赖 DOM 顺序(聚焦会重排 z 序)
+  await ev(`document.querySelector('.win[data-app=mdedit]').__first = true`);
 
   // 骨架:无文字工具栏;只读起步(无活动壳),编辑键可点
   const s0 = await ev(`(() => {
@@ -3734,6 +3736,8 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
 
   // 另存为 .md → 虚拟文件系统;文件管家双击分流回编辑器
   const mdPath = (await ev(`WebOS.fs.homePath()`)) + '/documents/md-e2e.md';
+  // profile 持久:清上一轮残留(上一轮 T48.9 曾把该文件 chmod 成只读)
+  await ev(`WebOS.fs.rm(${JSON.stringify(mdPath)})`);
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
     w.querySelector('.md-edit').$md.set('# 保存测试\\n\\n内容 **在这里**');
@@ -3762,28 +3766,29 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await sleep(600);
   const s4 = await ev(`(() => {
     const wins = [...document.querySelectorAll('.win[data-app=mdedit]')];
-    const last = wins[wins.length - 1];
-    return { wins: wins.length, md: last ? last.querySelector('.md-edit').$md.get() : null };
+    const w2 = wins.find(w => !w.__first);
+    if (w2) w2.__second = true;
+    return { wins: wins.length, md: w2 ? w2.querySelector('.md-edit').$md.get() : null };
   })()`);
-  t('T48.7 文件管家双击 .md → Markdown 编辑器', s4.wins === 2 && s4.md.includes('保存测试'), JSON.stringify(s4.md).slice(0, 30));
+  t('T48.7 文件管家双击 .md → Markdown 编辑器(只读装载)', s4.wins === 2 && s4.md.includes('保存测试'), JSON.stringify(s4.md).slice(0, 30));
 
-  // 编辑键切换:第二窗口(双击打开)只读起步 → 编辑出现活动壳 → 完成回只读渲染
+  // 编辑键切换:第二窗口只读起步 → 编辑出现活动壳 → 完成回只读渲染
   await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
     [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
   })()`);
   await sleep(200);
   const s5a = await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
     return { raw: w.querySelectorAll('.md-raw').length };
   })()`);
   await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
     [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成')).click();
   })()`);
   await sleep(200);
   const s5 = await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => x.__second);
     return { raw: w.querySelectorAll('.md-raw').length, h1: w.querySelectorAll('.md-block h1').length };
   })()`);
   t('T48.8 编辑键切换(解锁出现活动壳 / 完成整篇渲染)', s5a.raw === 1 && s5.raw === 0 && s5.h1 >= 1, JSON.stringify({ s5a, s5 }));
@@ -3793,14 +3798,18 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
     WebOS.fs.chmod(${JSON.stringify(mdPath)}, 'r--r--');
     WebOS.wm.open('mdedit', { params: { path: ${JSON.stringify(mdPath)} } });
   })()`);
-  await sleep(600);
+  await waitFor(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
+    return !!w && !![...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
+  })()`, 5000);
   const s6 = await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
     const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
     return { dis: eb ? eb.disabled : null, h1: w.querySelectorAll('.md-block h1').length,
              raw: w.querySelectorAll('.md-raw').length };
   })()`);
   t('T48.9 文件不可写 → 编辑键置灰(内容仍可读)', s6.dis === true && s6.h1 >= 1 && s6.raw === 0, JSON.stringify(s6));
+  await ev(`WebOS.fs.chmod(${JSON.stringify(mdPath)}, 'rw-r--')`);   // 还原权限,不污染后续轮次
 
   const errs = await ev(`window.__errs.length`);
   t('T48.10 全程无错误', errs === 0, `errs=${errs}`);
