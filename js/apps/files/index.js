@@ -8,7 +8,8 @@ import { open } from '../../core/wm.js';
 import { showMenu } from '../../core/menu.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
-import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
+import { isAppLink, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
+import { inplaceRename } from '../../core/rename.js';
 
 /** 快捷入口:随执行用户家目录变化 */
 function quickPlaces(home) {
@@ -91,7 +92,7 @@ function openItem(item) {
         // 应用快捷方式:启动目标应用(单实例应用复用已有窗口)
         const app = appLinkApp(item.path);
         if (app) open(app.id);
-        else bus.notify('快捷方式失效', `「${displayName(item.name)}」指向的应用不存在`);
+        else bus.notify('快捷方式失效', `「${item.name}」指向的应用不存在`);
       }
       else if (/\.zip$/i.test(item.name)) browseZip(item);   // ZIP:打开包内浏览器
       else if (isEncrypted(fs.read(item.path))) {
@@ -220,12 +221,17 @@ function openItem(item) {
       bus.notify('已创建', name.trim());
     }
 
-    async function renameItem(item) {
-      const name = await modalPrompt('重命名', '新名称', item.name);
-      if (name == null || !name.trim() || name.trim() === item.name) return;
-      fs.rename(item.path, fs.joinPath(cwd, name.trim()));
-      selected = null;
-      render();
+    /** 就地重命名(Mac 式):直接在条目名称上编辑真实文件名(主名预选) */
+    function renameItem(item) {
+      const label = grid.querySelector(`.fitem[data-path="${CSS.escape(item.path)}"] .f-name`);
+      if (!label) return;
+      inplaceRename(label, item.name, (next) => {
+        const name = next.trim();
+        if (!name || name === item.name) return;
+        fs.rename(item.path, fs.joinPath(cwd, name));
+        selected = null;
+        render();
+      });
     }
 
     async function deleteItem(item) {
@@ -298,7 +304,7 @@ function openItem(item) {
           },
         },
           el('span', { class: 'f-ico', style: { color: fi.color } }, icon(fi.name, fi.size)),
-          el('span', { class: 'f-name', title: item.path }, (encrypted ? '🔒 ' : '') + displayName(item.name)));
+          el('span', { class: 'f-name', title: item.path }, (encrypted ? '🔒 ' : '') + item.name));
         // .app 快捷方式也是启动入口:悬停预读目标应用 chunk
         if (!item.dir && isAppLink(item.name)) {
           const linkApp = appLinkApp(item.path);

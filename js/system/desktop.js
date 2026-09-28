@@ -6,9 +6,14 @@ import fs, { desktopPath } from '../core/fs.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
-import { isAppLink, displayName, appLinkApp, createAppLink, appLinkMenuItems, hoverPrefetch, desktopDir, ensureDesktopShortcuts } from '../core/applink.js';
+import { isAppLink, appLinkApp, createAppLink, appLinkMenuItems, hoverPrefetch, desktopDir, ensureDesktopShortcuts } from '../core/applink.js';
+import { inplaceRename } from '../core/rename.js';
 import { renderPinned, pinnedApps, togglePin } from './taskbar.js';
 import { accounts } from '../core/accounts.js';
+
+/** 桌面标签显示名:隐藏 .app 后缀(macOS 桌面式,仅桌面渲染使用;
+ * 文件管家、终端与重命名编辑的仍是真实文件名) */
+const displayName = (name) => String(name).replace(/\.app$/i, '');
 
 /* 桌面:壁纸 + 图标(桌面即 ~/desktop = /home/<user>/desktop:
  * 文件、文件夹与 .app 快捷方式;应用入口以快捷方式文件存在)*/
@@ -72,7 +77,7 @@ function openFsItem(item) {
   if (isAppLink(item.name)) {
     const app = appLinkApp(item.path);
     if (app) return wm.open(app.id);
-    dialogs.error({ title: '快捷方式失效', message: `「${displayName(item.name)}」指向的应用不存在。` });
+    dialogs.error({ title: '快捷方式失效', message: `「${item.name}」指向的应用不存在。` });
     return;
   }
   if (/\.md$/i.test(item.name)) return wm.open('mdedit', { params: { path: item.path } });
@@ -100,10 +105,17 @@ async function desktopNew(kind) {
   if (kind === 'dir') fs.mkdir(p); else fs.write(p, '');
 }
 
-async function desktopRename(path) {
-  const name = await dialogs.prompt({ title: '重命名', message: '新名称:', value: fs.basename(path) });
-  if (name == null || !name.trim() || name.trim() === fs.basename(path)) return;
-  fs.rename(path, fs.joinPath(fs.parentPath(path), name.trim()));
+/** 就地重命名(Mac 式):直接在图标标签上编辑。
+ * .app 快捷方式编辑显示名(后缀已隐藏),提交时自动补回,保持快捷方式语义。 */
+function desktopRename(item) {
+  const label = document.querySelector(`.dicon[data-key="${CSS.escape(item.key)}"] .label`);
+  if (!label) return;
+  inplaceRename(label, displayName(item.name), (next) => {
+    let name = next;
+    if (isAppLink(item.name) && !/\.app$/i.test(name)) name += '.app';
+    if (name === item.name) return;
+    fs.rename(item.path, fs.joinPath(fs.parentPath(item.path), name));
+  });
 }
 
 async function desktopDelete(paths) {
@@ -208,12 +220,12 @@ export function renderDesktopIcons() {
     tile.append(icon(item.icon, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile') || 48) * 0.52) || 24));
     if (item.link) tile.append(el('span', { class: 'lnk-badge' }, icon('external', 9)));
 
-    const tipText = item.label || item.name;
+    const tipText = item.name;   // 悬停提示始终给真实文件名(含 .app)
     const node = el('button', {
       class: 'dicon',
       dataset: { key: item.key, kind: item.kind, ...(item.dir ? { dir: '1' } : {}) },
       style: { left: pos.x + 'px', top: pos.y + 'px' },
-    }, tile, el('span', { class: 'label' }, tipText));
+    }, tile, el('span', { class: 'label' }, item.label || item.name));
     bindIconTip(node, tipText);
 
     const clearDropHover = () =>
@@ -284,7 +296,7 @@ export function renderDesktopIcons() {
         ...(item.dir ? [{ label: '在文件管家中打开', icon: 'folder', fn: () => wm.open('files', { params: { path: item.path } }) }] : []),
         ...(linkApp ? [{ label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(linkApp.id) }] : []),
         { sep: true },
-        { label: '重命名(F2)', icon: 'pencil', fn: () => desktopRename(item.path) },
+        { label: '重命名(F2)', icon: 'pencil', fn: () => desktopRename(item) },
         { label: '删除(Del)', icon: 'trash', danger: true, fn: () => desktopDelete(selectedItems().map(s => s.path)) },
       ]);
     });
@@ -399,7 +411,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'F2' && sel.length === 1) {
     e.preventDefault();
-    desktopRename(sel[0].path);
+    desktopRename(sel[0]);
   } else if (e.key === 'Delete') {
     e.preventDefault();
     const paths = sel.map(s => s.path);

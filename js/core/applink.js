@@ -27,9 +27,6 @@ export function desktopDir(user = accounts.current()) {
 /** 文件名是否为应用快捷方式 */
 export const isAppLink = (name) => String(name).toLowerCase().endsWith(APPEXT);
 
-/** 快捷方式的显示名(隐藏 .app 扩展名,像 .lnk 一样) */
-export const displayName = (name) => String(name).replace(/\.app$/i, '');
-
 /** 读快捷方式指向的应用清单;文件缺失/内容无效时返回 null */
 export function appLinkApp(path) {
   const content = fs.read(path) ?? fs.readRaw(path);
@@ -62,7 +59,7 @@ export function sendAppToDesktop(appId) {
   if (!dir) return null;
   const p = createAppLink(dir, appId);
   if (p && app) {
-    publish('sys:notify', { from: 'applink', type: 'notify', payload: { title: '已发送到桌面', body: displayName(fs.basename(p)) } });
+    publish('sys:notify', { from: 'applink', type: 'notify', payload: { title: '已发送到桌面', body: fs.basename(p) } });
   }
   return p;
 }
