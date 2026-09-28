@@ -9,12 +9,11 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './mail.css';
-import { open, reopen } from '../../core/wm.js';
+import { open } from '../../core/wm.js';
 import mail from '../../core/mail.js';
 import { settings } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
-import { accounts } from '../../core/accounts.js';
-import { requireLogin, logoutButton } from '../../core/loginpanel.js';
+
 
 const FOLDERS = [
   { id: 'inbox', name: '收件箱', icon: 'mail' },
@@ -39,10 +38,8 @@ const isDirish = (p) => !/\.[a-z0-9]{1,6}$/i.test(p);
 
 register({
   ...manifest,
-  mount({ root, setTitle, bus, accounts: _a }) {
-    // ---- 账号门 ----
-    if (requireLogin(root, '邮件', () => { root.innerHTML = ''; appRemount(); })) return;
-    const bootUser = accounts.current();
+  mount({ root, setTitle, bus }) {
+    // 邮件有自有账号体系(邮箱地址),不设系统登录门槛
     let folder = 'inbox';
     let selId = null;
     let composing = null;   // { to, subject, body, draftId } | null
@@ -213,8 +210,7 @@ register({
         replyBtn, delBtn,
         el('button', { class: 'btn icon', title: '刷新', onClick: () => render() }, icon('refresh', 14)),
         el('span', { class: 'grow' }),
-        logoutButton(() => { root.innerHTML = ''; appRemount(); }),
-        el('span', { class: 'badge-pill mono' }, `${settings.get('username')}@aetherwebos`)),
+        el('span', { class: 'badge-pill mono' }, mail.mailbox())),
       el('div', { class: 'app-mid' }, side, right),
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
@@ -224,16 +220,11 @@ register({
     const offNew = subscribe('mail:new', () => render());
     const offChanged = subscribe('mail:changed', () => render());
     render();
-    // appdata 水合完成后重绘
-    if (bootUser) {
-      mail.setUser(bootUser).then(() => render()).catch(() => {});
-    }
-    return { onClose() { offNew(); offChanged(); return true; } };
+    // 邮箱数据水合完成后重绘(username 变更换邮箱时同样触发)
+    mail.setUser().then(() => render()).catch(() => {});
+    const offBox = subscribe('sys:settings-changed', (payload) => {
+      if (payload?.changed?.includes?.('username')) render();
+    });
+    return { onClose() { offNew(); offChanged(); offBox(); return true; } };
   },
 });
-
-
-/** 重新挂载当前应用(登录状态变化后调用) */
-function appRemount() {
-  reopen('mail');
-}

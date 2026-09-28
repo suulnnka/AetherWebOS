@@ -4,8 +4,10 @@
  * 按日期记录每一天:左侧月历导航(有日记的日子带圆点标记,
  * 已加密的日子带 🔒;点击切换日期,跨月自动翻页),右侧编辑正文
  * 并选择心情;输入即自动保存(防抖),「今天」一键回位。
- * 与账号无关:数据落在共享页加密库 /home/shared/appdata/diary.awdb
- * (旧 localStorage 键与旧按用户库自动一次性迁入)。
+ * 数据按系统用户独立存储(~/appdata/diary.awdb),但应用本身
+ * 不设登录门槛:未登录时可写,内容仅本次会话保留(状态栏提示);
+ * 登录/切换账号后自动装载对应用户的数据。共享库时期的旧数据
+ * 一次性反向迁回当前用户。
  *
  * 按天加密(AES-GCM,复用 core/crypto):
  *  - 「加密本页」为当天日记设密码,存储为密文;
@@ -17,8 +19,10 @@ import { el } from '../../core/utils.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './diary.css';
+import { accounts } from '../../core/accounts.js';
+import { subscribe } from '../../core/bus.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
-import { adoptSharedState, saveSharedState } from '../../core/appdata.js';
+import { loadState, saveState, loadSharedState, migrateFromLocalStorage } from '../../core/appdata.js';
 import { createMdEditor } from '../../lib/mdedit.js';
 
 const KEY = 'webos.diary.v1';
@@ -38,17 +42,22 @@ function normalize(raw) {
 }
 
 async function loadAsync() {
+  const user = accounts.current();
+  if (!user) return null;                       // 未登录:会话内存态,不落盘
   try {
-    const adopted = await adoptSharedState('diary', (s) =>
-      Object.values(s?.entries || {}).filter((e) => e?.text).length);
-    if (adopted) return normalize(adopted);
-    /* 旧 localStorage 遗留键(历史版本按用户命名)一次性迁入 */
-    for (const k of Object.keys(localStorage)) {
-      if (!k.startsWith(KEY)) continue;
-      try {
-        const data = normalize(JSON.parse(localStorage.getItem(k)));
-        if (Object.keys(data.entries).length) { await saveSharedState('diary', data); return data; }
-      } catch { /* 坏键跳过 */ }
+    const data = await migrateFromLocalStorage('diary', `${KEY}::${user}`, normalize, user);
+    if (data) return data;
+    const s = await loadState('diary', user);
+    if (s) return normalize(s);
+    /* 一次性反向迁移:共享库时期(免登录改造当天)的数据收回本用户 */
+    const flag = `webos.appdata.sharedback::diary::${user}`;
+    if (!localStorage.getItem(flag)) {
+      localStorage.setItem(flag, '1');
+      const shared = await loadSharedState('diary').catch(() => null);
+      if (shared && Object.keys(shared.entries || {}).length) {
+        await saveState('diary', shared, user);
+        return normalize(shared);
+      }
     }
     return null;
   } catch (e) {
@@ -62,7 +71,8 @@ let saveT;
 const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
-    if (!state) return;
+    const user = accounts.current();
+    if (!user || !state) return;
     try {
       const out = { seq: state.seq, entries: {} };
       for (const [k, e] of Object.entries(state.entries)) {
@@ -72,7 +82,7 @@ const persist = () => {
         }
         out.entries[k] = e;
       }
-      await saveSharedState('diary', out);
+      await saveState('diary', out, user);
     } catch (e) {
       console.warn('[diary] 持久化失败', e);
     }
@@ -89,6 +99,19 @@ register({
     unlocked = new Map();
     loadAsync().then((s) => {
       if (s) { state = s; render(); }
+    });
+
+    /* 登录 / 切换账号 / 注销:自动装载对应用户的数据(未登录 → 空态) */
+    const offAcc = subscribe('accounts:changed', (payload, msg) => {
+      const t = msg?.type;
+      if (t !== 'login' && t !== 'register' && t !== 'created' && t !== 'logout') return;
+      loadAsync().then((s) => {
+        state = s || { seq: 1, entries: {} };
+        unlocked = new Map();
+        sel = new Date();
+        viewY = sel.getFullYear(); viewM = sel.getMonth();
+        render();
+      });
     });
 
     let sel = new Date();                     // 当前选中的日期
@@ -156,7 +179,8 @@ register({
       const chars = Object.values(state.entries)
         .reduce((s, e) => s + (e.lock && isEncrypted(e.text) ? 0 : (e.text?.length || 0)), 0);
       const locks = Object.values(state.entries).filter((e) => e.lock).length;
-      statusL.textContent = `${count()} 篇日记 · 共 ${chars} 字${locks ? ` · 🔒${locks} 页加密` : ''}`;
+      statusL.textContent = `${count()} 篇日记 · 共 ${chars} 字${locks ? ` · 🔒${locks} 页加密` : ''}`
+        + (accounts.current() ? '' : ' · 未登录,内容仅本次会话保留');
       const k = keyOf(sel);
       const cur = entryOf(k);
       if (cur?.lock) {
@@ -330,6 +354,9 @@ register({
         el('span', {}, '按日期记录,输入即自动保存;单页可加密'))));
 
     render();
-    return { onClose() { return true; } };
+    refreshChrome();
+    return {
+      onClose() { offAcc(); return true; },
+    };
   },
 });

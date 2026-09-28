@@ -6,16 +6,19 @@
  *  - 加密后存储为密文,列表只显示锁标与标题;
  *  - 打开需输入密码,解锁后可查看与编辑(保存即重新加密);
  *  - 忘记密码无法找回(无后门),但可删除重建。
- * 数据:与账号无关,共享页加密库 /home/shared/appdata/memo.awdb
- * (旧 localStorage 键与旧按用户库自动一次性迁入)。
+ * 数据按系统用户独立存储(~/appdata/memo.awdb),应用本身不设登录
+ * 门槛:未登录时可写,内容仅本次会话保留(状态栏提示);登录/切换
+ * 账号后自动装载对应用户的数据。共享库时期的旧数据一次性反向迁回。
  * ============================================================ */
 import { el, escapeHtml } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './memo.css';
+import { accounts } from '../../core/accounts.js';
+import { subscribe } from '../../core/bus.js';
 import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
-import { adoptSharedState, saveSharedState } from '../../core/appdata.js';
+import { loadState, saveState, loadSharedState, migrateFromLocalStorage } from '../../core/appdata.js';
 import { createMdEditor } from '../../lib/mdedit.js';
 import { render as mdRender } from '../../lib/md.js';
 
@@ -40,16 +43,22 @@ function normalize(raw) {
 }
 
 async function loadAsync() {
+  const user = accounts.current();
+  if (!user) return null;                       // 未登录:会话内存态,不落盘
   try {
-    const adopted = await adoptSharedState('memo', (s) => (Array.isArray(s?.memos) ? s.memos.length : 0));
-    if (adopted) return normalize(adopted);
-    /* 旧 localStorage 遗留键(历史版本按用户命名)一次性迁入 */
-    for (const k of Object.keys(localStorage)) {
-      if (!k.startsWith(KEY)) continue;
-      try {
-        const data = normalize(JSON.parse(localStorage.getItem(k)));
-        if (data) { await saveSharedState('memo', data); return data; }
-      } catch { /* 坏键跳过 */ }
+    const data = await migrateFromLocalStorage('memo', `${KEY}::${user}`, normalize, user);
+    if (data) return data;
+    const s = await loadState('memo', user);
+    if (s) return normalize(s);
+    /* 一次性反向迁移:共享库时期的数据收回本用户 */
+    const flag = `webos.appdata.sharedback::memo::${user}`;
+    if (!localStorage.getItem(flag)) {
+      localStorage.setItem(flag, '1');
+      const shared = await loadSharedState('memo').catch(() => null);
+      if (shared && Array.isArray(shared.memos) && shared.memos.length) {
+        await saveState('memo', shared, user);
+        return normalize(shared);
+      }
     }
     return null;
   } catch (e) {
@@ -62,7 +71,9 @@ let saveT;
 const persist = () => {
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
-    try { await saveSharedState('memo', state); }
+    const user = accounts.current();
+    if (!user || !state) return;
+    try { await saveState('memo', state, user); }
     catch (e) { console.warn('[memo] 持久化失败', e); }
   }, 200);
 };
@@ -212,7 +223,7 @@ register({
         .filter(m => !q || m.title.toLowerCase().includes(q) || (plainCache[m.id] || '').toLowerCase().includes(q))
         .sort((a, b) => (b.pinned - a.pinned) || (b.created - a.created));
 
-      statusL.textContent = `${state.memos.length} 条笔记`;
+      statusL.textContent = `${state.memos.length} 条笔记` + (accounts.current() ? '' : ' · 未登录,内容仅本次会话保留');
       if (!memos.length) {
         grid.append(el('div', { class: 'empty', style: { gridColumn: '1/-1' } }, icon('fileText', 40), '暂无笔记,点击左上角新建'));
       }
@@ -271,6 +282,20 @@ register({
     loadAsync().then((s) => {
       if (s) { state = s; render(); }
     });
-    return { onClose() { return true; } };
+
+    /* 登录 / 切换账号 / 注销:自动装载对应用户的数据(未登录 → 种子空态) */
+    const offAcc = subscribe('accounts:changed', (payload, msg) => {
+      const t = msg?.type;
+      if (t !== 'login' && t !== 'register' && t !== 'created' && t !== 'logout') return;
+      loadAsync().then((s) => {
+        state = s || defaultState();
+        plainCache = {};
+        render();
+      });
+    });
+
+    return {
+      onClose() { offAcc(); return true; },
+    };
   },
 });

@@ -10,11 +10,10 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './qq.css';
-import { accounts } from '../../core/accounts.js';
+import { loadIdentityState, saveIdentityState } from '../../core/appdata.js';
 
 const KEY = 'webos.qq.v1';
-let keyUser = 'guest';                 // 登录时确定,Q Q 数据与该绑定一致
-const userKey = () => `${KEY}::${keyUser}`;
+let keyUser = null;                    // 登录时确定(QQ 号码),数据与号码绑定
 
 const FRIENDS = [
   { qq: '10001', name: '小雨', avatar: '🌧', color: '#5b9bd5', group: '好友',
@@ -29,27 +28,43 @@ const FRIENDS = [
     replies: ['您好,请问有什么可以帮您?', '已收到您的问题,正在处理中。', '您可以试试重启一下 :)'] },
 ];
 
-const loadState = () => {
-  try {
-    const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && s.user && s.history && typeof s.history === 'object') return s;
-  } catch { /* 忽略 */ }
-  return null;
-};
-
 register({
   ...manifest,
   mount({ root, setTitle, bus }) {
     root.classList.add('qq-app');
-    let saved = loadState();
-    let user = saved?.user || null;
-    let history = saved?.history || {};      // qq -> [{ dir, text, time }]
-    let onlineSet = saved?.onlineSet || {};
+    let user = null;                          // 登录后 { qq, name, avatar }
+    let history = {};                         // qq -> [{ dir, text, time }]
+    let onlineSet = {};
     let activeChat = null;                    // friend 对象
     let shownMsgIds = new Set();
 
+    let saveT = null;
     const persist = () => {
-      try { localStorage.setItem(userKey(), JSON.stringify({ user, history, onlineSet })); } catch { /* 忽略 */ }
+      if (!keyUser || !user) return;
+      clearTimeout(saveT);
+      saveT = setTimeout(() => {
+        saveIdentityState('qq', keyUser, { user, history, onlineSet })
+          .catch((e) => console.warn('[qq] 持久化失败', e));
+      }, 200);
+    };
+
+    /** 登录后装载该号码的数据(awdb 身份库;旧 localStorage 键一次性迁入) */
+    const loadSaved = async () => {
+      try {
+        const s = await loadIdentityState('qq', keyUser);
+        if (s && s.user && typeof s.history === 'object') return s;
+      } catch { /* 库不可读 */ }
+      try {
+        const raw = localStorage.getItem(`${KEY}::${keyUser}`);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s && s.user && typeof s.history === 'object') {
+            localStorage.removeItem(`${KEY}::${keyUser}`);
+            return s;
+          }
+        }
+      } catch { /* 坏键忽略 */ }
+      return null;
     };
 
     /* ---------------- 登录页 ---------------- */
@@ -67,15 +82,13 @@ register({
           onClick: async () => {
             const num = root.querySelector('#qq-num').value.trim() || '88888888';
             const name = root.querySelector('#qq-name').value.trim() || 'QQ 用户';
-            // 同步到系统账号(尽力而为:密码=号码;与既有账号冲突时跳过)
-            try {
-              if (accounts.current() !== name) {
-                const reg = await accounts.register(name, num, { displayName: name });
-                if (!reg.ok) await accounts.login(name, num);
-              }
-            } catch { /* QQ 自有用户体系,系统账号同步失败不影响使用 */ }
+            // QQ 自有用户体系:身份即号码,与系统账号无关
             keyUser = 'qq-' + num;
             user = { qq: num, name, avatar: '🐧' };
+            const saved = await loadSaved();
+            history = saved?.history || {};
+            onlineSet = saved?.onlineSet || {};
+            try { localStorage.setItem(KEY + '.last', keyUser); } catch { /* 忽略 */ }
             // 首次登录:初始化在线状态(随机几个在线)
             for (const f of FRIENDS) {
               if (!(f.qq in onlineSet)) onlineSet[f.qq] = f.online ?? Math.random() > 0.4;
@@ -106,7 +119,7 @@ register({
         el('div', { class: 'qq-me-info' },
           el('b', {}, user.name),
           el('div', { class: 'dim', style: { fontSize: '11px' } }, user.qq)),
-        el('button', { class: 'btn', style: { marginLeft: 'auto' }, title: '退出登录', onClick: () => { user = null; renderLogin(); } }, icon('power', 13)));
+        el('button', { class: 'btn', style: { marginLeft: 'auto' }, title: '退出登录', onClick: () => { user = null; try { localStorage.removeItem(KEY + '.last'); } catch { /* 忽略 */ } renderLogin(); } }, icon('power', 13)));
 
       /* 好友分组 */
       const groups = {};
@@ -229,17 +242,18 @@ register({
     }
 
     /* ---------------- 入口 ---------------- */
-    // 恢复:存在任一 QQ 会话数据则尝试用其 user 自动登录
-    try {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith(KEY + '::qq-'));
-      if (!user && keys.length) {
-        for (const k of keys) {
-          const s = JSON.parse(localStorage.getItem(k) || 'null');
-          if (s?.user) { keyUser = k.split('::')[1]; user = s.user; history = s.history || {}; onlineSet = s.onlineSet || {}; break; }
-        }
-      }
-    } catch { /* 忽略 */ }
-    if (user) renderMain();
-    else renderLogin();
+    // 恢复:记住的最近一次登录号码 → 异步装载该号码的库后自动登录
+    const last = (() => { try { return localStorage.getItem(KEY + '.last'); } catch { return null; } })();
+    if (last) {
+      keyUser = last;
+      loadSaved().then((s) => {
+        if (!user && s?.user) {
+          user = s.user;
+          history = s.history || {};
+          onlineSet = s.onlineSet || {};
+          renderMain();
+        } else if (!user) renderLogin();
+      }).catch(() => { if (!user) renderLogin(); });
+    } else renderLogin();
   },
 });

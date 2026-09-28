@@ -141,13 +141,23 @@ const wipeAppData = (user, app) => ev(`(async () => {
   return true;
 })()`);
 
-/* 清空共享库(无账号应用,如日记/笔记):共享库 + 收养旗标 + 旧按用户库
-   一并清掉,否则收养逻辑会把旧用户数据搬回来,断言(种子数量)不成立 */
+/* 清空非系统用户归属的库(设备级/身份库):共享区同名库 + 身份库
+   (<app>#<身份>.awdb)+ 各类一次性迁移旗标 + 旧按用户库一并清掉,
+   否则收养/迁移逻辑会把旧数据搬回来,断言(种子数量)不成立 */
 const wipeSharedAppData = (app) => ev(`(async () => {
-  localStorage.removeItem('webos.appdata.adopt::' + ${JSON.stringify(app)});
-  WebOS.fs.rm('/home/shared/appdata/${app}.awdb', { as: 'root' });
-  for (const u of WebOS.fs.list('/home') || []) {
-    if (u.dir && u.name !== 'shared') WebOS.fs.rm('/home/' + u.name + '/appdata/${app}.awdb', { as: 'root' });
+  const app = ${JSON.stringify(app)};
+  await WebOS.fs.flush();   // 确保 fs 元数据树就绪,避免与启动期装载赛跑
+  for (const k of Object.keys(localStorage)) {
+    if (k === 'webos.appdata.adopt::' + app
+      || k.startsWith('webos.appdata.sharedback::' + app + '::')
+      || (app === 'mail' && k.startsWith('webos.appdata.mailback::'))) localStorage.removeItem(k);
+  }
+  WebOS.fs.rm('/home/shared/appdata/' + app + '.awdb', { as: 'root' });
+  for (const f of WebOS.fs.list('/home/shared/appdata', { as: 'root' }) || []) {
+    if (!f.dir && f.name.startsWith(app + '%23')) WebOS.fs.rm('/home/shared/appdata/' + f.name, { as: 'root' });
+  }
+  for (const u of WebOS.fs.list('/home', { as: 'root' }) || []) {
+    if (u.dir && u.name !== 'shared') WebOS.fs.rm('/home/' + u.name + '/appdata/' + app + '.awdb', { as: 'root' });
   }
   await WebOS.fs.flush();
   return true;
@@ -1498,18 +1508,12 @@ group('T25', '真实输入回归(浏览器输入管线:真实鼠标与键盘事�
 });
 
 group('T26', '邮件应用', async () => {
-  /* ---- T26 邮件应用 ---- */
+  /* ---- T26 邮件(邮箱地址为自有身份,不依赖系统登录) ---- */
   await ev(`WebOS.vnet.resetState();
-    for (const k of Object.keys(localStorage)) if (k.startsWith('webos.mail.v1')) localStorage.removeItem(k);
-    localStorage.removeItem('webos.account-session.v1')`);
-  await wipeAppData('mailuser', 'mail');   // 数据已迁 appdata:清掉库文件,种子邮件重新播种
-  await fresh();   // 重载后清会话 → 需重新登录(测试随后注册 mailuser)
-  // 账号门:注册并登录邮件用户(种子邮件将播种到该用户空间)
-  await ev(`(async () => {
-    const acc = (await import('./js/core/accounts.js')).accounts;
-    if (!(await acc.login('mailuser', 'mailpass123')).ok) await acc.register('mailuser', 'mailpass123');
-  })()`);
-  await sleep(500);
+    for (const k of Object.keys(localStorage)) if (k.startsWith('webos.mail.v1')) localStorage.removeItem(k);`);
+  await wipeSharedAppData('mail');   // 清邮箱身份库(mail#*.awdb)+ 旧按用户库,种子邮件重新播种
+  await fresh();
+  // 邮件按「系统设置 username@aetherwebos」独立成库,无需登录
   await ev(`WebOS.wm.open('mail')`);
   await sleep(900);
   const m1 = await ev(`(() => {
@@ -1747,7 +1751,7 @@ group('T28', '短信应用', async () => {
   /* ---- T28 短信应用 ---- */
   const prevUser = await ev(`WebOS.accounts.current()`);   // 记住会话用户(T28.4 会切到 todoer)
   await ev(`localStorage.removeItem('webos.sms.v1')`);
-  if (prevUser) await wipeAppData(prevUser, 'sms');   // 数据已迁 appdata:清档,种子短信重新播种
+  await wipeSharedAppData('sms');   // 短信为设备级收件箱:清设备库 + 旧按用户库,种子短信重新播种
   await fresh();   // 种子短信播种
   await ev(`WebOS.wm.open('sms')`);
   await sleep(700);
@@ -1804,7 +1808,7 @@ group('T28', '短信应用', async () => {
     return true;
   })()`);
   await wipeAppData('todoer', 'todo');   // 只注入一条逾期任务,不依赖 T27 遗留(也清掉可能的坏档)
-  await wipeAppData('todoer', 'sms');    // 提醒短信要新建库,避免旧坏档导致静默写失败
+  // 短信已是设备级收件箱:不再按用户清库(组首已清设备库),避免误删前序会话
   await ev(`(async () => {
     const { loadState, saveState } = WebOS.appdata;
     let s = null;
@@ -1844,12 +1848,11 @@ group('T28', '短信应用', async () => {
   const s5 = await ev(`(async () => {
     const { loadState } = WebOS.appdata;
     const prev = ${JSON.stringify(prevUser)};
-    const mine = prev ? await loadState('sms', prev) : null;
-    const todoer = await loadState('sms', 'todoer');
+    const dev = await WebOS.appdata.loadSharedState('sms');   // 短信为设备级收件箱
     return {
-      myChats: (mine?.chats || []).length,
-      myMsgs: (mine?.chats || []).reduce((s, c) => s + (c.msgs || []).length, 0),
-      reminder: (todoer?.chats || []).some(c => c.addr === 'todo-reminder' && c.msgs.some(m => m.text.includes('任务提醒'))),
+      myChats: (dev?.chats || []).length,
+      myMsgs: (dev?.chats || []).reduce((s, c) => s + (c.msgs || []).length, 0),
+      reminder: (dev?.chats || []).some(c => c.addr === 'todo-reminder' && c.msgs.some(m => m.text.includes('任务提醒'))),
     };
   })()`);
   t('T28.5 持久化(刷新后会话保留)', s5.myChats >= 2 && s5.myMsgs >= 4 && s5.reminder === true, JSON.stringify(s5));
@@ -2099,12 +2102,21 @@ group('T31', '压缩包支持', async () => {
 });
 
 group('T32', '笔记(含加密)', async () => {
-  /* ---- T32 笔记(含加密;与账号无关,数据在共享库) ---- */
+  /* ---- T32 笔记(含加密;数据按系统用户存储,应用不设登录门槛) ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.memo.v1')) localStorage.removeItem(k);
     return true;
   })()`);
-  await wipeSharedAppData('memo');   // 清共享库 + 收养旗标 + 旧按用户库,种子卡片重新播种
+  await wipeSharedAppData('memo');   // 清按用户库 + 共享库遗留 + 迁移旗标,种子卡片重新播种
+  // 前置:登录测试账号钉住数据归属(应用本身不需要登录)
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (accounts.current() !== 'memoer' && !(await accounts.login('memoer', 'memopass')).ok) {
+      await accounts.register('memoer', 'memopass');
+      await accounts.login('memoer', 'memopass');
+    }
+    return true;
+  })()`);
   await fresh();
   await ev(`WebOS.wm.open('memo')`);
   await sleep(700);
@@ -2489,7 +2501,8 @@ group('T37', 'QQ 聊天', async () => {
   await fresh();
   for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
   // 清档:测试登录流程(QQ 按用户分键存储,基础键与 ::qq-* 会话键都要清)
-  await ev(`Object.keys(localStorage).filter(k => k === 'webos.qq.v1' || k.startsWith('webos.qq.v1::')).forEach(k => localStorage.removeItem(k))`);
+  await ev(`Object.keys(localStorage).filter(k => k === 'webos.qq.v1' || k === 'webos.qq.v1.last' || k.startsWith('webos.qq.v1::')).forEach(k => localStorage.removeItem(k))`);
+  await wipeSharedAppData('qq');   // QQ 按号码独立成库:清全部身份库,登录流程从零开始
   await ev(`WebOS.wm.close(document.querySelector('.win[data-app=qq]')?.dataset.id || '')`);
   await ev(`WebOS.wm.open('qq')`);
   await sleep(700);
@@ -2538,11 +2551,11 @@ group('T37', 'QQ 聊天', async () => {
   await fresh();
   await ev(`WebOS.wm.open('qq')`);
   await sleep(700);
-  const q4 = await ev(`(() => ({
+  const q4 = await ev(`(async () => ({
     autoLogin: !!document.querySelector('.qq-top'),
     me: document.querySelector('.qq-top b')?.textContent,
-    historyKept: Object.keys(localStorage).filter(k => k.startsWith('webos.qq.v1'))
-      .some(k => { const s = JSON.parse(localStorage.getItem(k) || '{}'); return (s.history?.['10001'] || []).length >= 1; }),
+    historyKept: await WebOS.appdata.loadIdentityState('qq', 'qq-88888888')
+      .then(s => ((s?.history?.['10001']) || []).length >= 1).catch(() => false),
   }))()`);
   t('T37.4 会话持久化(刷新自动登录+历史保留)', q4.autoLogin && q4.me === 'AetherWebOS 用户' && q4.historyKept,
     JSON.stringify(q4));
@@ -3116,13 +3129,22 @@ group('T42', '弹框分级', async () => {
   t('T42.8 全程无错误', errs42 === 0, `errs=${errs42}`);
 });
 
-group('T43', '日记(按日期 / 自动保存 / 单页加密,无账号)', async () => {
-  /* ---- T43 日记:按日期记录 / 心情 / 自动保存 / 单页加密(与账号无关) ---- */
+group('T43', '日记(按日期 / 自动保存 / 单页加密,按用户存储免登录)', async () => {
+  /* ---- T43 日记:按日期记录 / 心情 / 自动保存 / 单页加密(数据按系统用户存储,应用不设登录门槛) ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.diary.v1')) localStorage.removeItem(k);
     return true;
   })()`);
-  await wipeSharedAppData('diary');   // 清共享库 + 收养旗标 + 旧按用户库,断言(1 篇)不累积历史
+  await wipeSharedAppData('diary');   // 清按用户库 + 共享库遗留 + 迁移旗标,断言(1 篇)不累积历史
+  // 前置:登录测试账号钉住数据归属(应用本身不需要登录;未登录时仅会话内存态)
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (accounts.current() !== 'diaryer' && !(await accounts.login('diaryer', 'diarypass')).ok) {
+      await accounts.register('diaryer', 'diarypass');
+      await accounts.login('diaryer', 'diarypass');
+    }
+    return true;
+  })()`);
   await fresh();
   await ev(`WebOS.wm.open('diary')`);
   await sleep(700);
@@ -3142,18 +3164,18 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,无账号)', async 
   await sleep(500);   // 等防抖落盘
 
   const savedTxt = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadSharedState('diary');
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
     const e = s?.entries && s.entries[${JSON.stringify(d0.key)}];
     return (e && e.text || '').includes('充实') || null;
   })()`, 5000);
-  t('T43.1 输入自动落盘(共享库)', savedTxt === true, '');
+  t('T43.1 输入自动落盘(按用户库)', savedTxt === true, '');
 
   // 圆点标记 + 心情
   const dot = await ev(`!!document.querySelector('.win[data-app=diary] .diary-day.sel .dot')`);
   t('T43.2 月历圆点标记', dot === true);
   await ev(`document.querySelectorAll('.win[data-app=diary] .diary-mood')[1].click()`);
   const mood = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadSharedState('diary');
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
     return (s?.entries?.[${JSON.stringify(d0.key)}] || {}).mood || null;
   })()`, 5000);
   t('T43.3 心情选择持久化', mood === '🙂', `mood=${mood}`);
@@ -3203,7 +3225,7 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,无账号)', async 
 
   // 落盘为密文(共享库里的 text 是 WEOS1 密文)
   const cipher = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadSharedState('diary');
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
     const e = (s?.entries || {})[${JSON.stringify(d0.key)}];
     return e?.lock === true && String(e?.text || '').startsWith('WEOS1:') || null;
   })()`, 5000);
@@ -3249,7 +3271,7 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,无账号)', async 
   await ev(`[...document.querySelectorAll('.win[data-app=diary] .app-toolbar .btn')].find(b => b.textContent.includes('解除加密')).click()`);
   await sleep(500);
   const plainBack = await waitFor(`(async () => {
-    const s = await WebOS.appdata.loadSharedState('diary');
+    const s = await WebOS.appdata.loadState('diary', WebOS.accounts.current());
     const e = (s?.entries || {})[${JSON.stringify(d0.key)}];
     return !e?.lock && (e?.text || '').includes('充实') || null;
   })()`, 5000);
@@ -3641,19 +3663,22 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await ev(`WebOS.wm.open('mdedit')`);
   await sleep(700);
 
-  // 骨架:工具栏 + 单活动块
+  // 骨架:无文字工具栏;只读起步(无活动壳),编辑键可点
   const s0 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
-    return { edit: !!w.querySelector('.md-edit'), raw: !!w.querySelector('.md-raw'),
-             btns: w.querySelectorAll('.md-tbtn').length, blocks: w.querySelectorAll('.md-block').length };
+    const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
+    return { edit: !!w.querySelector('.md-edit'), raw: w.querySelectorAll('.md-raw').length,
+             btns: w.querySelectorAll('.md-tbtn').length, blocks: w.querySelectorAll('.md-block').length,
+             eb: !!eb, ebOn: eb ? !eb.disabled : false };
   })()`);
-  t('T48 编辑器骨架(工具栏 + 活动块)', s0.edit && s0.raw && s0.btns >= 15 && s0.blocks === 1, JSON.stringify(s0));
+  t('T48 编辑器骨架(无工具栏;只读起步,编辑键可点)', s0.edit && s0.raw === 0 && s0.btns === 0 && s0.blocks === 1 && s0.eb && s0.ebOn, JSON.stringify(s0));
 
-  // 语法渲染全景:切预览全量渲染断言(活动块在编辑态显示原文是预期行为),再回编辑
+  // 语法渲染全景:编辑键解锁写入 →「完成」回只读,整篇渲染断言
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
     w.querySelector('.md-edit').$md.set('# 标题一\\n\\n正文 **加粗** 与 \`行内码\`\\n\\n- [ ] 任务 A\\n- [x] 任务 B\\n\\n> 引用一行\\n\\n| 甲 | 乙 |\\n| --- | --- |\\n| 1 | 2 |');
-    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '预览').click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成')).click();
   })()`);
   await sleep(250);
   const s1 = await ev(`(() => {
@@ -3673,13 +3698,13 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   t('T48.1 语法渲染(标题/粗体/行内码)', s1.h1 === '标题一' && s1.strong === '加粗' && s1.code === '行内码', JSON.stringify(s1));
   t('T48.2 任务/引用/表格渲染', s1.checks === 2 && s1.on === 1 && s1.quote.includes('引用一行') && s1.table.includes('乙') && s1.blocks === 5, '');
   t('T48.3 源串即事实($md.get 原文可回)', s1.head5 === '# 标题一', s1.head5);
+
+  // 任务勾选 → 回写 markdown 源码:先点「编辑」解锁,再点复选框(组件监听 pointerdown)
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
-    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '编辑').click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
   })()`);
   await sleep(200);
-
-  // 任务勾选 → 回写 markdown 源码(组件监听 pointerdown)
   await ev(`(() => {
     document.querySelector('.win[data-app=mdedit] .md-check')
       .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
@@ -3742,20 +3767,43 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   })()`);
   t('T48.7 文件管家双击 .md → Markdown 编辑器', s4.wins === 2 && s4.md.includes('保存测试'), JSON.stringify(s4.md).slice(0, 30));
 
-  // 预览模式:全部落定为渲染态(无活动壳)
+  // 编辑键切换:第二窗口(双击打开)只读起步 → 编辑出现活动壳 → 完成回只读渲染
   await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
-    [...w.querySelectorAll('.seg-btn')].find(b => b.textContent === '预览').click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
+  })()`);
+  await sleep(200);
+  const s5a = await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    return { raw: w.querySelectorAll('.md-raw').length };
+  })()`);
+  await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成')).click();
   })()`);
   await sleep(200);
   const s5 = await ev(`(() => {
     const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
     return { raw: w.querySelectorAll('.md-raw').length, h1: w.querySelectorAll('.md-block h1').length };
   })()`);
-  t('T48.8 预览模式(全部渲染)', s5.raw === 0 && s5.h1 >= 1, JSON.stringify(s5));
+  t('T48.8 编辑键切换(解锁出现活动壳 / 完成整篇渲染)', s5a.raw === 1 && s5.raw === 0 && s5.h1 >= 1, JSON.stringify({ s5a, s5 }));
+
+  // 文件不可写:chmod 去写权限后新开窗口 → 编辑键置灰,内容仍可读
+  await ev(`(() => {
+    WebOS.fs.chmod(${JSON.stringify(mdPath)}, 'r--r--');
+    WebOS.wm.open('mdedit', { params: { path: ${JSON.stringify(mdPath)} } });
+  })()`);
+  await sleep(600);
+  const s6 = await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].pop();
+    const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
+    return { dis: eb ? eb.disabled : null, h1: w.querySelectorAll('.md-block h1').length,
+             raw: w.querySelectorAll('.md-raw').length };
+  })()`);
+  t('T48.9 文件不可写 → 编辑键置灰(内容仍可读)', s6.dis === true && s6.h1 >= 1 && s6.raw === 0, JSON.stringify(s6));
 
   const errs = await ev(`window.__errs.length`);
-  t('T48.9 全程无错误', errs === 0, `errs=${errs}`);
+  t('T48.10 全程无错误', errs === 0, `errs=${errs}`);
   await c.shot('t48-mdedit');
 });
 

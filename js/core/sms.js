@@ -1,9 +1,9 @@
 /* ============================================================
  * SMS —— 虚拟短信服务
  *
- * 数据:加密页库 ~/appdata/sms.awdb(AetherWebDatabase),路径
- *   /home/<user>/appdata/sms.awdb;同步 API 读内存,异步水合/落盘。
- * 旧键 webos.sms.v1 首次启动自动迁移后删除。
+ * 数据:设备级收件箱(一台设备一份,与系统用户无关),加密页库
+ *   /home/shared/appdata/sms.awdb;同步 API 读内存,异步水合/落盘。
+ * 旧按用户存储的库与旧键 webos.sms.v1 首次启动自动收养/迁移。
  *
  * 面向玩家:短信应用(会话式,持久化,验证码一键复制)
  * 面向游戏作者:
@@ -12,14 +12,13 @@
  *   sms.onSend(fn)  玩家发短信钩子:fn({to,text}) 返回 spec 即自动回信
  * 事件:sms:new(总线);新短信触发系统通知。
  * ============================================================ */
-import { publish, subscribe } from './bus.js';
-import { accounts } from './accounts.js';
+import { publish } from './bus.js';
 import { fsReady } from './fs.js';
-import { loadState, saveState, migrateFromLocalStorage } from './appdata.js';
+import { saveSharedState, adoptSharedState } from './appdata.js';
 
 const KEY = 'webos.sms.v1';
 let state = { chats: [] };
-let hydratedUser = null;
+let hydrated = false;
 let saveTimer = null;
 let hydrating = null;   // 进行中的水合(并发去重)
 
@@ -37,28 +36,37 @@ function chatFor(addr, name) {
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const user = accounts.current();
-    if (!user) return;
     try {
-      await saveState('sms', state, user);
+      await saveSharedState('sms', state);
     } catch (e) {
       console.warn('[sms] 持久化失败', e);
     }
   }, 200);
 }
 
-/** 登录后从 appdata 水合(幂等);保留尚未入库的新会话。
- *  并发调用共享同一次水合;种子投递等依赖"数据已就绪"的调用方应 await 本函数。 */
-export function hydrate(user = accounts.current()) {
-  if (!user) return Promise.resolve();
+/** 从设备库水合(幂等);保留尚未入库的新会话。并发调用共享同一次水合;
+ * 种子投递等依赖"数据已就绪"的调用方应 await 本函数。 */
+export function hydrate() {
   if (hydrating) return hydrating;
   hydrating = (async () => {
     try {
       await fsReady();
-      const data = await migrateFromLocalStorage('sms', KEY, (raw) => raw, user);
-      const next = data ?? (await loadState('sms', user));
+      /* 设备库为空时,一次性收养旧"按系统用户存储"的数据量最多的库 */
+      let next = await adoptSharedState('sms', (s) =>
+        Array.isArray(s?.chats) ? s.chats.reduce((n, c) => n + (c.msgs?.length || 0), 0) : 0);
+      if (!next) {
+        /* 更旧的 localStorage 键(无用户命名空间)一次性迁入 */
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const legacy = JSON.parse(raw);
+            if (legacy && Array.isArray(legacy.chats)) next = legacy;
+            localStorage.removeItem(KEY);
+          }
+        } catch { /* 坏键忽略 */ }
+      }
       if (next && Array.isArray(next.chats)) {
-        if (hydratedUser === user && state.chats.length) {
+        if (hydrated && state.chats.length) {
           // 已有内存数据:合并本地新会话(按 addr,以内容多的一侧为准)
           const seen = new Set(state.chats.map((c) => c.addr));
           for (const c of next.chats) {
@@ -68,11 +76,11 @@ export function hydrate(user = accounts.current()) {
         } else {
           state = { chats: next.chats };
         }
-      } else if (hydratedUser !== user && !state.chats.length) {
+      } else if (!hydrated && !state.chats.length) {
         state = { chats: [] };
-        await saveState('sms', state, user);
+        await saveSharedState('sms', state);
       }
-      hydratedUser = user;
+      hydrated = true;
     } catch (e) {
       console.warn('[sms] 水合失败:', e);
     } finally {
@@ -162,16 +170,8 @@ export const stats = () => ({
   unread: unreadTotal(),
 });
 
-/* 登录 / 注册 → 换用户水合 */
-subscribe('accounts:changed', (payload, msg) => {
-  const t = msg?.type;
-  if (t === 'login' || t === 'register' || t === 'created') {
-    hydrate(payload?.user || accounts.current());
-  }
-});
-
-/* 模块加载:已有会话则尽快水合(不阻塞 import) */
-if (accounts.current()) hydrate().catch(() => {});
+/* 模块加载:立即水合设备收件箱(不阻塞 import) */
+hydrate().catch(() => {});
 
 export const sms = {
   deliver, deliverLater, send, onSend, chats, chat, markRead,

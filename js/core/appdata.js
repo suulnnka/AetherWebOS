@@ -126,10 +126,13 @@ export async function openAppData(app, user = accounts.current()) {
   return openDerived(base, backend, dbPassword(user));
 }
 
-/* ---------- 无账号应用的共享库 ----------
- * 日记 / 笔记这类"跟用户无关"的应用不落在任何用户家目录:
- * 库固定在 /home/shared/appdata/<app>.awdb,属主 root(644,仅 root 读写,
- * 应用经 appdata 层统一以 root 身份访问),页加密密钥仍随机存于本地。
+/* ---------- 无系统用户归属的库 ----------
+ * 两类应用的数据不落在任何系统用户家目录,统一在 /home/shared/appdata/
+ * (root 属主,经本层以 root 身份访问):
+ *  · 设备级库(一台设备一份,如短信收件箱):<app>.awdb
+ *  · 身份库(应用自有账号体系,如邮件的邮箱地址、QQ 的号码):
+ *    <app>#<身份>.awdb,各身份独立成库,密钥材料按「应用:身份」独立生成
+ * 页加密密钥仍按「密钥材料 × 应用名」派生(见 openDerived)。
  */
 
 const SHARED_USER = 'shared';
@@ -179,6 +182,45 @@ export async function saveSharedState(app, data) {
   return true;
 }
 
+/** 共享区里应用的身份库路径:`/home/shared/appdata/<app>#<身份>.awdb` */
+export function identityAppDataPath(app, identity) {
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  return `/home/${SHARED_USER}/appdata/${base}%23${encodeURIComponent(String(identity))}${EXT}`;
+}
+
+/** 应用自有账号体系:按应用内身份(邮箱地址/QQ 号码…)独立成库 */
+export async function openIdentityAppData(app, identity) {
+  await fsReady();
+  if (!ensureSharedDir()) throw new Error('无法创建 appdata 目录');
+  const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
+  const backend = getBackend(identityAppDataPath(app, identity), 'root');
+  /* 密钥材料按「应用:身份」独立生成 —— 不同身份互不可解 */
+  return openDerived(base, backend, dbPassword(`${base}:${identity}`));
+}
+
+export async function loadIdentityState(app, identity) {
+  const db = await openIdentityAppData(app, identity);
+  const doc = await db.collection('state').get('main');
+  return doc?.data ?? null;
+}
+
+export async function saveIdentityState(app, identity, data) {
+  const db = await openIdentityAppData(app, identity);
+  const col = db.collection('state');
+  const cur = await col.get('main');
+  if (cur) {
+    await col.update('main', { data });
+    return true;
+  }
+  try {
+    await col.insert({ id: 'main', data });
+  } catch (e) {
+    if (!/id 已存在/.test(String(e?.message))) throw e;
+    await col.update('main', { data });
+  }
+  return true;
+}
+
 /**
  * 一次性收养:应用从"按用户存储"切换为共享库时,共享库为空则把既有
  * 用户库里数据量最多的一份迁入(score 比较用),避免老数据凭空消失。
@@ -194,6 +236,9 @@ export async function adoptSharedState(app, score = () => 0) {
       let best = null;
       for (const u of fs.list('/home') || []) {
         if (!u.dir || u.name === SHARED_USER) continue;
+        /* 只开已存在的库:盲目 open 会给每个用户家目录凭空建空库,
+         * 还会与外部清档操作赛跑(刚删的文件被并发 open 重建) */
+        if (!fs.stat(appDataPath(app, u.name))) continue;
         try {
           const s = await loadState(app, u.name);
           if (s != null && score(s) > score(best)) best = s;
@@ -288,5 +333,9 @@ export default {
   loadSharedState,
   saveSharedState,
   adoptSharedState,
+  identityAppDataPath,
+  openIdentityAppData,
+  loadIdentityState,
+  saveIdentityState,
   FILE_MAGIC,
 };

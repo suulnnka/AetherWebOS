@@ -203,14 +203,15 @@ settings.get('volume')   // 单项;settings.get() 全量
 settings.set({ volume: 30 })   // 写入 → 应用到 DOM → 广播 sys:settings-changed
 ```
 
-只存应用自己的数据时,不要塞进系统设置。推荐 `js/core/appdata.js`:
-数据落在虚拟路径 `/home/<user>/appdata/<app>.awdb`(AetherWebDatabase 页加密库,
-经 VFS 写入,库不直连 OPFS;**库口令按「用户密钥 × 应用名」派生**,不同应用
-互不相同,旧口令库首次打开自动重加密迁移);旧 localStorage 键可用
-`migrateFromLocalStorage` 一次性迁入。
-**与账号无关的应用**(如日记/笔记)改用共享库变体:
-`loadSharedState / saveSharedState / adoptSharedState`(落在 `/home/shared/appdata/`,
-首次启用时 `adoptSharedState` 会把既有用户库中数据量最多的一份一次性迁入)。
+只存应用自己的数据时,不要塞进系统设置。推荐 `js/core/appdata.js`
+(AetherWebDatabase 页加密库,经 VFS 写入,不直连 OPFS;**库口令按
+「密钥材料 × 应用名」派生**,不同应用互不相同,旧口令库首次打开自动重加密
+迁移)。三类库:
+- 按系统用户:`loadState / saveState`(落在 `/home/<user>/appdata/`);
+- 设备级(一台设备一份,如收件箱):`loadSharedState / saveSharedState`;
+- 应用自有账号体系(邮箱地址/QQ 号码等,独立于系统用户):
+  `loadIdentityState / saveIdentityState`(`/home/shared/appdata/<app>#<身份>.awdb`)。
+旧 localStorage 键可用 `migrateFromLocalStorage` 一次性迁入。
 
 ### 系统对话框(`dialogs`,全 Promise)
 
@@ -303,8 +304,9 @@ mount({ root, onLoginRetry }) {
 |---|---|
 | **OPFS** `webos/fs.v2.json` | 虚拟文件系统**元数据树**(inode 式,无文件内容) |
 | **OPFS** `webos/fsdata/<path>` | 各文件真实内容(如 `fsdata/home/u/appdata/sms.awdb`) |
-| **VFS** `/home/<user>/appdata/<app>.awdb` | 应用页加密库(`js/core/appdata.js` → AetherWebDatabase,不直连 OPFS) |
-| **VFS** `/home/shared/appdata/<app>.awdb` | 无账号应用的共享页加密库(`loadSharedState` / `saveSharedState`;日记/笔记) |
+| **VFS** `/home/<user>/appdata/<app>.awdb` | 按系统用户的应用页加密库(`loadState` / `saveState`) |
+| **VFS** `/home/shared/appdata/<app>.awdb` | 设备级库(一台设备一份,如短信收件箱;`loadSharedState`) |
+| **VFS** `/home/shared/appdata/<app>#<身份>.awdb` | 应用自有账号体系的身份库(邮箱地址/QQ 号码;`loadIdentityState`) |
 | localStorage `webos.settings.v1` | 全部系统设置 |
 | localStorage `webos.iconpos.v1` | 桌面图标位置 |
 | localStorage `webos.accounts.v1` / `webos.account-session.v1` / `webos.session-locked.v1` | 账号 / 当前会话 / 锁屏状态 |

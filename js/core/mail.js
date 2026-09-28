@@ -1,9 +1,10 @@
 /* ============================================================
  * Mail —— 虚拟邮件服务
  *
- * 数据:加密页库 ~/appdata/mail.awdb(AetherWebDatabase):
- *   /home/<user>/appdata/mail.awdb;同步 API 读内存,异步水合/落盘。
- * 旧键 webos.mail.v1::<user> 首次启动自动迁移后删除。
+ * 数据:按邮箱地址独立成库(应用自有账号体系,不依赖系统用户):
+ *   /home/shared/appdata/mail#<邮箱地址>.awdb(地址取自系统设置的
+ *   username,形如 admin@aetherwebos);同步 API 读内存,异步水合/落盘。
+ * 旧按系统用户存储的库与旧键 webos.mail.v1::* 首次启动自动迁移。
  *
  * 面向玩家:邮件应用(收件箱/已发送/草稿/垃圾箱,持久化)
  * 面向游戏作者:
@@ -14,21 +15,25 @@
  *       [{ name, kind: 'fs', path }]   → 预览器/记事本打开
  * 事件:mail:new / mail:changed(总线,监视器可观测);新邮件触发系统通知。
  * ============================================================ */
-import { publish } from './bus.js';
+import { publish, subscribe } from './bus.js';
 import { accounts } from './accounts.js';
+import { settings } from './store.js';
 import { fsReady } from './fs.js';
-import { loadState, saveState, migrateFromLocalStorage } from './appdata.js';
+import { loadState, loadIdentityState, saveIdentityState } from './appdata.js';
 
 const KEY = 'webos.mail.v1';
-let activeUser = null;
+let activeMailbox = null;       // 当前邮箱地址(应用自有身份)
 let state = null;
 let saveTimer = null;
 let seedHooks = [];
 
-/** 注册"新用户空间首次使用"钩子(用于播种初始邮件) */
+/** 注册"新邮箱首次使用"钩子(用于播种初始邮件) */
 export function onFirstUse(fn) {
   seedHooks.push(fn);
 }
+
+/** 当前邮箱地址:系统设置 username@aetherwebos */
+export const mailbox = () => `${settings.get('username') || 'user'}@aetherwebos`;
 
 function emptyState() {
   return { seq: 1, mails: [] };
@@ -40,32 +45,50 @@ function normalize(raw) {
 }
 
 function scheduleSave() {
-  if (!activeUser || !state) return;
+  if (!activeMailbox || !state) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      await saveState('mail', state, activeUser);
+      await saveIdentityState('mail', activeMailbox, state);
     } catch (e) {
-      console.warn('[mail] 持久化失败', e);
+      console.warn('[mail] 持久化失败:', e);
     }
   }, 200);
 }
 
 /**
- * 切换用户数据空间(异步水合)。
+ * 装载当前邮箱的数据空间(异步水合);邮箱地址变化时切换。
  * 返回 Promise;在 resolve 前 listBy/stats 使用内存态(可能为空)。
  */
-export async function setUser(name) {
-  const user = accounts.current() || name;
-  if (!user) return;
-  if (activeUser === user && state) return;
-  activeUser = user;
+export async function setUser() {
+  const box = mailbox();
+  if (activeMailbox === box && state) return;
+  activeMailbox = box;
   state = emptyState();
   let wasNew = true;
   try {
     await fsReady();
-    const data = await migrateFromLocalStorage('mail', `${KEY}::${user}`, normalize, user);
-    const next = data ?? (await loadState('mail', user));
+    let next = await loadIdentityState('mail', box);
+    if (!next) {
+      /* 一次性迁移:旧 localStorage 键(按系统用户命名,任一遗留键) */
+      for (const k of Object.keys(localStorage)) {
+        if (!k.startsWith(KEY + '::')) continue;
+        try {
+          const legacy = normalize(JSON.parse(localStorage.getItem(k)));
+          if (legacy.mails.length) { next = legacy; localStorage.removeItem(k); break; }
+        } catch { /* 坏键跳过 */ }
+      }
+    }
+    if (!next) {
+      /* 一次性迁移:旧"按系统用户存储"的库(收养当前登录用户的) */
+      const flag = `webos.appdata.mailback::${encodeURIComponent(box)}`;
+      const user = accounts.current();
+      if (user && !localStorage.getItem(flag)) {
+        localStorage.setItem(flag, '1');
+        const old = await loadState('mail', user).catch(() => null);
+        if (old) next = normalize(old);
+      }
+    }
     if (next) {
       state = normalize(next);
       wasNew = false;
@@ -186,13 +209,14 @@ export const stats = () => {
   };
 };
 
-/** 若已登录会话,启动时预水合(游戏/控制台在 mount 前投递) */
-if (accounts.current()) {
-  setUser(accounts.current()).catch(() => {});
-}
+/** 启动即预水合(邮件应用/游戏在 mount 前投递);系统 username 变更 → 换邮箱 */
+setUser().catch(() => {});
+subscribe('sys:settings-changed', (payload) => {
+  if (payload?.changed?.includes?.('username')) setUser().catch(() => {});
+});
 
 export const mail = {
   deliver, deliverLater, send, onSend, listBy, get, markRead,
-  toggleStar, move, stats, setUser, onFirstUse,
+  toggleStar, move, stats, setUser, onFirstUse, mailbox,
 };
 export default mail;
