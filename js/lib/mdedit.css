@@ -21,17 +21,10 @@
 
 /* ---------- 块 ---------- */
 
-.md-block { padding: 2px 6px; margin: 2px 0; border-radius: var(--radius-s); min-height: 1.2em; cursor: text; }
+/* 干净排版:块无任何装饰(指示条/边框/高亮都不要),仅保留可点击区域 */
+.md-block { padding: 2px 6px; margin: 2px 0; min-height: 1.2em; cursor: text; }
 .md-block:empty { min-height: .85em; }
-.md-block:not(.active):hover { box-shadow: 0 0 0 1px var(--hover); }
-.md-block.active {
-  box-shadow: inset 2px 0 0 var(--accent);                  /* 左侧指示灯条:方形直角 */
-  background: color-mix(in srgb, var(--hover) 55%, transparent);
-  padding-left: 9px;
-  border-radius: 0;
-}
 .md-edit.preview .md-block { cursor: default; }
-.md-edit.preview .md-block.active { box-shadow: none; background: none; }
 
 /* 链接定义块:以原文展示编辑(渲染无输出,反序列化需可回源) */
 :is(.md-edit, .md-view) pre.md-defraw {
@@ -110,6 +103,45 @@
   content: '✓'; position: absolute; inset: 0;
   text-align: center; line-height: 12px; font-size: 11px; font-weight: 700; color: #fff;
 }
+
+/* ---------- 斜杠命令菜单(Milkdown/Notion 式) ---------- */
+
+.md-slash {
+  position: fixed; z-index: 1700;   /* 高于右键菜单(1300),低于模态 */
+  width: 230px; max-height: 250px; overflow-y: auto;
+  background: var(--panel-solid); border: 1px solid var(--border);
+  border-radius: var(--radius-m, 10px); box-shadow: 0 10px 34px rgba(0, 0, 0, .38);
+  padding: 5px;
+}
+.md-slash-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 6px 9px; border-radius: var(--radius-s);
+  color: var(--text); background: none; border: none; cursor: pointer; text-align: left;
+}
+.md-slash-item:hover, .md-slash-item.sel { background: var(--hover); }
+.md-slash-ico {
+  width: 26px; height: 26px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; background: var(--hover);
+  font-size: 12px; font-weight: 700; color: var(--accent);
+}
+.md-slash-label { font-size: 13px; flex: 1; }
+.md-slash-hint { font-size: 11px; color: var(--text-2); opacity: .75; }
+
+/* ---------- 选区浮动工具栏(Crepe 式) ---------- */
+
+.md-selbar {
+  position: fixed; z-index: 1700;
+  display: flex; gap: 2px; padding: 4px;
+  background: var(--panel-solid); border: 1px solid var(--border);
+  border-radius: var(--radius-m, 10px); box-shadow: 0 6px 22px rgba(0, 0, 0, .3);
+}
+.md-selbar-btn {
+  min-width: 28px; height: 28px; padding: 0 7px; border: none; border-radius: 6px;
+  background: none; color: var(--text); font-size: 13px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.md-selbar-btn:hover { background: var(--hover); }
 
 /* ---------- 紧凑模式(弹层内嵌,如笔记编辑) ---------- */
 

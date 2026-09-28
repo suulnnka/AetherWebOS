@@ -3758,11 +3758,11 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
     const blk = w.querySelector('.md-block');
     const h = blk.querySelector('h1');
     return { h1: h?.textContent, src: w.querySelector('.md-edit').$md.get(),
-             radius: getComputedStyle(blk).borderRadius,
+             clean: getComputedStyle(blk).boxShadow === 'none',
              ce: w.querySelector('.md-surface').contentEditable };
   })()`);
-  t('T48.4a 输入即转标题(渲染态直编 / 指示条直角)',
-    s2b.h1 === '实时标题' && s2b.src === '# 实时标题' && s2b.radius === '0px' && s2b.ce === 'true', JSON.stringify(s2b));
+  t('T48.4a 输入即转标题(渲染态直编 / 块无装饰)',
+    s2b.h1 === '实时标题' && s2b.src === '# 实时标题' && s2b.clean && s2b.ce === 'true', JSON.stringify(s2b));
 
   // 回归:桌面图标选中态下在编辑器内回车,不得打开桌面选中项(曾致弹窗不止)
   await ev(`(() => {
@@ -3781,6 +3781,85 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   t('T48.4b 编辑器内回车不触发桌面选中项',
     s2c.apps.filter(a => a === 'mdedit').length === 1 && !s2c.apps.includes('files') && !s2c.apps.includes('notes')
     && s2c.src.includes('\n'), JSON.stringify(s2c.apps));
+
+  // 行内输入规则(Milkdown 式):**乙** 一经敲成闭合组合,块内立即渲染粗体
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('');
+    const surf = w.querySelector('.md-surface');
+    const p = surf.querySelector('.md-block p');
+    surf.focus();
+    const r = document.createRange(); r.selectNodeContents(p); r.collapse(false);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    document.execCommand('insertText', false, '甲**乙**');
+    return true;
+  })()`);
+  await sleep(400);
+  const s2d = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { strong: w.querySelectorAll('.md-block strong').length,
+      txt: w.querySelector('.md-block strong')?.textContent,
+      src: w.querySelector('.md-edit').$md.get() };
+  })()`);
+  t('T48.4c 行内输入规则(** 闭合即渲染)', s2d.strong === 1 && s2d.txt === '乙' && s2d.src === '甲**乙**', JSON.stringify(s2d));
+
+  // 斜杠命令菜单:/ 唤起 → 输入过滤 → 回车应用(/query 从源码剥除)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('');
+    const surf = w.querySelector('.md-surface');
+    const p = surf.querySelector('.md-block p');
+    surf.focus();
+    const r = document.createRange(); r.selectNodeContents(p); r.collapse(false);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    document.execCommand('insertText', false, '/');   // 先敲 /:菜单在 / 键入瞬间唤起
+    document.execCommand('insertText', false, 'h3');
+    return true;
+  })()`);
+  await sleep(400);
+  const s2e = await ev(`(() => ({
+    open: !!document.querySelector('.md-slash'),
+    n: document.querySelectorAll('.md-slash-item').length,
+  }))()`);
+  await ev(`(() => {
+    document.querySelector('.win[data-app=mdedit] .md-surface')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  })()`);
+  await sleep(400);
+  const s2f = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { h3: w.querySelectorAll('.md-block h3').length,
+      src: w.querySelector('.md-edit').$md.get(),
+      closed: !document.querySelector('.md-slash') };
+  })()`);
+  t('T48.4d 斜杠命令菜单(唤起/过滤/回车应用)',
+    s2e.open && s2e.n === 1 && s2f.h3 === 1 && s2f.src === '### ' && s2f.closed, JSON.stringify({ s2e, s2f }));
+
+  // 选区浮动工具栏:选中文字 → 工具栏出现 → 点粗体 → 标记包裹选区
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    w.querySelector('.md-edit').$md.set('一段文字');
+    return true;
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const surf = document.querySelector('.win[data-app=mdedit] .md-surface');
+    const tn = surf.querySelector('.md-block p').firstChild;
+    surf.focus();
+    const r = document.createRange(); r.setStart(tn, 1); r.setEnd(tn, 3);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    return true;
+  })()`);
+  await sleep(300);
+  const s2g = await ev(`!!document.querySelector('.md-selbar')`);
+  await ev(`(() => { [...document.querySelectorAll('.md-selbar-btn')][0].click(); return true; })()`);
+  await sleep(400);
+  const s2h = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { src: w.querySelector('.md-edit').$md.get(), strong: w.querySelectorAll('.md-block strong').length };
+  })()`);
+  t('T48.4e 选区浮动工具栏(选中→粗体)',
+    s2g === true && s2h.src === '一**段文**字' && s2h.strong === 1, JSON.stringify(s2h));
 
   // 安全:拒绝 javascript: 链接、不透传原始 HTML
   const s3 = await ev(`(() => {

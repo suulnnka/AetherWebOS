@@ -9,10 +9,15 @@
  * 染该块(rAF 离场做,避免 Chrome 输入期换 DOM 导致插入点错位),
  * 光标经"源偏移 ↔ DOM 位置"映射无损还原。光标离开块时落定渲染。
  *
- * 结构键:Enter 拆块(列表续项/引用续行/``` 开代码块),Backspace
- * 块首并块或降级(标题→段落),Tab/Shift+Tab 列表层级,Ctrl+B/I/K
- * 行内标记,Ctrl+Z/Y 自研 undo(native undo 在 DOM 重建后不可靠)。
- * 中文输入法:composition 期间只同步源码不重渲染,结束后收尾。
+ * 结构键:Enter 拆块(列表续项/引用续行/``` 开代码块、--- 分隔线),
+ * Backspace 块首并块或降级(标题→段落),Tab/Shift+Tab 列表层级,
+ * Ctrl+B/I/K 行内标记,Ctrl+Z/Y 自研 undo(native undo 在 DOM 重建后
+ * 不可靠)。中文输入法:composition 期间只同步源码不重渲染。
+ *
+ * Milkdown 式增强:行内输入规则(**x** 等闭合组合敲成即渲染)、
+ * 斜杠命令菜单(输入 / 唤起,方向键+回车,应用时剥除 /query)、
+ * 选区浮动工具栏(B/I/S/行内码/链接,Crepe 同款)。样式内续打
+ * 保持样式(Notion/ProseMirror stored-marks 同款行为)。
  *
  * API:
  *   createMdEditor({ value, placeholder, compact, onInput })
@@ -339,6 +344,46 @@ function serContainer(el, out) {
  * 编辑器本体
  * ============================================================ */
 
+/** 行内输入规则:闭合组合一经敲成(光标前的文本以完整标记收尾),
+ *  立即重渲染该块显示样式。规则只触发"提前渲染",渲染结果始终以
+ *  md.js 解析为准,误触发也无副作用。 */
+const INLINE_RULES = [
+  /\*\*[^*\n]+\*\*$/,          // **粗体**
+  /(?<![*\w])\*[^*\n]+\*$/,    // *斜体*
+  /~~[^~\n]+~~$/,              // ~~删除线~~
+  /`[^`\n]+`$/,                // `代码`
+  /(?<![\w])_[^_\n]+_$/,       // _斜体_
+];
+
+/** 斜杠命令项(应用走 exec) */
+const SLASH_ITEMS = [
+  { cmd: 'h1', label: '标题 1', hint: '#', icon: 'H1' },
+  { cmd: 'h2', label: '标题 2', hint: '##', icon: 'H2' },
+  { cmd: 'h3', label: '标题 3', hint: '###', icon: 'H3' },
+  { cmd: 'ul', label: '无序列表', hint: '- 条目', icon: '•' },
+  { cmd: 'ol', label: '有序列表', hint: '1. 条目', icon: '1.' },
+  { cmd: 'task', label: '任务列表', hint: '- [ ] 条目', icon: '☑' },
+  { cmd: 'quote', label: '引用', hint: '> 引用', icon: '❝' },
+  { cmd: 'codeblock', label: '代码块', hint: '```', icon: '{ }' },
+  { cmd: 'table', label: '表格', hint: '| 列 | 列 |', icon: '⊞' },
+  { cmd: 'hr', label: '分隔线', hint: '---', icon: '―' },
+  { sep: true },
+  { cmd: 'bold', label: '粗体', hint: '**文字**', icon: 'B' },
+  { cmd: 'italic', label: '斜体', hint: '*文字*', icon: 'I' },
+  { cmd: 'strike', label: '删除线', hint: '~~文字~~', icon: 'S' },
+  { cmd: 'code', label: '行内代码', hint: '`代码`', icon: '‹›' },
+  { cmd: 'link', label: '链接', hint: '[文字](url)', icon: '🔗' },
+];
+
+/** 选区工具栏按钮 */
+const SELBAR_BTNS = [
+  ['bold', 'B', '粗体 (Ctrl+B)'],
+  ['italic', 'I', '斜体 (Ctrl+I)'],
+  ['strike', 'S', '删除线'],
+  ['code', '‹›', '行内代码'],
+  ['link', '🔗', '链接 (Ctrl+K)'],
+];
+
 export function createMdEditor(opts = {}) {
   const { placeholder = '', compact = false, onInput = null } = opts;
   let src = String(opts.value ?? '').replace(/\r\n?/g, '\n');
@@ -400,7 +445,13 @@ export function createMdEditor(opts = {}) {
     }
     if (b.type === 'para' && !(b.text || '').trim()) return '<p>\u200b</p>';
     if (b.type === 'heading' && !(b.text || '').trim()) return `<h${b.level}>\u200b</h${b.level}>`;
-    const html = blockHtml(b, doc.defs) || '<p><br></p>';
+    let html = blockHtml(b, doc.defs) || '<p>\u200b</p>';
+    /* 段尾硬换行(两空格结尾):渲染尾部 <br> 开出新行;其后补一个
+     * 零宽占位 —— 尾部 <br> 之后的光标会被 Chrome 归一化回 br 前,
+     * 后续文本会插到换行符之前 */
+    if (b.type === 'para' && / {2,}$/.test(b.text || '')) {
+      html = html.replace(/<\/p>$/, '<br>\u200b</p>');
+    }
     /* 空列表项补 <br>:无可落点的空元素会让 Chrome 把选区归一化到
      * 邻近文本(上一项),续项输入会串行 */
     return b.type === 'list' ? html.replace(/(<li[^>]*>(?:<span class="md-check[^"]*"[^>]*><\/span>)?)<\/li>/g, '$1\u200b</li>') : html;
@@ -465,16 +516,8 @@ export function createMdEditor(opts = {}) {
     const blk = holder?.closest('.md-block');
     if (!blk || !surface.contains(blk)) return null;
     const i = +blk.dataset.i;
-    const vis = caretOffset(blk);
-    if (vis == null) return [i, 0];
-    const segs = blockSegs(i);
-    for (const s of segs) {
-      if (s.node) {
-        const end = s.domStart + s.node.data.length;
-        if (vis >= s.domStart && vis <= end) return [i, s.srcStart + Math.min(vis - s.domStart, s.text.length)];
-      } else if (s.host && s.text === '' && vis === s.domStart) return [i, s.srcStart];   // 光标在 zwsp 占位上
-    }
-    return [i, segs.reduce((a, s2) => a + s2.text.length, 0)];
+    const off = pointToSrc(i, sel.focusNode, sel.focusOffset);
+    return off == null ? [i, 0] : [i, off];
   }
 
   /** 光标锚到宿主元素开头(空元素锚其 <br>,否则 Chrome 会把选区
@@ -531,6 +574,48 @@ export function createMdEditor(opts = {}) {
       ?? blk.firstElementChild;
     if (host) caretAtHostStart(host);
     else surface.focus();
+  }
+
+  /** 块内某 DOM 点(node,offset)→ 源偏移(经段映射,标记感知) */
+  function pointToSrc(i, node, off) {
+    const blk = surface.children[i];
+    if (!blk) return null;
+    const vis = offsetOf(blk, node, off);
+    if (vis == null) return null;
+    const segs = blockSegs(i);
+    for (const s of segs) {
+      if (s.node) {
+        const end = s.domStart + s.node.data.length;
+        if (vis >= s.domStart && vis <= end) return s.srcStart + Math.min(vis - s.domStart, s.text.length);
+      } else if (s.host && s.text === '' && vis === s.domStart) return s.srcStart;
+    }
+    return segs.reduce((a, s2) => a + s2.text.length, 0);
+  }
+
+  /** 选区两端 → [起, 止] 源偏移;不在该块内返回 null */
+  function selSrc(i) {
+    const blk = surface.children[i];
+    const sel = document.getSelection();
+    if (!blk || !sel.rangeCount || !blk.contains(sel.anchorNode) || !blk.contains(sel.focusNode)) return null;
+    const a = pointToSrc(i, sel.anchorNode, sel.anchorOffset);
+    const z = pointToSrc(i, sel.focusNode, sel.focusOffset);
+    if (a == null || z == null) return null;
+    return [Math.min(a, z), Math.max(a, z)];
+  }
+
+  /** 光标放到块内最后一个行内样式元素之后(Notion 式:闭合转换后
+   *  续打为普通文本)。元素边界旁的光标会被 Chrome 归一化回元素内,
+   *  因此在其后插一个零宽空格文本节点作为稳定锚点(序列化时剥除)。 */
+  function caretAfterLastMark(i) {
+    const blk = surface.children[i];
+    const host = blk?.querySelector('p, h1, h2, h3, h4, h5, h6, li');
+    if (!host) { placeCaret(i, 1e9); return; }
+    const last = host.lastElementChild;
+    if (!last || last.nodeName === 'BR' || last.classList.contains('md-check')) { placeCaret(i, 1e9); return; }
+    if (!(host.lastChild === last) || host.lastChild.nodeType !== 3 || host.lastChild.data !== '​') {
+      host.append(document.createTextNode('​'));
+    }
+    setCaret(host.lastChild, 0);
   }
 
   /** 渲染后恢复光标:同步落位(结构键后紧接的按键不能落空),rAF 再确认 */
@@ -601,14 +686,28 @@ export function createMdEditor(opts = {}) {
       activeIdx = p[0];
       const nb = bs[p[0]];
       const ob = prevBs[p[0]];
-      /* 块级结构变化(段落敲成标题/列表)才即时重渲染;行内(** 等)
-       * 不在打字中途转换 —— 部分闭合(**x*)会渲染成 em 吸住后续输入,
-       * 行内样式在离开块时落定(Obsidian Live Preview 同款策略)。
-       * 代码块/表格同样推迟到回车或离开块 */
-      const defer = nb && ob?.type === 'para' && ['code', 'table', 'def'].includes(nb.type);
-      if (!defer && lastSig[p[0]] !== sigOf(nb)) {
+      /* 块级结构变化(段落敲成标题/列表)才即时重渲染;代码块/表格
+       * 推迟到回车或离开块(``` 敲到一半就被吸进围栏);裸列表标记
+       * (- / * / 1.)无内容也不转,否则 --- 会被单 - 劫持进列表。 */
+      const defer = nb && ob?.type === 'para'
+        && (['code', 'table', 'def'].includes(nb.type)
+          || (nb.type === 'list' && /^ {0,3}([-*+]|\d{1,9}[.)])$/.test(blockText(nb))));
+      /* 行内输入规则(Milkdown/ProseMirror 式):**x** / *x* / ~~x~~ /
+       * `x` 一经敲成完整组合,立即重渲染显示样式 —— 只在模式闭合时
+       * 触发,部分闭合(**x*)不渲染,不会把后续输入吸进样式 */
+      const before = blockText(nb).slice(0, p[1]);
+      const inlineHit = nb && (nb.type === 'para' || nb.type === 'heading'
+        || nb.type === 'list' || nb.type === 'quote')
+        && INLINE_RULES.some((re) => re.test(before));
+      if (!defer && (lastSig[p[0]] !== sigOf(nb) || inlineHit)) {
         renderBlock(p[0]);
-        afterRender(p[0], p[1]);
+        if (inlineHit && lastSig[p[0]] === sigOf(nb)) caretAfterLastMark(p[0]);   // 闭合转换:退出样式续打
+        else afterRender(p[0], p[1]);
+      }
+      /* 斜杠命令:已开着 → 按光标前文本过滤/关闭(唤起在 input 事件同步做) */
+      if (slash) {
+        if (nb && nb.type !== 'code' && nb.type !== 'def') updateSlash(before);
+        else closeSlash();
       }
     }
     refreshEmpty();
@@ -644,6 +743,7 @@ export function createMdEditor(opts = {}) {
     const blk = holder?.closest('.md-block');
     if (!blk || !surface.contains(blk)) return;
     const i = +blk.dataset.i;
+    trackSelbar();
     if (i === activeIdx) return;
     const prev = activeIdx;
     activeIdx = i;
@@ -655,6 +755,119 @@ export function createMdEditor(opts = {}) {
       const pb = blocks()[prev];
       if (pb && surface.children[prev].innerHTML !== blockEditHtml(pb)) renderBlock(prev);
     }
+  }
+
+  /* ---------- 斜杠命令菜单(Milkdown/Notion 式) ---------- */
+
+  let slash = null;   // { i, off, query, items, selIdx, el }
+  let slashDocHandler = null;
+
+  function openSlash(i, off) {
+    const sel = document.getSelection();
+    if (!sel.rangeCount) return;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    const el = h('div', 'md-slash');
+    el.style.left = Math.max(8, Math.min(r.left, innerWidth - 240)) + 'px';
+    el.style.top = Math.min(r.bottom + 6, innerHeight - 260) + 'px';
+    document.body.append(el);
+    slash = { i, off, query: '', items: SLASH_ITEMS.filter((x) => !x.sep), selIdx: 0, el };
+    renderSlash();
+    slashDocHandler = (e) => { if (!e.target.closest('.md-slash')) closeSlash(); };
+    document.addEventListener('pointerdown', slashDocHandler, true);
+  }
+
+  function renderSlash() {
+    if (!slash) return;
+    slash.el.innerHTML = '';
+    slash.items.forEach((item, k) => {
+      const row = h('button', 'md-slash-item' + (k === slash.selIdx ? ' sel' : ''),
+        h('span', 'md-slash-ico', item.icon), h('span', 'md-slash-label', item.label),
+        h('span', 'md-slash-hint', item.hint));
+      row.type = 'button';
+      row.addEventListener('mousedown', (e) => e.preventDefault());   // 不抢编辑面焦点
+      row.addEventListener('click', () => { slash.selIdx = k; slashApply(); });
+      slash.el.append(row);
+    });
+    slash.el.children[slash.selIdx]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** 按光标前文本过滤;/query 出现空格、换行或第二个 / 时关闭 */
+  function updateSlash(before) {
+    if (!slash) return;
+    const q = before.slice(slash.off).toLowerCase();          // off = / 之后的光标位
+    if (q.includes(' ') || q.includes('/') || q.includes('\n')) { closeSlash(); return; }
+    slash.query = q;
+    const hit = SLASH_ITEMS.filter((x) => !x.sep
+      && (x.label.toLowerCase().includes(q) || x.cmd.includes(q) || x.hint.includes(q)));
+    if (!hit.length) { closeSlash(); return; }
+    slash.items = hit;
+    slash.selIdx = 0;
+    renderSlash();
+  }
+
+  function slashMove(d) {
+    if (!slash) return;
+    slash.selIdx = (slash.selIdx + d + slash.items.length) % slash.items.length;
+    renderSlash();
+  }
+
+  /** 应用命令:先删掉 /query 文本,光标回到 / 处,再走 exec */
+  function slashApply() {
+    if (!slash) return;
+    const item = slash.items[slash.selIdx];
+    const st = { i: slash.i, off: slash.off };
+    closeSlash();
+    if (!item) return;
+    const p = caretPos();
+    const b = blocks()[st.i];
+    if (!b || !p || p[0] !== st.i || p[1] <= st.off) return;
+    const text = blockText(b);
+    const nt = text.slice(0, st.off - 1) + text.slice(p[1]);   // 剥掉整个 /query(含 /)
+    doc.lines.splice(b.s, b.e - b.s, ...nt.split('\n'));
+    rejoin(); reparse();
+    if (st.i >= blocks().length) ephLine = b.s;               // 删除后光标块落空:该行重建临时段
+    renderBlock(st.i);
+    placeCaret(st.i, st.off - 1);
+    commit();
+    exec(item.cmd);
+  }
+
+  function closeSlash() {
+    if (!slash) return;
+    slash.el.remove();
+    slash = null;
+    if (slashDocHandler) { document.removeEventListener('pointerdown', slashDocHandler, true); slashDocHandler = null; }
+  }
+
+  /* ---------- 选区浮动工具栏(Crepe 式) ---------- */
+
+  let selbar = null;
+
+  function hideSelbar() { if (selbar) { selbar.remove(); selbar = null; } }
+
+  function trackSelbar() {
+    if (previewing || composing) { hideSelbar(); return; }
+    const sel = document.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) { hideSelbar(); return; }
+    const a = sel.anchorNode?.parentElement?.closest?.('.md-block');
+    const f = sel.focusNode?.parentElement?.closest?.('.md-block');
+    if (!a || !f || a !== f || !surface.contains(a)) { hideSelbar(); return; }   // 限单块
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if (!r.width && !r.height) { hideSelbar(); return; }
+    if (!selbar) {
+      selbar = h('div', 'md-selbar');
+      for (const [cmd, label, tip] of SELBAR_BTNS) {
+        const btn = h('button', 'md-selbar-btn', label);
+        btn.type = 'button';
+        btn.title = tip;
+        btn.addEventListener('mousedown', (e) => e.preventDefault());  // 保住选区
+        btn.addEventListener('click', () => { exec(cmd); hideSelbar(); });
+        selbar.append(btn);
+      }
+      document.body.append(selbar);
+    }
+    selbar.style.left = Math.max(8, Math.min(r.left + r.width / 2 - selbar.offsetWidth / 2, innerWidth - 8 - selbar.offsetWidth)) + 'px';
+    selbar.style.top = Math.max(6, r.top - 40) + 'px';
   }
 
   /* ---------- 结构键(沿用源码行号模型) ---------- */
@@ -673,6 +886,16 @@ export function createMdEditor(opts = {}) {
     const b = bs[p[0]];
     const text = blockText(b);
     if (b.eph) return;                                       // 空临时段上回车:无操作
+    /* --- / *** / ___ 整段回车:分隔线 */
+    if (b.type === 'para' && /^(-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
+      doc.lines.splice(b.s, b.e - b.s, '---', '');
+      rejoin(); reparse();
+      ephLine = b.s + 2;
+      renderAll();
+      afterRender(blockAt(b.s + 2), 0);
+      fireInput();
+      return;
+    }
     /* ``` / ~~~ 段落回车:开代码块 */
     const fm = b.type === 'para' && text.match(/^ {0,3}(`{3,}|~{3,})[ \t]*(\S*)$/);
     if (fm) {
@@ -687,9 +910,16 @@ export function createMdEditor(opts = {}) {
       const nt = text.slice(0, p[1]) + '  \n' + text.slice(p[1]);
       doc.lines.splice(b.s, b.e - b.s, ...nt.split('\n'));
       rejoin(); reparse();
-      const off = p[1] + 3;
-      if (sigOf(blocks()[p[0]]) === lastSig[p[0]]) placeCaret(p[0], off);
-      else { renderBlock(p[0]); afterRender(p[0], off); }
+      /* 必须强制重渲染:段尾硬换行不改变解析签名,若跳过渲染则 DOM
+       * 里没有 <br>,下一次输入的 DOM 反序列化会把换行整个冲掉 */
+      renderBlock(p[0]);
+      if (!/\n/.test(blockText(blocks()[p[0]]).slice(p[1] + 3))) {
+        /* 段尾换行:光标锚到 <br> 之后的零宽占位上,后续文本落新行 */
+        const host = surface.children[p[0]]?.querySelector('p, h1, h2, h3, h4, h5, h6, li');
+        const tn = host ? [...host.childNodes].filter((n) => n.nodeType === 3).pop() : null;
+        if (tn) setCaret(tn, tn.data.length - 1 >= 0 && tn.data.endsWith('\u200b') ? tn.data.length - 1 : tn.data.length);
+        else afterRender(p[0], p[1] + 3);
+      } else afterRender(p[0], p[1] + 3);
       fireInput();
       return;
     }
@@ -829,8 +1059,10 @@ export function createMdEditor(opts = {}) {
     const p = caretPos();
     if (!p) return;
     const b = blocks()[p[0]];
+    if (!b) return;                                          // 块索引过期(渲染与解析错位)
+    if (b.eph) ephLine = -1;                                 // 命令作用于临时空段:占位随之消费
     const text = blockText(b);
-    const sr = selectionRange(surface.children[p[0]]) || [p[1], p[1]];
+    const sr = selSrc(p[0]) || [p[1], p[1]];
     const [a, z] = sr;
     const apply = (nt, caret) => {
       doc.lines.splice(b.s, b.e - b.s, ...nt.split('\n'));
@@ -947,7 +1179,25 @@ export function createMdEditor(opts = {}) {
     if (check) { e.preventDefault(); toggleTask(check); return; }
   });
 
-  surface.addEventListener('input', () => { if (composing) onSurfaceInput(); else scheduleSync(); });
+  surface.addEventListener('input', () => {
+    /* 斜杠唤起在输入事件里同步探测:光标前字符是 / 即开。不能等
+     * rAF 合并 —— 快速连打时 / 后紧跟其他字符,中间态会被吞掉 */
+    if (!composing && !slash && !previewing) {
+      const sel = document.getSelection();
+      const n = sel?.focusNode;
+      if (n?.nodeType === 3 && n.data[sel.focusOffset - 1] === '/' && surface.contains(n)) {
+        const blk = n.parentElement?.closest('.md-block');
+        const bs = blocks();
+        const bi = blk ? +blk.dataset.i : -1;
+        const nb = bi >= 0 ? bs[bi] : null;
+        if (nb && nb.type !== 'code' && nb.type !== 'def') {
+          const pp = caretPos();
+          if (pp) openSlash(pp[0], pp[1]);
+        }
+      }
+    }
+    if (composing) onSurfaceInput(); else scheduleSync();
+  });
   surface.addEventListener('compositionstart', () => { composing = true; });
   surface.addEventListener('compositionend', () => {
     composing = false;
@@ -965,6 +1215,13 @@ export function createMdEditor(opts = {}) {
   });
   surface.addEventListener('keydown', (e) => {
     if (composing) return;                                  // IME 选词回车不接管
+    if (slash) {                                            // 斜杠菜单:方向键/回车/Esc 归菜单
+      if (e.key === 'ArrowDown') { e.preventDefault(); slashMove(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); slashMove(-1); return; }
+      if (e.key === 'Enter') { e.preventDefault(); slashApply(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return; }
+      if (e.key === 'Tab') { e.preventDefault(); return; }
+    }
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
     if (mod && k === 'b') { e.preventDefault(); commit(); exec('bold'); return; }
@@ -981,7 +1238,7 @@ export function createMdEditor(opts = {}) {
     }
     if (e.key === 'Backspace' || e.key === 'Delete') {
       const p = caretPos();
-      const sr = p ? selectionRange(surface.children[p[0]]) : null;
+      const sr = p ? selSrc(p[0]) : null;
       const collapsed = !!sr && sr[0] === sr[1];
       const atStart = !!p && collapsed && sr[0] === 0;
       const atEnd = !!p && collapsed && sr[0] === blockText(blocks()[p[0]]).length;
@@ -993,6 +1250,7 @@ export function createMdEditor(opts = {}) {
   });
 
   document.addEventListener('selectionchange', trackSelection);
+  surface.addEventListener('blur', () => { closeSlash(); hideSelbar(); });
 
   /* ---------- 对外 ---------- */
 
@@ -1009,6 +1267,7 @@ export function createMdEditor(opts = {}) {
       src = String(text ?? '').replace(/\r\n?/g, '\n');
       ephLine = -1;
       activeIdx = -1;
+      closeSlash(); hideSelbar();
       reparse();
       undoS = []; redoS = [];
       renderAll();
@@ -1024,6 +1283,7 @@ export function createMdEditor(opts = {}) {
       previewing = !!on;
       root.classList.toggle('preview', previewing);
       surface.setAttribute('contenteditable', previewing ? 'false' : 'true');
+      closeSlash(); hideSelbar();
       if (previewing) { activeIdx = -1; renderAll(); }
     },
     /** 更新占位文案(空文档提示;宿主可按只读/编辑态切换) */
@@ -1035,6 +1295,7 @@ export function createMdEditor(opts = {}) {
     destroy() {
       clearTimeout(undoT);
       cancelAnimationFrame(syncRaf);
+      closeSlash(); hideSelbar();
       document.removeEventListener('selectionchange', trackSelection);
     },
   };

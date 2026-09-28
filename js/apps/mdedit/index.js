@@ -66,7 +66,7 @@ register({
       if (on && !writable()) return;                        // 置灰兜底(权限可能在会话中变化)
       editing = on;
       ed.preview(!on);
-      ed.placeholder(on ? '敲 # 、- 、> 、``` 等语法,即输即现' : '空文档 · 点「编辑」开始书写');
+      ed.placeholder(on ? '输入 / 唤起命令;# 、- 、> 等语法即输即转' : '空文档 · 点「编辑」开始书写');
       editBtn.classList.toggle('primary', on);
       editBtn.replaceChildren(icon(on ? 'check' : 'pencil', 13), on ? '完成' : '编辑');
       if (on) setTimeout(() => ed.focus(), 30);
