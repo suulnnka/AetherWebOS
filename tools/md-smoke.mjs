@@ -28,8 +28,8 @@ eq('*** 分隔线', render('***'), '<hr>');
 /* ---------- 段落与换行 ---------- */
 eq('单段落', render('你好'), '<p>你好</p>');
 eq('两段落空行分隔', render('a\n\nb'), '<p>a</p><p>b</p>');
-eq('软换行保留', render('a\nb'), '<p>a\nb</p>');
-eq('行尾两空格硬换行', render('a  \nb'), '<p>a<br>\nb</p>');
+eq('软换行渲染为换行(Typora 式)', render('a\nb'), '<p>a<br>b</p>');
+eq('行尾两空格硬换行', render('a  \nb'), '<p>a<br>b</p>');
 eq('行尾反斜杠硬换行', render('a\\\nb'), '<p>a<br>\nb</p>');
 eq('空文档', render(''), '');
 eq('仅空行', render('\n\n\n'), '');
@@ -88,7 +88,7 @@ eq('缩进代码块', render('    indented'), '<pre class="md-code"><code>indent
 
 /* ---------- 引用 ---------- */
 eq('引用', render('> 引用内容'), '<blockquote><p>引用内容</p></blockquote>');
-eq('引用懒延续', render('> a\nb'), '<blockquote><p>a\nb</p></blockquote>');
+eq('引用懒延续', render('> a\nb'), '<blockquote><p>a<br>b</p></blockquote>');
 eq('嵌套引用', render('> > 深'), '<blockquote><blockquote><p>深</p></blockquote></blockquote>');
 eq('引用内的列表', render('> - a\n> - b'), '<blockquote><ul><li>a</li><li>b</li></ul></blockquote>');
 
@@ -98,7 +98,7 @@ eq('有序列表', render('1. a\n2. b'), '<ol><li>a</li><li>b</li></ol>');
 eq('有序起始编号', render('3. x'), '<ol start="3"><li>x</li></ol>');
 eq('嵌套列表', render('- a\n  - b'), '<ul><li><p>a</p><ul><li>b</li></ul></li></ul>');
 eq('松散列表', render('- a\n\n- b'), '<ul><li><p>a</p></li><li><p>b</p></li></ul>');
-eq('列表懒延续', render('- a\nb'), '<ul><li>a\nb</li></ul>');
+eq('列表懒延续', render('- a\nb'), '<ul><li>a<br>b</li></ul>');
 eq('任务列表', render('- [ ] 待办\n- [x] 完成'),
   '<ul>'
   + '<li class="md-task-item"><span class="md-check" role="checkbox"></span><p>待办</p></li>'

@@ -354,15 +354,13 @@ function inline(text, defs, depth = 0) {
       buf += ch; i++; continue;
     }
 
-    /* 行尾两个及以上空格 = 硬换行 */
+    /* 换行:行尾空格并入换行;软换行也渲染为 <br>(Typora/GFM 式,
+     * 与编辑器"所见即所得"的换行观感一致) */
     if (ch === '\n') {
       const trail = buf.match(/ +$/);
-      if (trail && trail[0].length >= 2) {
-        buf = buf.slice(0, buf.length - trail[0].length);
-        flush();
-        nodes.push({ t: 'html', s: '<br>' });
-      }
-      buf += '\n';
+      if (trail) buf = buf.slice(0, buf.length - trail[0].length);
+      flush();
+      nodes.push({ t: 'html', s: '<br>' });
       i++;
       continue;
     }
