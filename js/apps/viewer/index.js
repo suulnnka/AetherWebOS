@@ -16,6 +16,7 @@ import manifest from './manifest.js';
 import './viewer.css';
 import '../../lib/mdedit.css';                 // .md-view 渲染排版(与编辑组件共用)
 import { open } from '../../core/wm.js';
+import { openMdLink } from '../../core/mdopen.js';
 import { render as mdRender } from '../../lib/md.js';
 
 const TEXT_EXT = ['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'csv', 'log', 'ini', 'yml', 'conf'];
@@ -56,6 +57,7 @@ register({
     const editBtn = el('button', { class: 'btn', hidden: '', onClick: () => toEditor() }, icon('pencil', 13), editLabel);
     let currentFile = null;
     let editKind = null;         // 'text' → 记事本;'md' → Markdown 编辑器
+    let curPath = null;          // 来源为虚拟文件系统时的路径(链接相对解析用)
 
     const revoke = () => { if (url) { URL.revokeObjectURL(url); url = null; } };
 
@@ -63,6 +65,7 @@ register({
       revoke();
       currentFile = null;
       editKind = null;
+      curPath = null;
       stage.innerHTML = '';
       stage.classList.remove('pdf');
       stage.append(el('div', { class: 'viewer-empty' }, icon('image', 42),
@@ -99,11 +102,13 @@ register({
       }
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const mime = MIME[name.split('.').pop().toLowerCase()] || 'application/octet-stream';
+      curPath = path;
       load(new File([bytes], name, { type: mime }), name);
     }
 
     async function load(file, name) {
       revoke();
+      curPath = null;
       currentFile = { file, name: name || file.name || '未命名' };
       const kind = route(file);
       url = URL.createObjectURL(file);
@@ -149,6 +154,15 @@ register({
             `暂不支持预览该格式(${file.type || '未知类型'})。`)));
       }
     }
+
+    /* Markdown 里的链接:本地路径按系统规则打开,网址走系统浏览器
+     * (必须阻止默认 —— 否则会真的导航整个页面) */
+    stage.addEventListener('click', (e) => {
+      const a = e.target.closest?.('a[href]');
+      if (!a) return;
+      e.preventDefault();
+      openMdLink(a.getAttribute('href') || '', curPath);
+    });
 
     /* 拖放 */
     root.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); root.classList.add('dragover'); });
