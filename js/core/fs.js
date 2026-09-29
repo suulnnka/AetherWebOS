@@ -332,7 +332,12 @@ async function writeTree() {
         }
       }
       await opfsWriteText(OPFS_NAME, meta);
-      for (const gone of removedPaths) await opfsRemovePath('fsdata' + gone);
+      /* 路径已被重建(rm 后同路径再建)时保留新内容,只清真正不存在的遗留;
+       * 否则会把刚写好的 fsdata 当垃圾删掉(内存 inode 却还在 → 读到全零) */
+      for (const gone of removedPaths) {
+        if (node(gone)) continue;
+        await opfsRemovePath('fsdata' + gone);
+      }
     } else {
       await opfsWriteText(OPFS_NAME, full);
     }
