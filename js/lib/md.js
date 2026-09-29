@@ -200,7 +200,10 @@ function parseBlocks(lines, base, defs) {
         const lj = L(j);
         if (!lj.trim()) break;
         const sm = lj.match(SETEXT_RE);
-        if (sm) { setext = sm[1][0] === '=' ? 1 : 2; j++; break; }
+        /* 单个 "-" 不作 setext 下划线(务实偏差):缩进后的空嵌套列表项
+         * ("- a\n  - ")会撞上单横下划线,把条目闪变成 h2;两个及以上
+         * 横线("----")仍按规范处理,等号下划线不受影响 */
+        if (sm && !(sm[1][0] === '-' && sm[1].length === 1)) { setext = sm[1][0] === '=' ? 1 : 2; j++; break; }
         if (canInterrupt(lj)) break;
         para.push(lines[j]);
         j++;
@@ -314,12 +317,21 @@ function safeUrl(url, isImg) {
   return u;                                                   // 相对路径 / 锚点 / 协议相对
 }
 
-/** 生成 <a>/<img>;被拒绝的协议返回 null(调用方回退为字面文本) */
+/** 生成 <a>/<img>;被拒绝的协议返回 null(调用方回退为字面文本)。
+ *  互联网图片(http/https)不渲染为 <img> —— 外部资源不拉取,以
+ *  替代占位显示(悬停可见完整地址);本地相对/绝对路径与 data: 正常出图 */
 function linkHtml(inner, url, title, isImg, rich) {
   const u = safeUrl(url, isImg);
   if (u == null) return null;
+  if (isImg) {
+    if (/^https?:/i.test(u)) {
+      const tip = esc(title ? `${title} — ${u}` : u);
+      return `<span class="md-img" data-src="${esc(u)}" data-alt="${esc(inner)}" title="${tip}">🖼 ${esc(inner || '图片')}</span>`;
+    }
+    const t = title ? ` title="${esc(title)}"` : '';
+    return `<img src="${esc(u)}" alt="${esc(inner)}"${t} loading="lazy">`;
+  }
   const t = title ? ` title="${esc(title)}"` : '';
-  if (isImg) return `<img src="${esc(u)}" alt="${esc(inner)}"${t} loading="lazy">`;
   return `<a href="${esc(u)}"${t} target="_blank" rel="noopener">${rich ? inner : esc(inner)}</a>`;
 }
 

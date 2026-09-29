@@ -74,6 +74,10 @@ eq('script 标签被转义', render('<script>alert(1)</script>'),
 eq('文本中的尖括号转义', render('a < b > c'), '<p>a &lt; b &gt; c</p>');
 eq('属性注入转义', render('["onx](y "z&quot;")'),
   '<p><a href="y" title="z&amp;quot;" target="_blank" rel="noopener">&quot;onx</a></p>');
+eq('互联网图片不渲染(占位芯片)', render('![图](https://a.b/i.png)'),
+  '<p><span class="md-img" data-src="https://a.b/i.png" data-alt="图" title="https://a.b/i.png">🖼 图</span></p>');
+eq('本地图片正常出图', render('![图](/img/i.png)'),
+  '<p><img src="/img/i.png" alt="图" loading="lazy"></p>');
 eq('图片允许 data:image/', render('![](data:image/png;base64,AAA)'),
   '<p><img src="data:image/png;base64,AAA" alt="" loading="lazy"></p>');
 
