@@ -121,6 +121,10 @@ async function waitReady() {
 /* 组间重置:回到初始桌面(localStorage 保留,由用例自行清理) */
 async function fresh() { await c.goto(URL_BASE); await waitReady(); }
 
+/* 商店应用前置:store 应用默认未安装(不出现在开始菜单/桌面),
+ * 用到它们的用例组开头先装好再测(幂等;安装语义详见 T50 软件商店组) */
+const needApps = (...ids) => ev(`${JSON.stringify(ids)}.forEach(id => WebOS.apps.install(id)); true`);
+
 /* 轮询等待表达式为真值(默认 5s 超时,返回最终值)。
    用于异步 UI 就绪等待:如加密解密(PBKDF2 派生)、弹窗窗口创建等无固定耗时的环节 */
 async function waitFor(expr, timeout = 5000) {
@@ -251,7 +255,7 @@ group('T1', '启动与桌面', async () => {
     clock: document.getElementById('clock-time').textContent,
     theme: document.documentElement.dataset.theme,
   })`);
-  t('T1 桌面启动', !boot1.boot && boot1.icons >= 15 && boot1.pinned >= 3 && boot1.smItems >= 15,
+  t('T1 桌面启动', !boot1.boot && boot1.icons >= 12 && boot1.pinned >= 3 && boot1.smItems >= 12,
     `icons=${boot1.icons} pinned=${boot1.pinned} sm=${boot1.smItems} clock=${boot1.clock} errs=${boot1.errs.length}`);
   if (boot1.errs.length) console.log('   errors:', boot1.errs.join('\n   '));
   await c.shot('t1-desktop');
@@ -405,6 +409,7 @@ group('T8', '文件管家 + 记事本(IPC 参数传递)', async () => {
 
 group('T9', '终端 + IPC 演示', async () => {
   /* ---- T9 终端 + IPC 演示 ---- */
+  await needApps('monitor');
   await ev(`WebOS.wm.open('terminal')`);
   await sleep(500);
   await termType('notify 你好 AetherWebOS');
@@ -495,6 +500,7 @@ group('T11', '计算器', async () => {
 
 group('T12', '音乐播放器', async () => {
   /* ---- T12 音乐播放器 ---- */
+  await needApps('music');
   await ev(`WebOS.wm.open('music')`);
   await sleep(500);
   await ev(`document.querySelector('.play-btn').click()`);
@@ -812,6 +818,7 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
 
 group('T19', '霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务栏 / 动态桌面', async () => {
   /* ---- T19 霓虹 2.0:每应用灯条 / 流光 / 呼吸 / 悬浮切角任务栏 / 动态桌面 ---- */
+  await needApps('monitor', 'music');
   await ev(`WebOS.settings.set({ style: 'neon' })`);
   await ev(`WebOS.wm.open('files'); WebOS.wm.open('monitor')`);
   await sleep(1050);   // 霓虹出场编排 ~0.8s,读完稳态需等它结束
@@ -1054,6 +1061,7 @@ group('T21', '本地资源 + 文件预览', async () => {
 
 group('T22', '多窗口模式:平铺/层叠/贴边/焦点', async () => {
   /* ---- T22 多窗口模式:平铺/层叠/贴边/焦点 ---- */
+  await needApps('monitor');
   // 准备三个窗口(wm.open 是 async —— 顺序 await,保证 monitor 最后打开并持有焦点)
   await ev(`[...document.querySelectorAll('.win')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(500);
@@ -1284,7 +1292,7 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
       folders: icons.filter(n => n.dataset.dir === '1').length,
     };
   })()`);
-  t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 11 && dsk1.folders >= 1 && await ev(`WebOS.fs.isDir(WebOS.fs.desktopPath())`), JSON.stringify(dsk1));
+  t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 12 && await ev(`WebOS.fs.isDir(WebOS.fs.desktopPath())`), JSON.stringify(dsk1));
 
   // b. 桌面右键 → 新建文本文档(全 GUI:菜单 → 系统对话框输入)
   await ev(`document.getElementById('icons').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 300 }))`);
@@ -1961,6 +1969,7 @@ group('T29', '文件加密(AES-GCM)', async () => {
 
 group('T30', '天气应用(实况/预报/历史确定性)', async () => {
   /* ---- T30 天气应用(实况/预报/历史确定性) ---- */
+  await needApps('weather');
   await ev(`WebOS.wm.open('weather')`);
   await sleep(800);
   const w1 = await ev(`(() => ({
@@ -2117,6 +2126,7 @@ group('T32', '笔记(含加密)', async () => {
     }
     return true;
   })()`);
+  await needApps('memo');   // 安装按用户:须在登录切换后再装
   await fresh();
   await ev(`WebOS.wm.open('memo')`);
   await sleep(700);
@@ -2203,6 +2213,7 @@ group('T32', '笔记(含加密)', async () => {
 
 group('T33', '扫雷 + 国际象棋', async () => {
   /* ---- T33 扫雷 + 国际象棋 ---- */
+  await needApps('minesweeper', 'chess3d');
   await fresh();
 
   // 扫雷:棋盘规模 / 首击安全 / 右键插旗
@@ -2258,6 +2269,7 @@ group('T33', '扫雷 + 国际象棋', async () => {
 
 group('T34', '黑白棋', async () => {
   /* ---- T34 黑白棋 ---- */
+  await needApps('reversi');
   await fresh();
   await ev(`WebOS.wm.open('reversi')`);
   await sleep(700);
@@ -2344,6 +2356,7 @@ group('T34', '黑白棋', async () => {
 
 group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
   /* ---- T35 纸牌游戏(接龙 + 记忆翻牌) ---- */
+  await needApps('solitaire', 'pairs');
   await fresh();
 
   // 接龙:发牌正确性(52 张全在场上:28 在列 + 24 在牌堆)、7 列、点击翻牌
@@ -2439,6 +2452,7 @@ group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
 
 group('T36', '推箱子', async () => {
   /* ---- T36 推箱子 ---- */
+  await needApps('sokoban');
   await fresh();
   for (let i = 0; i < 10 && !(await ev(`WebOS.apps.list().some(a => a.id === 'sokoban')`)); i++) await sleep(400);
   await ev(`WebOS.wm.open('sokoban')`);
@@ -2501,6 +2515,7 @@ group('T36', '推箱子', async () => {
 
 group('T37', 'QQ 聊天', async () => {
   /* ---- T37 QQ 聊天 ---- */
+  await needApps('qq');
   await fresh();
   for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
   // 清档:测试登录流程(QQ 按用户分键存储,基础键与 ::qq-* 会话键都要清)
@@ -2847,6 +2862,7 @@ group('T40', '系统用户与注销', async () => {
 
 group('T41', '应用内右键', async () => {
   /* ---- T41 应用内右键:拦截浏览器菜单 / 选中复制 / 全选 / 应用自定义菜单 ---- */
+  await needApps('memo');
   // CDP 授权剪贴板,让「复制」可用真实系统剪贴板验证;headless 页面须置于前台才有文档焦点
   await c.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
   await c.send('Page.bringToFront');
@@ -3148,6 +3164,7 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,按用户存储免�
     }
     return true;
   })()`);
+  await needApps('diary');   // 安装按用户:须在登录切换后再装
   await fresh();
   await ev(`WebOS.wm.open('diary')`);
   await sleep(700);
@@ -3297,6 +3314,7 @@ group('T43', '日记(按日期 / 自动保存 / 单页加密,按用户存储免�
 
 group('T44', '五子棋(双规则 / 禁手标记 / AI 应答)', async () => {
   /* ---- T44 五子棋:双规则 / 禁手标记 / AI 应答 / 悔棋 ---- */
+  await needApps('gomoku');
   await fresh();
   await ev(`WebOS.wm.open('gomoku')`);
   await sleep(700);
@@ -3477,6 +3495,7 @@ group('T45', '三级弹窗锁定任务栏', async () => {
 group('T46', '应用内弹框为二级(五子棋终局)', async () => {
   /* ---- T46 五子棋终局弹框走 ctx.dialogs(二级 · 应用模态):
    * 不再全屏遮罩锁系统,只锁五子棋自己的窗口,任务栏与其他应用照常 ---- */
+  await needApps('gomoku');
   await fresh();
   await ev(`WebOS.wm.open('calc')`);   // 对照:二级不锁其他应用
   await sleep(400);
@@ -3686,7 +3705,7 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   // 标记首窗口:后续多窗口步骤按标记区分,不依赖 DOM 顺序(聚焦会重排 z 序)
   await ev(`document.querySelector('.win[data-app=mdedit]').__first = true`);
 
-  // 骨架:无文字工具栏;只读起步(编辑面只读),编辑键可点
+  // 骨架:固定操作栏;只读起步(编辑面只读,操作栏置灰),编辑键可点
   const s0 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
     const eb = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
@@ -3695,7 +3714,7 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
              btns: w.querySelectorAll('.md-tbtn').length, blocks: w.querySelectorAll('.md-block').length,
              eb: !!eb, ebOn: eb ? !eb.disabled : false };
   })()`);
-  t('T48 编辑器骨架(无工具栏;只读起步,编辑键可点)', s0.edit && s0.ro === 'false' && s0.btns === 0 && s0.blocks === 1 && s0.eb && s0.ebOn, JSON.stringify(s0));
+  t('T48 编辑器骨架(操作栏;只读起步,编辑键可点)', s0.edit && s0.ro === 'false' && s0.btns >= 15 && s0.blocks === 1 && s0.eb && s0.ebOn, JSON.stringify(s0));
 
   // 语法渲染全景:编辑键解锁写入 →「完成」回只读,整篇渲染断言
   await ev(`(() => {
@@ -3861,6 +3880,71 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   t('T48.4e 选区浮动工具栏(选中→粗体)',
     s2g === true && s2h.src === '一**段文**字' && s2h.strong === 1, JSON.stringify(s2h));
 
+  // 图片策略:互联网图片不拉取(占位芯片),本地路径正常出图;编辑往返源码不丢
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    const done = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成'));
+    if (done) done.click();   // 归一到只读态(上一步可能仍在编辑)
+    const two = String.fromCharCode(10) + String.fromCharCode(10);
+    w.querySelector('.md-edit').$md.set(['网图 ![外链图](https://a.b/i.png)', '本地图 ![本图](images/x.png)'].join(two));
+    return true;
+  })()`);
+  await sleep(300);
+  const s2i = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { chip: w.querySelectorAll('.md-block .md-img').length,
+             chipSrc: w.querySelector('.md-block .md-img')?.dataset.src,
+             imgs: w.querySelectorAll('.md-block img').length };
+  })()`);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑')).click();
+  })()`);
+  await sleep(250);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成')).click();
+  })()`);
+  await sleep(250);
+  const s2j = await ev(`document.querySelector('.win[data-app=mdedit] .md-edit').$md.get()`);
+  t('T48.4f 图片策略(互联网占位芯片 / 本地图 / 编辑往返不丢源)',
+    s2i.chip === 1 && s2i.chipSrc === 'https://a.b/i.png' && s2i.imgs === 1
+      && s2j.includes('![外链图](https://a.b/i.png)') && s2j.includes('![本图](images/x.png)'),
+    JSON.stringify({ s2i, s2j }));
+
+  // 操作栏:不懂语法点按钮 —— 选中文字点粗体按钮 → 标记包裹选区
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    const done = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('完成'));
+    if (done) done.click();   // 归一到只读态
+    const edit = [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('编辑'));
+    edit.click();             // 本用例需要编辑态
+    w.querySelector('.md-edit').$md.set('一段文字');
+    return true;
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const surf = document.querySelector('.win[data-app=mdedit] .md-surface');
+    const tn = surf.querySelector('.md-block p').firstChild;
+    surf.focus();
+    const r = document.createRange(); r.setStart(tn, 1); r.setEnd(tn, 3);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    return true;
+  })()`);
+  await sleep(250);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    [...w.querySelectorAll('.md-tbtn')].find(b => b.title.includes('粗体')).click();
+    return true;
+  })()`);
+  await sleep(400);
+  const s2k = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=mdedit]');
+    return { src: w.querySelector('.md-edit').$md.get(), strong: w.querySelectorAll('.md-block strong').length };
+  })()`);
+  t('T48.4g 操作栏按钮套用样式(选中→粗体)',
+    s2k.src === '一**段文**字' && s2k.strong === 1, JSON.stringify(s2k));
+
   // 安全:拒绝 javascript: 链接、不透传原始 HTML
   const s3 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=mdedit]');
@@ -3952,6 +4036,46 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   t('T48.9 文件不可写 → 编辑键置灰(内容仍可读)', s6.dis === true && s6.h1 >= 1 && s6.ce === 'false', JSON.stringify(s6));
   await ev(`WebOS.fs.chmod(${JSON.stringify(mdPath)}, 'rw-r--')`);   // 还原权限,不污染后续轮次
 
+  // 链接路由:网页 → 系统浏览器;本地 .md → Markdown 编辑器新窗口装载
+  await ev(`window.__lt = WebOS.fs.homePath() + '/documents/md-e2e.md'; true`);
+  await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
+    const two = String.fromCharCode(10) + String.fromCharCode(10);
+    w.querySelector('.md-edit').$md.set(['[网页链接](https://example.com)', '[本地文档](' + window.__lt + ')'].join(two));
+    return true;
+  })()`);
+  await sleep(250);
+  await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
+    [...w.querySelectorAll('.md-block a')].find(a => a.getAttribute('href') === 'https://example.com').click();
+  })()`);
+  await sleep(800);
+  const s7a = await ev(`(() => ({
+    hasBrowser: !!document.querySelector('.win[data-app=browser]'),
+    addr: document.querySelector('.win[data-app=browser] .vw-addr')?.value,
+  }))()`);
+  await ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=mdedit]')].find(x => !x.__first && !x.__second);
+    [...w.querySelectorAll('.md-block a')].find(a => a.getAttribute('href').endsWith('md-e2e.md')).click();
+  })()`);
+  await sleep(800);
+  const s7b = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=mdedit]')];
+    const last = wins[wins.length - 1];
+    return { n: wins.length, md: last?.querySelector('.md-edit')?.$md?.get()?.slice(0, 10) };
+  })()`);
+  t('T48.9b 链接路由(网页→系统浏览器 / 本地 .md→编辑器)',
+    s7a.hasBrowser && String(s7a.addr).includes('example.com') && String(s7b.md).includes('保存测试'),
+    JSON.stringify({ s7a, s7b }));
+  // 清理本步打开的窗口,不影响后续轮次
+  await ev(`(() => {
+    document.querySelectorAll('.win[data-app=browser]').forEach(w => WebOS.wm.close(w.dataset.id));
+    const wins = [...document.querySelectorAll('.win[data-app=mdedit]')];
+    wins.slice(3).forEach(w => WebOS.wm.close(w.dataset.id));
+    return true;
+  })()`);
+  await sleep(300);
+
   const errs = await ev(`window.__errs.length`);
   t('T48.10 全程无错误', errs === 0, `errs=${errs}`);
   await c.shot('t48-mdedit');
@@ -3979,6 +4103,7 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
     await WebOS.fs.flush();
     return true;
   })()`);
+  await needApps('dbviewer');   // 安装按用户:须在登录切换后再装
 
   await ev(`WebOS.wm.open('dbviewer')`);
   await sleep(600);
@@ -4155,6 +4280,175 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
   const errs = await ev(`window.__errs.length`);
   t('T49.16 全程无错误', errs === 0, `errs=${errs}`);
   await c.shot('t49-dbviewer');
+});
+
+group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联动)', async () => {
+  /* ---- T50 软件商店:store 应用默认未安装,安装后才进开始菜单与桌面 ---- */
+  await ev(`WebOS.apps.uninstall('map')`);   // 幂等清场(其他组可能装过)
+  await sleep(400);
+
+  // a. 未安装:不在开始菜单、无桌面快捷方式
+  const s0 = await ev(`(() => ({
+    installed: WebOS.apps.isInstalled('map'),
+    sm: document.querySelectorAll('.sm-item[data-search*="map"]').length,
+    desk: WebOS.fs.exists(WebOS.fs.desktopPath() + '/地图.app'),
+  }))()`);
+  t('T50 未安装:开始菜单/桌面均无入口', s0.installed === false && s0.sm === 0 && s0.desk === false, JSON.stringify(s0));
+
+  // b. 打开门禁:未安装应用被拦,弹窗引导去软件商店
+  await ev(`WebOS.wm.open('map')`);
+  await sleep(500);
+  const gate = await ev(`(() => ({
+    dialog: !!document.querySelector('.win[data-app=sysdialog]'),
+    msg: (document.querySelector('.win[data-app=sysdialog]')?.textContent || '').includes('需要先在软件商店安装'),
+    win: !!document.querySelector('.win[data-app=map]'),
+  }))()`);
+  t('T50.1 打开未安装应用被门禁拦截', gate.dialog && gate.msg && !gate.win, JSON.stringify(gate));
+  await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] button')].find(b => b.textContent.trim() === '打开软件商店').click()`);
+  await sleep(900);
+  const jump = await ev(`(() => ({
+    store: !!document.querySelector('.win[data-app=appstore]'),
+    flash: !!document.querySelector('.st-card[data-app=map].flash'),
+  }))()`);
+  t('T50.2 门禁一键直达商店并高亮卡片', jump.store && jump.flash, JSON.stringify(jump));
+  await c.shot('t50-store-gate');
+
+  // c. 商店目录:在售卡片 / 头部横幅 / 分类导航
+  const ui = await ev(`(() => ({
+    cards: document.querySelectorAll('.st-card').length,
+    installs: document.querySelectorAll('.st-install').length,
+    hero: !!document.querySelector('.st-hero'),
+    nav: [...document.querySelectorAll('.st-nav .nav-item')].map(n => n.dataset.cat),
+  }))()`);
+  t('T50.3 商店目录(卡片/横幅/分类)', ui.cards === 18 && ui.installs > 0 && ui.hero && ui.nav.includes('游戏') && ui.nav.includes('mine'), JSON.stringify(ui));
+
+  // d. GUI 安装:点「安装」→ 进度动画 → 打开;开始菜单/桌面/持久化全部就位
+  await ev(`document.querySelector('.st-card[data-app=map] .st-install').click()`);
+  const opened1 = await waitFor(`!!document.querySelector('.st-card[data-app=map] .st-open')`, 4000);
+  const s1 = await ev(`(() => ({
+    installed: WebOS.apps.isInstalled('map'),
+    sm: document.querySelectorAll('.sm-item[data-search*="map"]').length,
+    desk: WebOS.fs.exists(WebOS.fs.desktopPath() + '/地图.app'),
+    persisted: (JSON.parse(localStorage.getItem('webos.installed.v2') || '{}')[WebOS.accounts.current()] || []).includes('map'),
+  }))()`);
+  t('T50.4 安装后:开始菜单+桌面快捷方式+持久化', opened1 && s1.installed && s1.sm === 1 && s1.desk && s1.persisted, JSON.stringify(s1));
+  await c.shot('t50-installed');
+
+  // e. 安装后从商店「打开」直达应用
+  await ev(`document.querySelector('.st-card[data-app=map] .st-open').click()`);
+  await sleep(700);
+  t('T50.5 安装后可从商店打开', await ev(`!!document.querySelector('.win[data-app=map]')`) === true);
+
+  // f. 卸载语义:打开中的窗口被关闭、任务栏固定解除、商店卡片实时回退
+  await ev(`WebOS.settings.set({ pinnedApps: ['files', 'terminal', 'map'] })`);
+  await ev(`WebOS.apps.uninstall('map')`);
+  await sleep(600);
+  const s15 = await ev(`(() => ({
+    win: !!document.querySelector('.win[data-app=map]'),
+    pinned: WebOS.settings.get('pinnedApps').includes('map'),
+    installed: WebOS.apps.isInstalled('map'),
+    installBtn: !!document.querySelector('.st-card[data-app=map] .st-install'),
+    sm: document.querySelectorAll('.sm-item[data-search*="map"]').length,
+  }))()`);
+  t('T50.6 卸载:关窗口/解固定/菜单与卡片回退', s15.win === false && s15.pinned === false && s15.installed === false && s15.installBtn && s15.sm === 0, JSON.stringify(s15));
+
+  // g. API 安装:商店窗口开着也能实时刷新卡片(总线联动)
+  await ev(`WebOS.apps.install('map', { silent: true })`);
+  await sleep(600);
+  t('T50.7 API 安装实时反映到商店', await ev(`!!document.querySelector('.st-card[data-app=map] .st-open')`) === true);
+
+  // h. 搜索过滤
+  await ev(`(() => { const i = document.querySelector('.st-search'); i.value = '地图'; i.dispatchEvent(new Event('input')); return true; })()`);
+  await sleep(300);
+  t('T50.8 搜索过滤到目标应用', await ev(`document.querySelectorAll('.st-card').length`) === 1);
+  await ev(`(() => { const i = document.querySelector('.st-search'); i.value = ''; i.dispatchEvent(new Event('input')); return true; })()`);
+  await sleep(200);
+
+  // i. 分类导航:游戏分类只显示游戏
+  await ev(`document.querySelector('.st-nav .nav-item[data-cat="游戏"]').click()`);
+  await sleep(300);
+  const catv = await ev(`(() => ({
+    cards: document.querySelectorAll('.st-card').length,
+    allGame: [...document.querySelectorAll('.st-card')].every(c => (c.querySelector('.st-line')?.textContent || '').startsWith('游戏')),
+  }))()`);
+  t('T50.9 分类导航(游戏)', catv.cards >= 10 && catv.allGame, JSON.stringify(catv));
+  await ev(`document.querySelector('.st-nav .nav-item[data-cat="all"]').click()`);
+  await sleep(200);
+
+  // j. 棋类应用(desktopIcon:false)安装进桌面「棋类游戏」文件夹
+  await ev(`WebOS.apps.install('go', { silent: true })`);
+  await sleep(600);
+  const chess = await ev(`(() => ({
+    installed: WebOS.apps.isInstalled('go'),
+    folder: WebOS.fs.isDir(WebOS.fs.desktopPath() + '/棋类游戏'),
+    link: WebOS.fs.exists(WebOS.fs.desktopPath() + '/棋类游戏/围棋.app'),
+    storeBtn: !!document.querySelector('.st-card[data-app=go] .st-open'),
+  }))()`);
+  t('T50.10 棋类安装进桌面文件夹', chess.installed && chess.folder && chess.link && chess.storeBtn, JSON.stringify(chess));
+
+  // k. GUI 卸载:确认对话框 → 入口全移除
+  await ev(`document.querySelector('.st-card[data-app=map] .st-uninstall').click()`);
+  await sleep(500);
+  const dlgOk = await ev(`(() => ({
+    dialog: !!document.querySelector('.win[data-app=sysdialog]'),
+    msg: (document.querySelector('.win[data-app=sysdialog]')?.textContent || '').includes('应用数据保留'),
+  }))()`);
+  await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] button')].find(b => b.textContent.trim() === '卸载').click()`);
+  await sleep(600);
+  const s2 = await ev(`(() => ({
+    installed: WebOS.apps.isInstalled('map'),
+    sm: document.querySelectorAll('.sm-item[data-search*="map"]').length,
+    desk: WebOS.fs.exists(WebOS.fs.desktopPath() + '/地图.app'),
+    installBtn: !!document.querySelector('.st-card[data-app=map] .st-install'),
+  }))()`);
+  t('T50.11 GUI 卸载(确认框+入口移除)', dlgOk.dialog && dlgOk.msg && s2.installed === false && s2.sm === 0 && s2.desk === false && s2.installBtn, JSON.stringify({ dlgOk, s2 }));
+  await c.shot('t50-store');
+
+  // l. 安装按用户:新建用户(不切会话)从系统预装起步,本人装过的商店应用他没有
+  await ev(`(async () => { await WebOS.accounts.createUser('storeuser', 'storepass'); return true; })()`);
+  await sleep(600);   // 'created' → applink 预播种 storeuser 桌面
+  const perUser = await ev(`(() => {
+    const d = '/home/storeuser/desktop';
+    const cur = WebOS.accounts.current();
+    return {
+      goMine: WebOS.apps.isInstalled('go'),
+      goOther: WebOS.apps.isInstalled('go', 'storeuser'),
+      otherApps: (WebOS.fs.list(d, { as: 'root' }) || []).filter(f => f.name.endsWith('.app')).map(f => f.name),
+      otherChess: WebOS.fs.exists(d + '/棋类游戏/围棋.app'),
+      v2HasGo: (JSON.parse(localStorage.getItem('webos.installed.v2') || '{}')[cur] || []).includes('go'),
+    };
+  })()`);
+  t('T50.12 安装按用户(新用户从预装起步)',
+    perUser.goMine === true && perUser.goOther === false && perUser.otherChess === false
+    && perUser.otherApps.includes('系统设置.app') && !perUser.otherApps.includes('围棋.app')
+    && perUser.v2HasGo === true,
+    JSON.stringify(perUser));
+
+  // m. 给他人安装/卸载不影响本人
+  await ev(`WebOS.apps.install('weather', { user: 'storeuser', silent: true })`);
+  await sleep(500);
+  const other = await ev(`(() => ({
+    cur: WebOS.accounts.current(),
+    mine: WebOS.apps.isInstalled('weather'),
+    other: WebOS.apps.isInstalled('weather', 'storeuser'),
+    myDesk: WebOS.fs.exists(WebOS.fs.desktopPath() + '/天气.app'),
+    otherDesk: WebOS.fs.exists('/home/storeuser/desktop/天气.app'),
+    sm: document.querySelectorAll('.sm-item[data-search*="weather"]').length,
+    storeBtn: !!document.querySelector('.st-card[data-app=weather] .st-install'),
+    v2: JSON.parse(localStorage.getItem('webos.installed.v2') || '{}'),
+    myDesktop: (WebOS.fs.list(WebOS.fs.desktopPath(), { as: 'root' }) || []).map(f => f.name),
+  }))()`);
+  await ev(`WebOS.apps.uninstall('weather', { user: 'storeuser', silent: true })`);
+  await sleep(300);
+  const otherBack = await ev(`WebOS.apps.isInstalled('weather', 'storeuser') === false && WebOS.fs.exists('/home/storeuser/desktop/天气.app') === false`);
+  await ev(`(async () => { await WebOS.accounts.remove('storeuser', 'storepass'); return true; })()`);   // 清理测试账号
+  t('T50.13 给他人安装/卸载不影响本人',
+    other.mine === false && other.other === true && other.myDesk === false && other.otherDesk === true
+    && other.sm === 0 && other.storeBtn === true && otherBack === true,
+    JSON.stringify(other));
+
+  const errs50 = await ev(`window.__errs.length`);
+  t('T50.14 全程无错误', errs50 === 0, `errs=${errs50}`);
 });
 
 /* ---------- 用例筛选 ---------- */

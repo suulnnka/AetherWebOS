@@ -164,7 +164,7 @@ function serInline(el, out) {
       continue;
     }
     switch (ch.nodeName) {
-      case 'BR': out.push(vd('  \n')); break;                       // 硬换行
+      case 'BR': out.push(vd('  \n', ch)); break;              // 硬换行(带宿主:br 占 1 个可见字符)
       case 'STRONG': wrapMk(ch, '**', '**', out); break;
       case 'EM': wrapMk(ch, '*', '*', out); break;
       case 'S': wrapMk(ch, '~~', '~~', out); break;
@@ -191,6 +191,14 @@ function serInline(el, out) {
         const src = ch.getAttribute('src') || '';
         const title = ch.getAttribute('title');
         out.push(vd(`![${alt}](${src}${title ? ` "${title}"` : ''})`));
+        break;
+      }
+      case 'SPAN': {
+        if (ch.classList.contains('md-img')) {          // 互联网图片占位:按数据属性回源
+          out.push(vd(`![${ch.dataset.alt || ''}](${ch.dataset.src || ''})`));
+          break;
+        }
+        serInline(ch, out);
         break;
       }
       default: serInline(ch, out);                                  // span / 未知标签:透传子树
@@ -245,6 +253,7 @@ function serBlockEl(el, lines) {
   } else if (tag === 'BLOCKQUOTE') {
     const inner = [];
     serContainer(el, inner);
+    if (!inner.length) { lines.push([vd('> ')]); return; }   // 空引用:标记行不可丢
     for (const segs of inner) lines.push([vd('> '), ...segs]);
   } else if (tag === 'UL' || tag === 'OL') {
     serList(el, tag === 'OL', lines);
@@ -255,7 +264,8 @@ function serBlockEl(el, lines) {
     for (const ln of body.split('\n')) lines.push([vd(ln)]);
     lines.push([vd('```')]);
   } else if (tag === 'PRE' && el.classList.contains('md-defraw')) {
-    for (const ln of (el.dataset.src || '').split('\n')) lines.push([vd(ln)]);
+    /* 读实时文本而非渲染时的 data-src 快照 —— 打字后源码才能跟随 */
+    for (const ln of el.textContent.split('\n')) lines.push([vd(ln)]);
   } else if (tag === 'DIV' && el.classList.contains('md-table-wrap')) {
     serTable(el.querySelector('table'), lines);
   } else {                                                           // 兜底:按纯文本行
@@ -273,16 +283,22 @@ function serList(el, ordered, lines) {
       : ordered ? `${n++}. ` : '- ';
     const segs = [vd(mk, li)];
     const kids = itemChildren(li);
-    const blockEls = kids.filter((x) => x.nodeType === 1);
-    if (blockEls.length <= 1) {
-      serNodes(kids, segs);                                  // 紧凑条目:裸文本或单 P,一律行内
+    const blockEls = kids.filter((x) => x.nodeType === 1 && x.nodeName !== 'BR');
+    const firstEl = kids.findIndex((x) => x.nodeType === 1 && x.nodeName !== 'BR');
+    const head = firstEl === -1 ? kids : kids.slice(0, firstEl);   // 标记后的前置裸文本
+    /* 紧凑条目:纯文本 / 单 P;含块级子元素(嵌套列表/代码等)走多行:
+     * 前置文本留在标记行,子块逐行缩进一个标记宽度 */
+    const compact = blockEls.length === 0 || (blockEls.length === 1 && blockEls[0].nodeName === 'P');
+    if (compact) {
+      serNodes(kids, segs);
       lines.push(segs);
     } else {
+      if (head.length) serNodes(head, segs);
+      lines.push(segs);
       const inner = [];
       for (const b of blockEls) serBlockEl(b, inner);
-      lines.push(segs.concat(inner[0] || [vd('')]));
-      for (let k = 1; k < inner.length; k++) {
-        for (const s of inner[k]) lines.push([vd(' '.repeat(mk.length)), s]);
+      for (const lineSegs of inner) {
+        for (const s of lineSegs) lines.push([vd(' '.repeat(mk.length)), s]);
       }
     }
     if (multi && idx < el.children.length - 1) lines.push([vd('')]);
@@ -384,8 +400,16 @@ const SELBAR_BTNS = [
   ['link', '🔗', '链接 (Ctrl+K)'],
 ];
 
+/** 固定操作栏按钮布局('|' 为分组分隔);图标/提示复用斜杠菜单 */
+const TOOLBAR_CMDS = [
+  'bold', 'italic', 'strike', 'code', 'link', 'image', '|',
+  'h1', 'h2', 'h3', '|',
+  'ul', 'ol', 'task', 'quote', '|',
+  'codeblock', 'table', 'hr',
+];
+
 export function createMdEditor(opts = {}) {
-  const { placeholder = '', compact = false, onInput = null } = opts;
+  const { placeholder = '', compact = false, toolbar = false, onInput = null } = opts;
   let src = String(opts.value ?? '').replace(/\r\n?/g, '\n');
   let doc = parse(src);
   let previewing = false;
@@ -399,7 +423,8 @@ export function createMdEditor(opts = {}) {
 
   const surface = h('div', 'md-surface');
   if (placeholder) surface.setAttribute('data-ph', placeholder);
-  const root = h('div', 'md-edit' + (compact ? ' compact' : ''));
+  const root = h('div', 'md-edit' + (compact ? ' compact' : '') + (toolbar ? '' : ' no-bar'));
+  if (toolbar) root.append(makeToolbar());
   root.append(surface);
 
   /* ---------- 基础(沿用 md 源即事实的行号模型) ---------- */
@@ -422,7 +447,9 @@ export function createMdEditor(opts = {}) {
 
   function rejoin() { src = doc.lines.join('\n'); }
 
-  function refreshEmpty() { root.classList.toggle('empty', !src.trim()); }
+  /** 空文档标记用 md-empty:appkit 的 .empty 是空状态占位样式
+   *  (align-items:center + padding),撞名会把编辑面收缩居中 */
+  function refreshEmpty() { root.classList.toggle('md-empty', !src.trim()); }
 
   function fireInput() {
     refreshEmpty();
@@ -448,9 +475,10 @@ export function createMdEditor(opts = {}) {
     let html = blockHtml(b, doc.defs) || '<p>\u200b</p>';
     /* 段尾硬换行(两空格结尾):渲染尾部 <br> 开出新行;其后补一个
      * 零宽占位 —— 尾部 <br> 之后的光标会被 Chrome 归一化回 br 前,
-     * 后续文本会插到换行符之前 */
+     * 后续文本会插到换行符之前。文本自身的结尾空格要先剥掉,否则
+     * 序列化时与 br 的 "  \n" 叠加成四个空格 */
     if (b.type === 'para' && / {2,}$/.test(b.text || '')) {
-      html = html.replace(/<\/p>$/, '<br>\u200b</p>');
+      html = html.replace(/ {2,}<\/p>$/, '</p>').replace(/<\/p>$/, '<br>\u200b</p>');
     }
     /* 空列表项补 <br>:无可落点的空元素会让 Chrome 把选区归一化到
      * 邻近文本(上一项),续项输入会串行 */
@@ -502,7 +530,7 @@ export function createMdEditor(opts = {}) {
     for (const s of out) {
       s.domStart = dom; s.srcStart = srcof;
       if (s.node) { dom += s.node.data.length; srcof += s.text.length; }
-      else if (s.host && s.text === '') { dom += 1; }               // zwsp 占位:占 1 个可见字符,不进源码
+      else if (s.host && (s.text === '' || s.host.nodeName === 'BR')) { dom += 1; }   // zwsp/br:占 1 个可见字符
       else srcof += s.text.length;
     }
     return out;
@@ -516,6 +544,15 @@ export function createMdEditor(opts = {}) {
     const blk = holder?.closest('.md-block');
     if (!blk || !surface.contains(blk)) return null;
     const i = +blk.dataset.i;
+    /* 选区落在文本节点上时直接按节点定位段 —— 可见偏移在"上一段末尾
+     * / 下一占位开头"边界重叠,按偏移走段序列会先命中错误段 */
+    if (sel.focusNode.nodeType === 3) {
+      for (const sg of blockSegs(i)) {
+        if (sg.node === sel.focusNode) {
+          return [i, sg.srcStart + Math.max(0, Math.min(sel.focusOffset - (sg.start || 0), sg.text.length))];
+        }
+      }
+    }
     const off = pointToSrc(i, sel.focusNode, sel.focusOffset);
     return off == null ? [i, 0] : [i, off];
   }
@@ -620,8 +657,9 @@ export function createMdEditor(opts = {}) {
 
   /** 渲染后恢复光标:同步落位(结构键后紧接的按键不能落空),rAF 再确认 */
   function afterRender(i, off) {
+    /* 只同步落位:rAF 再确认会用旧偏移 —— 连打时把光标拉回,后续
+     * 字符插错位(文本反转/乱序)。空块光标由 zwsp 锚定,无需再确认 */
     placeCaret(Math.max(0, Math.min(i, surface.children.length - 1)), off);
-    requestAnimationFrame(() => placeCaret(Math.max(0, Math.min(i, surface.children.length - 1)), off));
   }
 
   /* ---------- undo(native undo 在 DOM 重建后不可靠) ---------- */
@@ -685,21 +723,32 @@ export function createMdEditor(opts = {}) {
     } else if (p) {
       activeIdx = p[0];
       const nb = bs[p[0]];
-      const ob = prevBs[p[0]];
       /* 块级结构变化(段落敲成标题/列表)才即时重渲染;代码块/表格
        * 推迟到回车或离开块(``` 敲到一半就被吸进围栏);裸列表标记
        * (- / * / 1.)无内容也不转,否则 --- 会被单 - 劫持进列表。 */
-      const defer = nb && ob?.type === 'para'
-        && (['code', 'table', 'def'].includes(nb.type)
-          || (nb.type === 'list' && /^ {0,3}([-*+]|\d{1,9}[.)])$/.test(blockText(nb))));
+      /* 裸标记(# / > / - / 1. 及其后空格)与 Setext(=== 下划线)敲出
+       * 内容前不转换;代码块/表格/def 推迟到回车或离开块。判定看当前
+       * DOM 是否仍为字面段落(showingPara)而非上一次解析类型 —— 后者
+       * 是旧状态,首个延迟输入后即失效,曾致中途渲染夹带光标竞态 */
+      const showingPara = surface.children[p[0]]?.firstElementChild?.nodeName === 'P';
+      const bt = blockText(nb);
+      const defer = showingPara && nb && (
+        ['code', 'table', 'def'].includes(nb.type)
+        || (nb.type === 'heading' && (/^ {0,3}#{1,6}[ \t]*$/.test(bt) || nb.e - nb.s > 1))
+        || (nb.type === 'quote' && /^ {0,3}>[ \t]*$/.test(bt))
+        || (nb.type === 'list' && /^ {0,3}([-*+]|\d{1,9}[.)])[ \t]*$/.test(bt)));
       /* 行内输入规则(Milkdown/ProseMirror 式):**x** / *x* / ~~x~~ /
        * `x` 一经敲成完整组合,立即重渲染显示样式 —— 只在模式闭合时
-       * 触发,部分闭合(**x*)不渲染,不会把后续输入吸进样式 */
-      const before = blockText(nb).slice(0, p[1]);
+       * 触发,部分闭合(**x*)不渲染,不会把后续输入吸进样式。
+       * 反斜杠转义序列(\*)先替换成等长占位再测,避免误判闭合 */
+      const before = blockText(nb).slice(0, p[1]).replace(/\\./g, '  ');
       const inlineHit = nb && (nb.type === 'para' || nb.type === 'heading'
         || nb.type === 'list' || nb.type === 'quote')
         && INLINE_RULES.some((re) => re.test(before));
-      if (!defer && (lastSig[p[0]] !== sigOf(nb) || inlineHit)) {
+      /* 任务标记敲出内容时立即转换(复选框可见),不等离开块 */
+      const taskHit = nb && nb.type === 'list'
+        && /^\s*[-*+]\s+\[[ xX]\]\s+\S/.test(before.slice(before.lastIndexOf('\n') + 1));
+      if (!defer && (lastSig[p[0]] !== sigOf(nb) || inlineHit || taskHit)) {
         renderBlock(p[0]);
         if (inlineHit && lastSig[p[0]] === sigOf(nb)) caretAfterLastMark(p[0]);   // 闭合转换:退出样式续打
         else afterRender(p[0], p[1]);
@@ -886,6 +935,15 @@ export function createMdEditor(opts = {}) {
     const b = bs[p[0]];
     const text = blockText(b);
     if (b.eph) return;                                       // 空临时段上回车:无操作
+    /* Setext 标题(=== / --- 下划线):回车即落定并开新段(拆分会把
+     * 标题与下划线行拆散) */
+    if (b.type === 'heading' && b.e - b.s > 1) {
+      ephLine = b.e;
+      renderAll();
+      afterRender(blockAt(b.e), 0);
+      fireInput();
+      return;
+    }
     /* --- / *** / ___ 整段回车:分隔线 */
     if (b.type === 'para' && /^(-{3,}|\*{3,}|_{3,})$/.test(text.trim())) {
       doc.lines.splice(b.s, b.e - b.s, '---', '');
@@ -1056,7 +1114,8 @@ export function createMdEditor(opts = {}) {
   function exec(cmd) {
     if (previewing) return;
     surface.focus();
-    const p = caretPos();
+    let p = caretPos();
+    if (!p) { afterRender(0, 0); p = caretPos(); }          // 无光标(未落笔):定位到文首
     if (!p) return;
     const b = blocks()[p[0]];
     if (!b) return;                                          // 块索引过期(渲染与解析错位)
@@ -1171,12 +1230,44 @@ export function createMdEditor(opts = {}) {
     fireInput();
   }
 
+  /* ---------- 固定操作栏(不懂语法也可套用样式) ---------- */
+
+  function makeToolbar() {
+    const bar = h('div', 'md-toolbar');
+    const map = new Map(SLASH_ITEMS.filter((x) => !x.sep).map((x) => [x.cmd, x]));
+    const tips = { bold: '粗体 (Ctrl+B)', italic: '斜体 (Ctrl+I)', link: '链接 (Ctrl+K)' };
+    for (const cmd of TOOLBAR_CMDS) {
+      if (cmd === '|') { bar.append(h('span', 'md-tsep')); continue; }
+      const item = map.get(cmd);
+      if (!item) continue;
+      const btn = h('button', 'md-tbtn', item.icon);
+      btn.type = 'button';
+      btn.title = tips[cmd] || `${item.label}(${item.hint})`;
+      btn.addEventListener('mousedown', (e) => e.preventDefault());   // 不抢编辑面焦点/选区
+      btn.addEventListener('click', () => exec(cmd));
+      bar.append(btn);
+    }
+    return bar;
+  }
+
   /* ---------- 事件 ---------- */
 
   surface.addEventListener('pointerdown', (e) => {
     if (previewing) return;                                 // 只读态:仅浏览
     const check = e.target.closest('.md-check');
     if (check) { e.preventDefault(); toggleTask(check); return; }
+  });
+
+  /* 链接:只读态点击打开、编辑态 Ctrl+点击打开,交宿主经 mdlink 事件
+   * 路由(编辑器库自包含,不 import core)。必须 preventDefault ——
+   * 只读态(contenteditable=false)里 <a> 默认会真的导航整个页面 */
+  surface.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[href]');
+    if (!a) return;
+    e.preventDefault();
+    if (previewing || e.ctrlKey || e.metaKey) {
+      root.dispatchEvent(new CustomEvent('mdlink', { bubbles: true, detail: a.getAttribute('href') || '' }));
+    }
   });
 
   surface.addEventListener('input', () => {
@@ -1215,6 +1306,10 @@ export function createMdEditor(opts = {}) {
   });
   surface.addEventListener('keydown', (e) => {
     if (composing) return;                                  // IME 选词回车不接管
+    /* 先冲掉挂起的输入同步:结构键(Enter/退格/Tab)落在上一输入的
+     * rAF 之前时,doc.lines 还是旧源码,按当前光标偏移插入会错位
+     * (曾致 Shift+Enter 把光标前字符带到下一行) */
+    if (syncRaf) { cancelAnimationFrame(syncRaf); syncRaf = 0; onSurfaceInput(); }
     if (slash) {                                            // 斜杠菜单:方向键/回车/Esc 归菜单
       if (e.key === 'ArrowDown') { e.preventDefault(); slashMove(1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); slashMove(-1); return; }

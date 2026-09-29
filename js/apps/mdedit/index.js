@@ -14,6 +14,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './mdedit.css';
 import { modal, confirmBox } from '../../core/ui.js';
+import { openMdLink } from '../../core/mdopen.js';
 import { createMdEditor } from '../../lib/mdedit.js';
 import { render } from '../../lib/md.js';
 
@@ -49,6 +50,7 @@ register({
     let dirty = false;
 
     const ed = createMdEditor({
+      toolbar: true,                                          // 固定操作栏:不懂语法也能套样式
       placeholder: '空文档 · 点「编辑」开始书写',
       onInput: () => { dirty = true; refreshChrome(); },
     });
@@ -150,6 +152,9 @@ register({
       if (!fs.write(target, doc)) { bus.notify('导出失败', `无写入权限或路径无效:${target}`); return; }
       bus.notify('已导出 HTML', target);
     }
+
+    /* 文中超链接:本地路径按系统规则打开(相对路径按本文档目录解析),网址走系统浏览器 */
+    ed.el.addEventListener('mdlink', (e) => openMdLink(e.detail, path));
 
     root.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {

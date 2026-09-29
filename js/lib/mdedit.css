@@ -12,8 +12,27 @@
 .md-edit { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 
 /* 编辑面:整篇渲染 + contenteditable;光标与选区全原生 */
+/* ---------- 固定操作栏(不懂语法也可套用样式;宿主传 toolbar 开) ---------- */
+
+.md-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 5px 8px; border-bottom: 1px solid var(--border);
+  background: var(--panel); flex-shrink: 0;
+}
+.md-tbtn {
+  min-width: 27px; height: 26px; padding: 0 6px; border: none; border-radius: 6px;
+  background: none; color: var(--text-2); font-size: 12.5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s; cursor: pointer;
+}
+.md-tbtn:hover { background: var(--hover); color: var(--text); }
+.md-tbtn:active { transform: translateY(1px); }
+.md-tsep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.md-edit.preview .md-toolbar { opacity: .45; pointer-events: none; }
+.md-edit.compact .md-toolbar { padding: 3px 6px; }
+
 .md-surface { flex: 1; overflow-y: auto; position: relative; padding: 12px 18px 140px; min-height: 0; outline: none; }
-.md-edit.empty .md-surface::before {
+.md-edit.md-empty .md-surface::before {
   content: attr(data-ph);
   position: absolute; top: 12px; left: 24px;
   color: var(--text-2); opacity: .7; pointer-events: none;
@@ -26,6 +45,9 @@
 .md-block:empty { min-height: .85em; }
 .md-edit.preview .md-block { cursor: default; }
 
+/* 链接:只读态可点击(交宿主路由打开),编辑态 Ctrl+点击 */
+.md-edit.preview a { cursor: pointer; }
+
 /* 链接定义块:以原文展示编辑(渲染无输出,反序列化需可回源) */
 :is(.md-edit, .md-view) pre.md-defraw {
   margin: .4em 0; padding: 6px 10px;
@@ -33,6 +55,15 @@
   border-radius: var(--radius-s);
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 12px; color: var(--text-2); white-space: pre-wrap;
+}
+
+/* 互联网图片占位:不拉取外部资源,以替代芯片显示(悬停见完整地址) */
+:is(.md-edit, .md-view) .md-img {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; margin: 0 1px;
+  border: 1px dashed var(--border); border-radius: var(--radius-s);
+  background: var(--hover); color: var(--text-2); font-size: .88em;
+  cursor: help; vertical-align: baseline;
 }
 
 /* ---------- 渲染态排版(.md-edit 与 .md-view 共用) ---------- */
