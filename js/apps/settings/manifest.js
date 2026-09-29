@@ -9,4 +9,6 @@ export default {
   min: { w: 640, h: 420 },
   singleton: true,
   order: 5,
+  category: '系统',
+  desc: '主题、壁纸、账号与系统状态',
 };

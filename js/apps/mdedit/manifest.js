@@ -9,4 +9,6 @@ export default {
   min: { w: 480, h: 360 },
   singleton: false,
   order: 2.5,
+  category: '工具',
+  desc: 'Typora 式所见即所得 Markdown 编辑器',
 };

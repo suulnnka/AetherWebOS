@@ -13,6 +13,7 @@ import vnet from '../core/vnet.js';
 import mailSvc from '../core/mail.js';
 import smsSvc from '../core/sms.js';
 import { list as listApps } from '../core/registry.js';
+import { installApp, uninstallApp, isInstalled, reconcileLegacyShortcuts } from '../core/install.js';
 import * as wm from '../core/wm.js';
 import { dialogs } from '../core/dialogs.js';
 import weatherSvc from '../core/weather.js';
@@ -40,10 +41,12 @@ function boot() {
       try { await accounts.bootstrapIfNeeded(); }
       catch (e) { console.warn('[boot] 自动创建初始用户失败:', e); }
     }
-    // 已有会话 / 刚 bootstrap:确保家目录与桌面快捷方式齐全
+    // 已有会话 / 刚 bootstrap:先迁移旧版桌面快捷方式(商店出现前播种过
+    // 全部应用 → 视为已安装),再确保家目录与桌面快捷方式齐全
     const cur = accounts.current();
     if (cur) {
       fs.ensureUserHome(cur);
+      reconcileLegacyShortcuts();
       ensureDesktopShortcuts(cur);
     }
     renderPinned();
@@ -62,7 +65,7 @@ function boot() {
     bus: { subscribe, publish, send: (from, to, type, payload) => publish(`app:${to}`, { from, to, type, payload }) },
     wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc, appdata,
     __weatherDaily: weatherSvc.daily,
-    apps: { list: listApps },
+    apps: { list: listApps, install: installApp, uninstall: uninstallApp, isInstalled },
     ensureDesktopShortcuts,
     createAppFs,
   });

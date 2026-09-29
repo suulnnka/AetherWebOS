@@ -9,4 +9,6 @@ export default {
   min: { w: 420, h: 300 },
   singleton: false,
   order: 2,
+  category: '效率',
+  desc: '纯文本速记,支持多窗口',
 };

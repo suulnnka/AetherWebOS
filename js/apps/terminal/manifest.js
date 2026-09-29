@@ -10,4 +10,6 @@ export default {
   singleton: false,
   prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
   order: 3,
+  category: '系统',
+  desc: 'Bash 风格终端,管道与重定向齐备',
 };

@@ -9,4 +9,6 @@ export default {
   min: { w: 420, h: 320 },
   singleton: false,
   order: 1.6,
+  category: '工具',
+  desc: '图片、音视频与 PDF 的轻量预览',
 };

@@ -9,4 +9,7 @@ export default {
   min: { w: 560, h: 380 },
   singleton: true,
   order: 6,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '系统',
+  desc: 'IPC 流量与系统资源观测台',
 };

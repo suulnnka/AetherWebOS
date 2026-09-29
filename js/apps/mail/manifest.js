@@ -9,4 +9,6 @@ export default {
   min: { w: 640, h: 400 },
   singleton: true,
   order: 1.7,
+  category: '效率',
+  desc: '收发邮件,每个邮箱地址独立成库',
 };

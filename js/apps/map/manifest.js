@@ -9,4 +9,7 @@ export default {
   min: { w: 560, h: 420 },
   singleton: true,
   order: 2.95,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '工具',
+  desc: '自研矢量地图内核,缩放漫游',
 };

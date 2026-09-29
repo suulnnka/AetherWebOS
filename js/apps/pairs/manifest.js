@@ -9,4 +9,7 @@ export default {
   min: { w: 460, h: 460 },
   singleton: true,
   order: 9.4,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '记忆翻牌,考验你的短期记忆',
 };

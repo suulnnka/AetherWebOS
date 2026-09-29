@@ -11,5 +11,8 @@ export default {
   singleton: true,
   desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 ~/desktop/棋类游戏)
   order: 9.7,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '9 路围棋,内置 GTP 引擎对弈',
   hoverPrefetch: false,  // 引擎包后续会很大,不做悬停预读(引擎本就首次使用时才经 Worker 加载)
 };

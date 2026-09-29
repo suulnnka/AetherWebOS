@@ -9,4 +9,7 @@ export default {
   min: { w: 480, h: 380 },
   singleton: true,
   order: 2.9,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '社交',
+  desc: '经典号码登录的虚拟聊天',
 };

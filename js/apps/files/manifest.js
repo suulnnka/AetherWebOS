@@ -10,4 +10,6 @@ export default {
   singleton: true,
   prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
   order: 1,
+  category: '系统',
+  desc: '文件管家:目录树、右键操作、压缩包与加密文件',
 };

@@ -4,6 +4,7 @@ import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
 import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { isInstalled } from '../core/install.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
 import { showMenu, showMenuAnchored } from '../core/menu.js';
@@ -20,7 +21,9 @@ let smOpen = false;
 export function renderStartMenu() {
   const grid = $('#sm-grid');
   grid.innerHTML = '';
-  const apps = listApps().filter(a => a.desktop !== false);
+  // 仅列**本人**已安装应用(安装按用户:商店应用未安装时不出现,
+  // 安装/切换用户后经 sys:apps-changed / accounts:changed 重绘)
+  const apps = listApps().filter(a => a.desktop !== false && isInstalled(a.id));
   if (!apps.length) return;
   for (const app of apps) {
     const tile = el('div', { class: 'tile' });
@@ -100,6 +103,12 @@ export function renderStartUser() {
 subscribe('accounts:changed', renderStartUser);
 subscribe('sys:settings-changed', (p) => {
   if (p?.changed?.includes('style')) renderStartMenu();
+});
+/* 安装/卸载实时反映到开始菜单 */
+subscribe('sys:apps-changed', () => renderStartMenu());
+/* 安装按用户:切换/注销会话后按本人的安装清单重绘 */
+subscribe('accounts:changed', (p, msg) => {
+  if (['login', 'logout', 'register', 'removed'].includes(msg?.type)) renderStartMenu();
 });
 $('#sm-user').addEventListener('click', () => {
   toggleStartMenu(false);

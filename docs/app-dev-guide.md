@@ -30,6 +30,14 @@ js/apps/<id>/
 目录,快捷方式可被用户删除/改名/收进文件夹;`desktopIcon: false` 跳过播种),
 同时获得一个唯一 IPC 地址(就是 `id`),其他应用可以给它发消息。
 
+> **软件商店与安装语义**:清单标 `store: true` 的应用默认**未安装**——
+> 不进开始菜单、不播种桌面快捷方式,`wm.open` 会被安装门禁拦下并引导去
+> 软件商店;`WebOS.apps.install(id)` 安装后入口实时出现,卸载则一并移除
+> (应用数据保留)。**安装按用户**(`webos.installed.v2` 每用户一份清单),
+> 甲装的应用乙看不到,新用户从系统预装起步。状态与副作用都在
+> `js/core/install.js`(叶子模块,通过 `sys:apps-changed` 广播联动
+> applink / wm / 开始菜单 / 商店)。
+
 > **⚠️ import 边界**:应用只能 import `js/core/*`、`js/lib/*`(自研库,
 > 如地图内核 minimap、Markdown 内核 md.js / mdedit.js)与自身目录的文件,
 > **不要 import `js/system/*` 或其他应用**。打包时 core 是独立稳定 chunk
@@ -93,6 +101,9 @@ register({
 | `resizable` | boolean | true | 是否允许拖拽调整大小 |
 | `desktop` | boolean | true | 是否出现在开始菜单;false 同时不参与桌面快捷方式播种 |
 | `desktopIcon` | boolean | true | 初始化/迁移时是否在桌面生成 `.app` 快捷方式;设 false 则不播种(棋类应用收纳进「棋类游戏」文件夹即此模式) |
+| `store` | boolean | false | 商店应用:默认未安装,需经软件商店(`WebOS.apps.install`)安装后才进开始菜单/桌面且可打开;卸载移除入口但保留数据 |
+| `category` | string | — | 分类(软件商店侧栏:游戏/工具/效率/社交/娱乐/系统) |
+| `desc` | string | — | 一句话简介(软件商店卡片) |
 | `order` | number | 100 | 菜单排序权重,小的在前 |
 | `prefetch` | boolean | false | 高频应用预读:启动空闲后后台拉取应用 chunk,首次打开免等(browser/terminal/files 已启用) |
 | `hoverPrefetch` | boolean | true | 悬停预读:鼠标移到启动入口(桌面图标/开始菜单/任务栏)上时预读应用 chunk;重型应用可设 false 关闭(围棋:引擎包后续会很大,已关闭) |
@@ -398,6 +409,8 @@ await copyText(text);   // Clipboard API + execCommand 回退
   每组自动重置到初始桌面、可独立运行(`npm run e2e -- T4x`);
   页面自带 `?e2e=1` 测试模式(跳过装饰性等待),剪贴板类断言先
   `c.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] })`;
+  用例组用到**商店应用**(`store: true`,默认未安装)时,组开头先
+  `await needApps('<id>', ...)` 装好再测(幂等,见 T50 软件商店组);
 - **跑法**:`npm run dev` 起服务器(8080)→ `npm run e2e`(全量,默认 6 并行)或 `npm run e2e -- T41`。
 
 ## 10. 接入清单

@@ -9,4 +9,7 @@ export default {
   min: { w: 340, h: 420 },
   singleton: true,
   order: 7,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '娱乐',
+  desc: '本地音乐播放,随点随听',
 };

@@ -9,4 +9,7 @@ export default {
   min: { w: 640, h: 460 },
   singleton: true,
   order: 9.2,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '纸牌接龙,自动收牌',
 };

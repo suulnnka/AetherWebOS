@@ -3,6 +3,7 @@ import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { isInstalled } from '../core/install.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
 import { showMenu } from '../core/menu.js';
@@ -30,6 +31,7 @@ export function renderPinned() {
   for (const id of pinnedApps()) {
     const app = listApps().find(a => a.id === id);
     if (!app) continue;
+    if (!isInstalled(id)) continue;   // 安装按用户:本人未安装的应用不渲染固定钮
     const b = el('button', {
       class: 'tbtn', title: app.name,
       onClick: () => {

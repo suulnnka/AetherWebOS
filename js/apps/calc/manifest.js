@@ -9,4 +9,6 @@ export default {
   min: { w: 260, h: 380 },
   singleton: true,
   order: 4,
+  category: '工具',
+  desc: '简单易用的计算器',
 };

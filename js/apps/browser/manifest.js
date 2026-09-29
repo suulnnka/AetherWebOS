@@ -10,4 +10,6 @@ export default {
   singleton: true,
   prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
   order: 0,
+  category: '工具',
+  desc: '多标签网页浏览器,内网站点与真实互联网自动分流',
 };

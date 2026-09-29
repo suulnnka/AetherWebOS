@@ -9,4 +9,7 @@ export default {
   min: { w: 520, h: 380 },
   singleton: true,
   order: 2.6,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '效率',
+  desc: '卡片式笔记,支持加密与置顶',
 };

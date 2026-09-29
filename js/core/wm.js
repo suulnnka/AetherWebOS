@@ -9,7 +9,7 @@
 
 import { el, clamp } from './utils.js';
 import { icon, paintTile } from './icons.js';
-import { publish } from './bus.js';
+import { publish, subscribe } from './bus.js';
 import { ensureLoaded, get as getApp } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
@@ -17,7 +17,8 @@ import fs from './fs.js';
 import { createAppFs } from './appfs.js';
 import { accounts } from './accounts.js';
 import { showMenu, copyText, selectionAt } from './menu.js';
-import { forApp as dialogHelpers } from './dialogs.js';
+import { forApp as dialogHelpers, dialogs } from './dialogs.js';
+import { isInstalled } from './install.js';
 
 const wins = new Map();   // winId -> win 对象
 let zTop = 20;
@@ -175,6 +176,16 @@ export async function open(appId, { params, level, owner } = {}) {
   // 清单是纯数据,同步可得(含 singleton 等静态字段),无需等代码加载
   const m = getApp(appId);
   if (!m) { console.warn('[wm] 应用不存在:', appId); return null; }
+
+  // 安装门禁:商店应用(store:true)未安装时拒绝打开,引导去软件商店
+  if (!isInstalled(appId)) {
+    dialogs.confirm({
+      title: '应用未安装',
+      message: `「${m.name}」需要先在软件商店安装。`,
+      okText: '打开软件商店',
+    }).then((go) => { if (go) open('appstore', { params: { focus: appId } }); });
+    return null;
+  }
 
   // 单实例:聚焦已有窗口并转发参数
   if (m.singleton) {
@@ -459,6 +470,16 @@ export function close(id) {
   w.el.classList.add('closing');
   setTimeout(() => w.el.remove(), 170);
 }
+
+/* 卸载联动(install 模块广播,按用户):窗口只属于当前会话用户,
+ * 仅当本人卸载(该应用对其不再可用)才关闭其窗口 */
+subscribe('sys:apps-changed', (payload) => {
+  if (payload?.action !== 'uninstall' || !payload.id) return;
+  if (payload.user && payload.user !== accounts.current()) return;
+  for (const w of [...wins.values()]) {
+    if (w.appId === payload.id) close(w.id);
+  }
+});
 
 /* ---------------- 焦点与层级 ---------------- */
 export function focus(id) {

@@ -9,4 +9,6 @@ export default {
   min: { w: 560, h: 380 },
   singleton: true,
   order: 1.8,
+  category: '社交',
+  desc: '虚拟短信收件箱,全设备共享',
 };

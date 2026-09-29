@@ -11,4 +11,7 @@ export default {
   singleton: true,
   desktopIcon: false,   // 收纳进桌面「棋类游戏」文件夹(见 ~/desktop/棋类游戏)
   order: 9.65,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '五子棋(连珠规则可选),自带 AI',
 };

@@ -9,4 +9,7 @@ export default {
   min: { w: 560, h: 420 },
   singleton: true,
   order: 2.8,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '娱乐',
+  desc: '实况、12 小时与 7 日预报,历史天气可回溯',
 };

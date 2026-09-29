@@ -9,4 +9,6 @@ export default {
   min: { w: 520, h: 380 },
   singleton: true,
   order: 2.5,
+  category: '效率',
+  desc: '待办任务管理,逾期提醒',
 };

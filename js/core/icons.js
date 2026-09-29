@@ -75,6 +75,7 @@ const I = {
   circle: '<circle cx="12" cy="12" r="9"/>',
   message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  store: '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
   textCursor: '<path d="M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 0-4-4H7"/><path d="M7 22h1a4 4 0 0 0 4-4v-1"/>',
 };
 
@@ -489,6 +490,24 @@ const PIX = {
     '..KSSKKKKSSSK...',
     '..KSSSKKSSSSK...',
     '..KKKKKKKKKKK...',
+  ]),
+  store: pix([
+    '................',
+    '...KK......KK...',
+    '...KbK....KbK...',
+    '...KbbK..KbbK...',
+    '....KbbKKbbK....',
+    '.....KKKKKK.....',
+    '..KKBBBBBBBBKK..',
+    '..KBbbbbbbbbBK..',
+    '..KBbWWWWWWbBK..',
+    '..KBbWWWWWWbBK..',
+    '..KBbWWWWWWbBK..',
+    '..KBbWWWWWWbBK..',
+    '..KBbbbbbbbbBK..',
+    '..KBBBBBBBBBBK..',
+    '..KKKKKKKKKKKK..',
+    '................',
   ]),
 };
 PIX.volume1 = PIX.volume;

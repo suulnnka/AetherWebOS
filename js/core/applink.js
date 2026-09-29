@@ -13,6 +13,7 @@ import fs, { desktopPath } from './fs.js';
 import { publish, subscribe } from './bus.js';
 import { get, list, prefetchOnHover } from './registry.js';
 import { accounts } from './accounts.js';
+import { isInstalled, CHESS_FOLDER } from './install.js';
 
 export const APPEXT = '.app';
 
@@ -64,10 +65,10 @@ export function sendAppToDesktop(appId) {
   return p;
 }
 
-/** 「新建应用快捷方式」的应用选择菜单项(配合 showMenu 使用) */
+/** 「新建应用快捷方式」的应用选择菜单项(配合 showMenu 使用;仅列已安装应用) */
 export function appLinkMenuItems(onPick) {
   return list()
-    .filter(a => a.desktop !== false)
+    .filter(a => a.desktop !== false && isInstalled(a.id))
     .map(a => ({ label: a.name, icon: a.icon, fn: () => onPick(a) }));
 }
 
@@ -78,18 +79,14 @@ export function hoverPrefetch(node, appId) {
 
 /* ---------- 桌面快捷方式播种(幂等:缺什么补什么) ---------- */
 /* 棋类应用 desktopIcon:false,统一收进「棋类游戏」文件夹 */
-const CHESS_APPS = {
-  chess3d: '国际象棋',
-  xiangqi: '中国象棋',
-  go: '围棋',
-  gomoku: '五子棋',
-  reversi: '黑白棋',
-};
+const CHESS_APPS = ['chess3d', 'xiangqi', 'go', 'gomoku', 'reversi'];
 
 /**
- * 确保 user 的桌面拥有全部应用快捷方式(幂等)。
+ * 确保 user 的桌面拥有**该用户已安装**应用快捷方式(幂等;安装按用户,
+ * 各用户互不影响)。
  * - 普通应用 → ~/desktop/<名>.app
  * - 棋类(desktopIcon:false)→ ~/desktop/棋类游戏/<名>.app
+ * 软件商店未安装的应用(store:true)不播种;安装后由此补齐,
  * 用户删掉的也会在下次登录/播种时补回(系统保证入口齐全)。
  * 未登录或无桌面目录时返回 0。
  */
@@ -104,18 +101,23 @@ export function ensureDesktopShortcuts(user = accounts.current()) {
   let n = 0;
   for (const a of list()) {
     if (a.desktop === false || a.desktopIcon === false) continue;
+    if (!isInstalled(a.id, user)) continue;
     const p = fs.joinPath(desk, a.name + APPEXT);
     if (!fs.exists(p) && fs.write(p, a.id, opts)) n++;
   }
-  // 棋类文件夹
-  const chessDir = fs.joinPath(desk, '棋类游戏');
-  if (!fs.isDir(chessDir)) {
-    fs.mkdir(chessDir, { silent: true, ...opts });
-  }
-  for (const [id, name] of Object.entries(CHESS_APPS)) {
-    if (!get(id)) continue;
-    const p = fs.joinPath(chessDir, name + APPEXT);
-    if (!fs.exists(p) && fs.write(p, id, opts)) n++;
+  // 棋类文件夹(仅在该用户至少装了一款棋类时播种,避免空文件夹)
+  const chessReady = CHESS_APPS.some(id => get(id) && isInstalled(id, user));
+  if (chessReady) {
+    const chessDir = fs.joinPath(desk, CHESS_FOLDER);
+    if (!fs.isDir(chessDir)) {
+      fs.mkdir(chessDir, { silent: true, ...opts });
+    }
+    for (const id of CHESS_APPS) {
+      const app = get(id);
+      if (!app || !isInstalled(id, user)) continue;
+      const p = fs.joinPath(chessDir, app.name + APPEXT);
+      if (!fs.exists(p) && fs.write(p, id, opts)) n++;
+    }
   }
   if (n) {
     publish('sys:fs-changed', { from: 'applink', type: 'fs-changed', payload: { action: 'seed-shortcuts', path: desk } });
@@ -123,11 +125,41 @@ export function ensureDesktopShortcuts(user = accounts.current()) {
   return n;
 }
 
-/* 登录 / 注册 / 建号 → 家目录就绪后立刻补桌面快捷方式 */
+/** 卸载清理(按用户):删除 user 桌面上指向 appId 的快捷方式(根目录 + 棋类文件夹) */
+export function removeAppShortcuts(appId, user = accounts.current()) {
+  const app = get(appId);
+  const desk = desktopPath(user);
+  if (!app || !desk) return 0;
+  let n = 0;
+  for (const p of [
+    fs.joinPath(desk, app.name + APPEXT),
+    fs.joinPath(desk, CHESS_FOLDER, app.name + APPEXT),
+  ]) {
+    if (fs.rm(p, { as: 'root' })) n++;
+  }
+  return n;
+}
+
+/* 登录 / 注册 / 建号 → 家目录就绪后立刻补桌面快捷方式
+ * (旧版快捷方式的安装状态迁移由 install 模块订阅同一事件完成) */
 subscribe('accounts:changed', (payload, msg) => {
   const t = msg?.type;
   const u = payload?.user || accounts.current();
-  if ((t === 'login' || t === 'register') && u) ensureDesktopShortcuts(u);
+  if ((t === 'login' || t === 'register') && u) {
+    ensureDesktopShortcuts(u);
+  }
   // 仅 createUser(未切会话)时也预播种,避免首次登录桌面空白
   if (t === 'created' && u) ensureDesktopShortcuts(u);
+});
+
+/* 安装/卸载联动(install 模块广播,按用户):安装(与旧版迁移)后补播种
+ * 受影响用户的桌面快捷方式;卸载后清理**该用户**桌面的入口 */
+subscribe('sys:apps-changed', (payload) => {
+  const { action, id, user } = payload || {};
+  const u = user || accounts.current();
+  if (action === 'install' || action === 'reconcile') {
+    if (u) ensureDesktopShortcuts(u);
+  } else if (action === 'uninstall' && id) {
+    removeAppShortcuts(id, u);
+  }
 });

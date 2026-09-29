@@ -9,4 +9,6 @@ export default {
   min: { w: 560, h: 360 },
   singleton: true,
   order: 1.5,
+  category: '系统',
+  desc: '浏览本机真实文件,授权后导入系统使用',
 };

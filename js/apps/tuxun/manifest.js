@@ -9,4 +9,7 @@ export default {
   min: { w: 600, h: 440 },
   singleton: true,
   order: 9.3,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '在一张图里猜出坐标的地理小游戏',
 };

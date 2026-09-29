@@ -9,4 +9,7 @@ export default {
   min: { w: 420, h: 420 },
   singleton: true,
   order: 9,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '游戏',
+  desc: '经典扫雷,双击连开',
 };

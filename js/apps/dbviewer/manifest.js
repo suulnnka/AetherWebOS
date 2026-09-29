@@ -9,4 +9,7 @@ export default {
   min: { w: 600, h: 440 },
   singleton: true,
   order: 2.6,
+  store: true,          // 商店应用:需经软件商店安装
+  category: '工具',
+  desc: '任意 .awdb 库的只读 SQL 查询器',
 };
