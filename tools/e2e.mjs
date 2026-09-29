@@ -3957,6 +3957,206 @@ group('T48', 'Markdown 编辑器(自研解析库 / 所见即所得 / .md 分流)
   await c.shot('t48-mdedit');
 });
 
+group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
+  /* ---- T49 dbviewer:任意 .awdb 库的只读 SQL 查询(地址 + 密码 → SELECT → 分页) ---- */
+  await fresh();
+  // 前置:登录测试账号,并在页面上下文建一个 35 行的明文测试库
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (accounts.current() !== 'dbver' && !(await accounts.login('dbver', 'dbvpass')).ok) {
+      await accounts.register('dbver', 'dbvpass');
+      await accounts.login('dbver', 'dbvpass');
+    }
+    WebOS.fs.rm('/home/dbver/documents/e2e-db.awdb', { as: 'dbver' });
+    const { open, createFileBackend } = await import('./vendor/AetherWebDatabase/src/index.js');
+    const db = await open('e2eseed-' + Date.now(), {
+      storage: createFileBackend(WebOS.fs, '/home/dbver/documents/e2e-db.awdb', { as: 'dbver' }),
+    });
+    await db.createCollection('entries');
+    await db.collection('entries').insertMany(
+      Array.from({ length: 35 }, (_, i) => ({ id: 'e' + i, cat: 'c' + (i % 3), v: i })));
+    db.close();
+    await WebOS.fs.flush();
+    return true;
+  })()`);
+
+  await ev(`WebOS.wm.open('dbviewer')`);
+  await sleep(600);
+  const conn = await ev(`!!document.querySelector('.win[data-app=dbviewer] .dbv-connect-card')`);
+  t('T49.1 连接屏(地址 + 密码 + 打开)', conn);
+
+  // 输入路径(明文库,密码留空)→ 打开
+  await ev(`(() => {
+    document.querySelector('.win[data-app=dbviewer] .dbv-path-input').value = '/home/dbver/documents/e2e-db.awdb';
+    [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-connect-card .btn.primary')]
+      .find(b => b.textContent.includes('打开')).click();
+  })()`);
+  const sideOk = await waitFor(`(() => {
+    const item = [...document.querySelectorAll('.win[data-app=dbviewer] .nav-item')]
+      .find(b => b.textContent.includes('entries'));
+    return !!item && item.textContent.includes('35');
+  })()`);
+  t('T49.2 打开库:侧栏集合与行数(35)', sideOk === true);
+
+  // 点击集合 → 填入模板 → 执行
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .nav-item')]
+    .find(b => b.textContent.includes('entries')).click()`);
+  const filled = await ev(`document.querySelector('.win[data-app=dbviewer] .dbv-sql').value`);
+  t('T49.3 集合点击填入查询模板', filled.includes('SELECT * FROM entries'), filled);
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-editor .btn.primary')]
+    .find(b => b.textContent.includes('执行')).click()`);
+  const pg1 = await waitFor(`(() => {
+    const n = document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr').length;
+    return n === 10 ? document.querySelector('.win[data-app=dbviewer] .dbv-page-ind')?.textContent : false;
+  })()`);
+  t('T49.4 首页 10 行 + 页码 1/4', pg1 === '第 1 / 4 页', String(pg1));
+
+  // 翻页:第 2 页内容应与第 1 页不同
+  const firstP1 = await ev(`document.querySelector('.win[data-app=dbviewer] .dbv-table tbody tr td')?.textContent`);
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-pager .btn')]
+    .find(b => b.textContent.includes('下一页')).click()`);
+  const pg2 = await ev(`(() => ({
+    rows: document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr').length,
+    ind: document.querySelector('.win[data-app=dbviewer] .dbv-page-ind')?.textContent,
+    first: document.querySelector('.win[data-app=dbviewer] .dbv-table tbody tr td')?.textContent,
+  }))()`);
+  t('T49.5 翻页到 2/4(内容随页变化)', pg2.rows === 10 && /2 \/ 4/.test(pg2.ind || '') && pg2.first !== firstP1,
+    JSON.stringify(pg2));
+
+  // 连翻到末页:35 行 → 末页 5 行
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-pager .btn')]
+    .filter(b => b.textContent.includes('下一页')).pop().click()`);
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-pager .btn')]
+    .filter(b => b.textContent.includes('下一页')).pop().click()`);
+  const pg4 = await ev(`(() => ({
+    rows: document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr').length,
+    ind: document.querySelector('.win[data-app=dbviewer] .dbv-page-ind')?.textContent,
+  }))()`);
+  t('T49.6 末页 5 行(35 条按每页 10)', pg4.rows === 5 && /4 \/ 4/.test(pg4.ind || ''), JSON.stringify(pg4));
+
+  // 聚合查询
+  await ev(`(() => {
+    const ta = document.querySelector('.win[data-app=dbviewer] .dbv-sql');
+    ta.value = 'SELECT cat, COUNT(*) AS n FROM entries GROUP BY cat ORDER BY cat';
+    [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-editor .btn.primary')]
+      .find(b => b.textContent.includes('执行')).click();
+  })()`);
+  const agg = await waitFor(`(() => {
+    const rows = [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr')].map(r => r.textContent);
+    return rows.length === 3 ? rows.join('|') : false;
+  })()`);
+  t('T49.7 聚合查询(3 组,12/12/11)', /12/.test(agg) && /11/.test(agg), String(agg));
+
+  // 非 SELECT 拒绝(只读)
+  await ev(`(() => {
+    const ta = document.querySelector('.win[data-app=dbviewer] .dbv-sql');
+    ta.value = 'DELETE FROM entries';
+    [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-editor .btn.primary')]
+      .find(b => b.textContent.includes('执行')).click();
+  })()`);
+  const rej = await waitFor(`document.querySelector('.win[data-app=dbviewer] .dbv-error')?.textContent.includes('SELECT')`);
+  t('T49.8 非 SELECT 语句被拒(只读)', rej === true);
+  const rowsAfter = await ev(`(async () => {
+    const { open, createFileBackend } = await import('./vendor/AetherWebDatabase/src/index.js');
+    const db = await open('e2echeck-' + Date.now(), {
+      storage: createFileBackend(WebOS.fs, '/home/dbver/documents/e2e-db.awdb', { as: 'dbver' }),
+    });
+    const n = await db.collection('entries').count();
+    db.close();
+    return n;
+  })()`);
+  t('T49.9 拒绝写入后数据未变(仍 35 行)', rowsAfter === 35, `rows=${rowsAfter}`);
+
+  /* ---- 生成器(纯 GUI 构建 SQL)---- */
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .seg-btn')]
+    .find(b => b.textContent.includes('生成器')).click()`);
+  const hasBuilder = await waitFor(`!!document.querySelector('.win[data-app=dbviewer] .dbv-builder')`);
+  t('T49.10 生成器面板(纯点选构建)', hasBuilder === true);
+
+  // 条件行:t.cat = 'c1'(字段 → 值;操作符默认 =)
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn')]
+    .find(b => b.textContent.includes('添加条件')).click()`);
+  await waitFor(`!!document.querySelector('.win[data-app=dbviewer] .dbv-rows .dbv-brow select')`);
+  await ev(`(() => {
+    const row = document.querySelector('.win[data-app=dbviewer] .dbv-rows .dbv-brow');
+    const fs = row.querySelector('select');
+    fs.value = 't.cat';
+    fs.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await sleep(150);
+  await ev(`(() => {
+    const vi = document.querySelector('.win[data-app=dbviewer] .dbv-rows .dbv-brow input.dbv-val');
+    vi.value = 'c1';
+    vi.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  const pv1 = await waitFor(`(() => {
+    const p = document.querySelector('.win[data-app=dbviewer] .dbv-preview')?.textContent || '';
+    return p.includes("t.cat = 'c1'") ? p : false;
+  })()`);
+  t('T49.11 条件行 → SQL 预览实时生成', pv1.startsWith('SELECT * FROM entries t') && pv1.includes('LIMIT 100'), pv1);
+
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn.primary')]
+    .find(b => b.textContent.includes('执行')).click()`);
+  const bpg = await waitFor(`(() => {
+    const ind = document.querySelector('.win[data-app=dbviewer] .dbv-page-ind')?.textContent || '';
+    return ind.includes('1 / 2') ? ind : false;
+  })()`);
+  t('T49.12 生成器执行(cat=c1 → 12 行 2 页)', bpg !== false, String(bpg));
+
+  // 排序:v 降序 → 首行 e34(c1 中 v 最大 34)
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn')]
+    .filter(b => b.textContent.includes('添加排序')).pop().click()`);
+  await sleep(250);
+  await ev(`(() => {
+    const oh = document.querySelectorAll('.win[data-app=dbviewer] .dbv-rows')[1];   // 条件 / 排序 / 聚合
+    const sels = oh.querySelectorAll('select');
+    sels[0].value = 't.v';
+    sels[0].dispatchEvent(new Event('change', { bubbles: true }));
+    sels[1].value = '1';
+    sels[1].dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await sleep(150);
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn.primary')]
+    .find(b => b.textContent.includes('执行')).click()`);
+  const firstCell = await waitFor(`(() => {
+    const c = document.querySelector('.win[data-app=dbviewer] .dbv-table tbody tr td');
+    return c ? c.textContent : false;
+  })()`);
+  t('T49.13 排序(v 降序首行 e34)', firstCell === 'e34', String(firstCell));
+
+  // 分组 + 默认 COUNT(*)(先重置,清掉上面的条件与排序)
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn')]
+    .find(b => b.textContent === '重置').click()`);
+  await sleep(300);
+  await ev(`(() => {
+    const gs = [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder select')]
+      .find(s => [...s.options].some(o => o.textContent === '(不分组)'));
+    gs.value = 't.cat';
+    gs.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await sleep(300);
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .dbv-builder .btn.primary')]
+    .find(b => b.textContent.includes('执行')).click()`);
+  const grp = await waitFor(`(() => {
+    const rows = [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr')].map(r => r.textContent);
+    return rows.length === 3 ? rows.join('|') : false;
+  })()`);
+  const grpHead = await ev(`document.querySelector('.win[data-app=dbviewer] .dbv-table thead')?.textContent || ''`);
+  t('T49.14 分组聚合(3 组 12/12/11 + count_all 列)',
+    grp !== false && /12/.test(grp) && /11/.test(grp) && grpHead.includes('count_all'),
+    `${grp} head=${grpHead}`);
+
+  // 换库回连接屏
+  await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .app-toolbar .btn')]
+    .find(b => b.textContent.includes('换库')).click()`);
+  const back = await ev(`!!document.querySelector('.win[data-app=dbviewer] .dbv-connect-card')`);
+  t('T49.15 换库回连接屏', back);
+
+  const errs = await ev(`window.__errs.length`);
+  t('T49.16 全程无错误', errs === 0, `errs=${errs}`);
+  await c.shot('t49-dbviewer');
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);
