@@ -1,0 +1,71 @@
+// 读者登录 · 处理函数(未登录视图;已登录由 condition 路由直接给会员页)
+// 沙盒模板没有表单元素(白名单 16.2),登录交互用「键盘」:
+// 每个数字键是一条链接,口令累积在查询串里(?user=reader&pass=52…)。
+// 口令即谜题答案(馆藏总数,见 portal.nexus /about);拼对 → 置位
+// library_ok(登录态入玩家进度)+ 重定向回干净地址 /,口令不留在
+// 地址栏,后续访问由 progress 判定已登录。
+const USER = "reader";
+const PASS = "52831";
+const MAXLEN = 12;
+
+function digitsOnly(s) {
+  let out = "";
+  for (const ch of s) {
+    if ("0123456789".indexOf(ch) >= 0) { out += ch; }
+  }
+  return out.slice(0, MAXLEN);
+}
+
+function mask(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i += 1) { out += "●"; }
+  return out;
+}
+
+function href(pass, go) {
+  let h = "/?user=" + USER;
+  if (pass !== "") { h = h + "&pass=" + pass; }
+  if (go) { h = h + "&go=1"; }
+  return h;
+}
+
+return (args, progress) => {
+  const user = (typeOf(args.user) === "string" && args.user !== "") ? args.user : USER;
+  const pass = typeOf(args.pass) === "string" ? digitsOnly(args.pass) : "";
+  const tried = args.go === "1";
+
+  if (pass === PASS && user === USER) {
+    print("[library] 读者 " + user + " 登录成功");
+    // 模板 1 = ok.html:渲染结果会被宿主重定向丢弃,但契约要求模板必须
+    // 能正常渲染(login.html 缺键盘数据会炸),且 data.flag/data.redirect
+    // 在渲染前后生效
+    return {
+      template: 1,
+      data: { flag: "library_ok", redirect: "/", title: "登录成功 — NEXUS 数字图书馆" },
+    };
+  }
+
+  // 键盘按渲染顺序给出:1-9 九宫格 + C/0/⌫ 一行;登录另作整行按钮
+  // (局部名避开内建 keys())
+  const pads = [];
+  for (let i = 1; i <= 9; i += 1) {
+    const d = str(i);
+    pads.push({ d: d, cls: "vp-key", href: href(pass + d, false) });
+  }
+  pads.push({ d: "C", cls: "vp-key vp-key-fn", href: href("", false) });
+  pads.push({ d: "0", cls: "vp-key", href: href(pass + "0", false) });
+  pads.push({ d: "⌫", cls: "vp-key vp-key-fn", href: pass === "" ? href("", false) : href(pass.slice(0, pass.length - 1), false) });
+  print("[library] 键盘状态 pass=" + (pass === "" ? "(空)" : mask(pass)) + (tried ? " · 已试错" : ""));
+  return {
+    template: 0,
+    data: {
+      tried: tried,
+      user: user,
+      hasPass: pass !== "",
+      masked: mask(pass),
+      keys: pads,
+      submit: href(pass, true),
+      title: tried ? "口令错误 — NEXUS 数字图书馆" : "NEXUS 数字图书馆",
+    },
+  };
+};

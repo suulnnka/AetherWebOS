@@ -11,8 +11,11 @@ AetherWebOS 是一个纯前端的网页操作系统:**无后端**。虚拟文件
 编辑器,日记与笔记同样内嵌该编辑内核)、五个自带 AI 引擎的棋类游戏,以及一套
 用于解谜游戏的虚拟网络。浏览器支持多标签页,地址按虚拟 DNS 自动分流:
 内网站点(青色标签)是虚拟网络游戏世界,未注册域名(琥珀色标签)直达
-真实互联网;标签栏与地址栏的操作逻辑对齐 Firefox(滚轮切标签、拖拽
-排序、地址栏点击全选、Esc 还原等)。
+真实互联网;地址栏输入关键词改道内网搜索引擎(Firefox 式)。内网站点
+是 **AetherJS 沙盒站点应用**([AetherWebFramework](vendor/AetherWebFramework)
+子模块:安全子集语言 + 伪 SSR 模板 + Django 风格路由,页面产物过白名单
+校验,样式收敛在浏览器作用域内、跨浏览器一致);标签栏与地址栏的操作
+逻辑对齐 Firefox(滚轮切标签、拖拽排序、地址栏点击全选、Esc 还原等)。
 
 **软件商店**:游戏、天气、日记、QQ 等十八个应用默认**未安装**——不出现在
 开始菜单、没有桌面快捷方式、直接打开会被引导去商店;在「软件商店」里
@@ -37,9 +40,10 @@ GitHub Actions 自动构建部署)
 
 ## 快速开始
 
-需要 Node.js 20.19+ 或 22.12+。**克隆时必须带上子模块**:五个棋类的引擎在
-各自独立的仓库,以 git submodule 挂在 `vendor/` 下。不检出子模块,
-`npm run dev` / `npm run build` 会因找不到引擎文件直接失败:
+需要 Node.js 20.19+ 或 22.12+。**克隆时必须带上子模块**:五个棋类的引擎
+与内网站点框架(AetherWebFramework)在各自独立的仓库,以 git submodule
+挂在 `vendor/` 下。不检出子模块,`npm run dev` / `npm run build` 会因
+找不到引擎文件直接失败:
 
 ```bash
 # 首次克隆:--recurse-submodules 一并拉齐引擎子模块
@@ -74,6 +78,7 @@ npm run e2e -- T22                 # 只跑某一组
 npm run e2e -- T1-T5 邮件 天气     # 区间 / 组号 / 标题关键词,可混写
 npm run e2e -- --parallel 3        # 指定并发数(默认 6,调试可 --parallel 1)
 npm run e2e -- --clean             # 清空测试 profile,全新 localStorage 状态
+node tools/aether-sites-smoke.mjs  # 内网 AetherJS 站点冒烟(无需浏览器)
 ```
 
 输出 PASS/FAIL 清单 + `.shots/` 截图,末尾含分组摘要与每组耗时。

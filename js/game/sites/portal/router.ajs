@@ -1,0 +1,8 @@
+// NEXUS 内网门户 · 路由表(纯数据,规格 16.7)
+// 静态页免 script 直接给模板;manual.pdf 是「路径转换」,由处理函数
+// 返回 proxy 键(真实 URL 在站点注册表声明,沙盒选不了地址)。
+return [
+  { domain: "portal.nexus", path: "/", template: "home.html" },
+  { domain: "portal.nexus", path: "/about", template: "about.html" },
+  { domain: "portal.nexus", path: "/manual.pdf", script: "manual", template: ["proxy.html"] },
+];

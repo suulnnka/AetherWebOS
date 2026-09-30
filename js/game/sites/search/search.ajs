@@ -1,0 +1,127 @@
+// Aether 内网搜索 · /search/ 处理函数(打分排序 + 摘要高亮)
+// 算法:命中标题 ×8 + 命中正文 ×2;摘要取首个命中附近的 60 字窗口并标记命中段。
+// 跨站结果链接经宿主 /goto/ 中转(u 参数为百分编码的 host/path)。
+const PAGES = [
+  { title: "NEXUS 集团内网门户", show: "portal.nexus/", u: "portal.nexus%2F",
+    text: "员工专用内网门户:公告与快捷入口。数字图书馆系统维护:已切换只读模式,临时查询账号 reader,口令为馆藏总量数字。" },
+  { title: "关于 NEXUS 数字图书馆", show: "portal.nexus/about", u: "portal.nexus%2Fabout",
+    text: "馆藏规模:截至目前共收藏数字化文献 52,831 册,其中孤本 217 册。统计口径含期刊合订本。" },
+  { title: "NEXUS 数字图书馆 · 读者登录", show: "library.nexus/", u: "library.nexus%2F",
+    text: "只读维护模式。读者凭口令登录后可查阅馆际互借备忘。口令即馆藏总量数字,见门户「关于本馆」页面。" },
+  { title: "NEXUS 内网使用手册 v3.1", show: "portal.nexus/manual.pdf", u: "portal.nexus%2Fmanual.pdf",
+    text: "内网使用手册 v3.1(PDF,外部代理资源):账号规范、虚拟网络使用指引与常见问题。" },
+  { title: "Aether 内网搜索", show: "search.nexus/", u: "search.nexus%2F",
+    text: "只搜 NEXUS 虚拟内网。在浏览器地址栏直接输入关键词回车即可搜索,或在起始页搜索框开始。" },
+  { title: "关于本搜索引擎", show: "search.nexus/about/", u: "search.nexus%2Fabout%2F",
+    text: "本站由 AetherWebFramework 驱动:AetherJS 沙盒语言、伪 SSR 模板与 Django 风格路由。页面经白名单校验,安全可控。" },
+];
+
+function words(query) {
+  let out = [];
+  for (const w of query.toLowerCase().split(" ")) {
+    const t = w.trim();
+    if (t !== "") { out.push(t); }
+  }
+  return out;
+}
+
+function countHits(haystack, term) {
+  if (term === "") { return 0; }
+  let n = 0;
+  let at = haystack.indexOf(term);
+  while (at >= 0) {
+    n += 1;
+    at = haystack.indexOf(term, at + term.length);
+  }
+  return n;
+}
+
+function score(page, terms) {
+  let s = 0;
+  const title = page.title.toLowerCase();
+  const text = page.text.toLowerCase();
+  for (const term of terms) {
+    const inTitle = countHits(title, term);
+    const inText = countHits(text, term);
+    if (inTitle + inText === 0) { return 0; }
+    s += inTitle * 8 + inText * 2;
+  }
+  return s;
+}
+
+function snippet(text, terms) {
+  const lower = text.toLowerCase();
+  let first = -1;
+  for (const term of terms) {
+    const at = lower.indexOf(term);
+    if (at >= 0 && (first < 0 || at < first)) { first = at; }
+  }
+  if (first < 0) { return [{ text: text, hit: false }]; }
+  const start = Math.max(0, first - 10);
+  const end = Math.min(text.length, start + 60);
+  const win = text.slice(start, end);
+  const wlower = win.toLowerCase();
+  let marks = [];
+  for (let i = 0; i < win.length; i += 1) { marks.push(false); }
+  for (const term of terms) {
+    let at = wlower.indexOf(term);
+    while (at >= 0) {
+      for (let i = at; i < at + term.length && i < marks.length; i += 1) { marks[i] = true; }
+      at = wlower.indexOf(term, at + term.length);
+    }
+  }
+  let segs = [];
+  let buf = "";
+  let cur = false;
+  for (let i = 0; i < win.length; i += 1) {
+    if (marks[i] !== cur) {
+      if (buf !== "") { segs.push({ text: buf, hit: cur }); }
+      buf = "";
+      cur = marks[i];
+    }
+    buf += win.charAt(i);
+  }
+  if (buf !== "") { segs.push({ text: buf, hit: cur }); }
+  if (start > 0) { segs.unshift({ text: "…", hit: false }); }
+  if (end < text.length) { segs.push({ text: "…", hit: false }); }
+  return segs;
+}
+
+function search(query) {
+  const terms = words(query);
+  let scored = [];
+  for (const page of PAGES) {
+    const s = score(page, terms);
+    if (s > 0) { scored.push({ page: page, score: s }); }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  let out = [];
+  for (const r of scored) {
+    out.push({
+      title: r.page.title,
+      show: r.page.show,
+      href: "/goto/?u=" + r.page.u,
+      segs: snippet(r.page.text, terms),
+    });
+  }
+  return out;
+}
+
+return (args, progress) => {
+  let query = "";
+  if (typeOf(args.q) === "string") { query = args.q.trim(); }
+  print("[search] q=" + (query === "" ? "(空)" : query));
+  const results = search(query);
+  return {
+    template: 0,
+    data: {
+      query: query,
+      hasQuery: query !== "",
+      hasResults: results.length > 0,
+      count: results.length,
+      secs: fixed(Math.random() / 4 + 0.01, 3),
+      results: results,
+      title: query === "" ? "Aether 内网搜索" : query + " — Aether 内网搜索",
+    },
+  };
+};

@@ -1,0 +1,8 @@
+// Blackout 档案馆 · 路由表
+// condition 读游戏进度(progress = vnet 标志位快照):library_ok 为 true
+// 才放行,否则向下落到 * 兜底 → deny 处理函数返回 403(浏览器原生错误页)。
+return [
+  { domain: "blackout.nexus", path: "/", condition: "library_ok === true", template: "home.html" },
+  { domain: "blackout.nexus", path: "/archive.pdf", condition: "library_ok === true", script: "archive", template: ["proxy.html"] },
+  { domain: "blackout.nexus", path: "*", script: "deny", template: ["deny.html"] },
+];

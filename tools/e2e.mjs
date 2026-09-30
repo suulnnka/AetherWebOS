@@ -184,7 +184,7 @@ const wipeSharedAppData = (app) => ev(`(async () => {
       a.value = ${JSON.stringify(addrInput)};
       a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     })()`);
-    await sleep(1400); // 模拟加载动画 + 渲染
+    await sleep(1600); // 模拟加载动画 + 渲染(AetherJS 站点首访另含挂载编译)
   };
 
   /* bash 子 shell 命令:与 termType 同一终端窗口(先输入 bash 进入子 shell) */
@@ -758,35 +758,47 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
   await c.shot('t18-browser-portal');
 
   await nav('library.nexus');
-  // 错误口令
-  await ev(`(async () => {
-    const page = () => document.querySelector('.vw-page');
-    page().querySelector('input[name=user]').value = 'reader';
-    page().querySelector('input[name=pass]').value = '00000';
-    page().querySelector('form button').click();
+  // 键盘式登录(AetherJS 模板白名单无表单元素,数字键即链接,口令累积在查询串)
+  await ev(`[...document.querySelectorAll('.vw-page .vp-key')].find(a => a.textContent.trim() === '5').click()`);
+  await sleep(1500);
+  const kp = await ev(`(() => {
+    const p = document.querySelector('.vw-page');
+    const zero = [...p.querySelectorAll('.vp-key')].find(a => (a.getAttribute('href') || '').includes('pass=50'));
+    return { masked: p.textContent.includes('●'), zeroOk: !!zero };
   })()`);
-  await sleep(1300);
+  t('T18.12 图书馆键盘式口令输入(● 掩码 + 链接累积)', kp.masked === true && kp.zeroOk === true,
+    JSON.stringify(kp));
+  await c.shot('t18-browser-keypad');
+  // 错误口令(等价于按键后点「登录」,走查询串提交)
+  await nav('library.nexus/?user=reader&pass=00000&go=1');
   const wrong = await ev(`document.querySelector('.vw-page').textContent.includes('口令错误')`);
-  t('T18.12 图书馆错误口令被拒', wrong === true);
-  // 正确口令(谜题答案 52831)
-  await ev(`(async () => {
-    const page = () => document.querySelector('.vw-page');
-    page().querySelector('input[name=user]').value = 'reader';
-    page().querySelector('input[name=pass]').value = '52831';
-    page().querySelector('form button').click();
+  t('T18.13 图书馆错误口令被拒', wrong === true);
+  // 正确口令(谜题答案 52831;口令数字即键盘按键序列)→ 置位 + 重定向回干净地址
+  await nav('library.nexus/?user=reader&pass=52831');
+  await sleep(1200);   // 重定向链:登录请求 → / 干净地址(多一轮完整加载)
+  const loginOk = await ev(`(() => {
+    const p = document.querySelector('.vw-page');
+    const addr = document.querySelector('.vw-addr').value;
+    return { in: p.textContent.includes('researcher') && p.textContent.includes('h3ll0w'),
+             clean: !addr.includes('pass=') };
   })()`);
-  await sleep(1300);
-  const loginOk = await ev(`document.querySelector('.vw-page').textContent.includes('researcher') &&
-    document.querySelector('.vw-page').textContent.includes('h3ll0w')`);
   const flagLib = await ev(`WebOS && document.documentElement && JSON.parse(localStorage.getItem('webos.vnet.v1')||'{}').flags.library_ok === true`);
-  t('T18.13 图书馆口令谜题(SSH 凭据泄露 + 标志位)', loginOk === true && flagLib === true,
-    `page=${loginOk} flag=${flagLib}`);
+  t('T18.14 图书馆口令谜题(SSH 凭据泄露 + 标志位 + 干净地址)', loginOk.in === true && flagLib === true && loginOk.clean === true,
+    `page=${loginOk.in} flag=${flagLib} clean=${loginOk.clean}`);
   await c.shot('t18-browser-login');
+  // 登录态写在玩家进度:重新访问干净地址,condition 路由直接给会员视图(无键盘)
+  await nav('library.nexus');
+  const revisited = await ev(`(() => {
+    const p = document.querySelector('.vw-page');
+    return { loggedIn: p.textContent.includes('researcher'), noKeypad: !p.querySelector('.vp-keypad') };
+  })()`);
+  t('T18.15 登录态由玩家进度判定(重访即会员视图)', revisited.loggedIn === true && revisited.noKeypad === true,
+    JSON.stringify(revisited));
 
   // 未授权直接访问 blackout → 403 应已被 library_ok 解锁(已登录)→ 首页可见
   await nav('blackout.nexus');
   const blackout = await ev(`document.querySelector('.vw-page').textContent.includes('BLACKOUT 档案馆')`);
-  t('T18.14 隐藏站(凭据门禁)', blackout === true);
+  t('T18.16 隐藏站(凭据门禁)', blackout === true);
   // 打开路径转换的 PDF
   await ev(`[...document.querySelectorAll('.vw-page a')].find(a => a.getAttribute('href') === '/archive.pdf').click()`);
   await sleep(1600);
@@ -796,8 +808,8 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
   })()`);
   const questDone = await ev(`JSON.parse(localStorage.getItem('webos.vnet.v1')||'{}').flags.quest_done === true`);
   const toastWin = await ev(`document.querySelector('#toasts .toast')?.textContent.includes('谜题完成')`);
-  t('T18.15 路径转换(虚拟 URL → 真实 PDF iframe)', proxied === true);
-  t('T18.16 通关标志位与通知', questDone === true, `toast=${toastWin}`);
+  t('T18.17 路径转换(虚拟 URL → 真实 PDF iframe)', proxied === true);
+  t('T18.18 通关标志位与通知', questDone === true, `toast=${toastWin}`);
   await c.shot('t18-browser-proxy-pdf');
 
   // 自动分流:真实域名(虚拟 DNS 无记录)直达外网 iframe
@@ -808,11 +820,33 @@ group('T18', '虚拟网络:DNS / curl / SSH / 浏览器谜题全链路', async (
     return { out: !!tab && tab.classList.contains('net-out'),
              src: f && !f.hidden ? (f.src || '') : '' };
   })()`);
-  t('T18.17 真实域名自动分流到外网(DNS 判定)',
+  t('T18.19 真实域名自动分流到外网(DNS 判定)',
     routed.out === true && routed.src.startsWith('https://www.google.com'), JSON.stringify(routed));
 
+  // 搜索引擎:地址栏输入非 URL 关键词 → 改道内网搜索(Firefox 式)
+  await nav('图书馆 口令');
+  const searched = await ev(`(() => {
+    const p = document.querySelector('.vw-page');
+    const addr = document.querySelector('.vw-addr').value;
+    return { onSearch: addr.includes('search.nexus/search/'), hit: p.textContent.includes('找到约'),
+             goto: !!p.querySelector('.vp-hit-title a') };
+  })()`);
+  t('T18.20 地址栏搜索改道(打分排序 + 摘要)', searched.onSearch === true && searched.hit === true, JSON.stringify(searched));
+  await c.shot('t18-browser-search');
+  // 搜索结果跨主机跳转(模板只能相对链接 → /goto/ 中转)
+  await ev(`document.querySelector('.vw-page .vp-hit-title a').click()`);
+  await sleep(2600);   // goto 重定向 + 目标页加载(目标站可能首访挂载)
+  const jumped = await ev(`(() => {
+    const p = document.querySelector('.vw-page');
+    const addr = document.querySelector('.vw-addr').value;
+    const t = p.textContent;
+    // 图书馆此刻已登录(进度判定)→ 会员视图;未登录流程则落登录页
+    return { addr, portal: t.includes('馆际互借备忘') || t.includes('数字图书馆') || t.includes('NEXUS 集团内网门户') };
+  })()`);
+  t('T18.21 搜索结果跨站跳转(/goto/ 中转)', jumped.portal === true && !jumped.addr.includes('goto'), JSON.stringify(jumped));
+
   const errs18 = await ev(`window.__errs.length`);
-  t('T18.18 全程无运行错误', errs18 === 0, `errs=${errs18}`);
+  t('T18.22 全程无运行错误', errs18 === 0, `errs=${errs18}`);
 
 });
 
@@ -4534,8 +4568,8 @@ group('T51', '浏览器收藏(星标 / 收藏夹面板 / 起始页卡片 / Ctrl+
   await ev(`[...document.querySelectorAll('.win[data-app=browser] .app-toolbar .btn')].find(b => b.title === '起始页').click()`);
   await sleep(600);
   const card = await ev(`(() => {
-    const c = [...document.querySelectorAll('.vw-page .card')]
-      .find(r => r.querySelector('.card-title')?.textContent.includes('收藏'));
+    const c = [...document.querySelectorAll('.vw-page .vp-card')]
+      .find(r => r.querySelector('.vp-card-title')?.textContent.includes('收藏'));
     return { has: !!c, link: c?.querySelector('.vw-link')?.textContent, href: c?.querySelector('.vw-link')?.getAttribute('href') };
   })()`);
   t('T51.5 起始页收藏卡片', card.has === true && card.link === '内网门户' && card.href === 'http://portal.nexus',

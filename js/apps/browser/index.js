@@ -701,7 +701,12 @@ register({
 
       const step = (ms, fn) => setTimeout(() => { if (seq === tb.seq) fn(); }, ms);
       step(220, () => {
-        if (r.status === 'redirect') return nav(tb, r.location, { push: false });
+        // 重定向 = location.replace 语义:当前历史条目改写为最终地址(地址栏
+        // 不能停留在 /goto/ 之类中转路径),回退仍回到来源页
+        if (r.status === 'redirect') {
+          tb.history[tb.hIdx] = r.location;
+          return nav(tb, r.location, { push: false });
+        }
         if (r.status === 'dns') { setLoading(tb, false); setStatus(tb, 'DNS 解析失败'); return renderError(tb, 'dns', r); }
         setStatus(tb, `正在连接 ${r.ip}…`);
         step(240, () => {

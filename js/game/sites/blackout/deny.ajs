@@ -1,0 +1,4 @@
+// 兜底:凭据不足(或路径不存在)→ 403,由浏览器渲染原生错误页
+return (args, progress) => {
+  return { template: 0, data: { httpStatus: 403 } };
+};

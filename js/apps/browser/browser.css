@@ -180,8 +180,18 @@
 .vw-embed-hint .btn { height: 26px; padding: 0 10px; font-size: 12px; }
 .vw-embed-hint .btn.icon { width: 26px; height: 26px; padding: 0; }
 
-/* 虚拟页面排版(游戏作者用普通 HTML 标签即可) */
-.vw-page { flex: 1 1 auto; overflow-y: auto; padding: 26px 34px; max-width: 860px; user-select: text; -webkit-user-select: text; }
+/* ---- 虚拟页面内容(起始页 + 沙盒站点渲染出的白名单 HTML) ----
+ * 样式全部收敛在 .vw-page 作用域内的 vp-* 类:注入内容不再依赖全局
+ * .card/.dim/.mono —— 那些类会被其它应用的样式污染,加上 Firefox 与
+ * Chromium 对表单控件 / Flex 滚动容器的默认行为差异,是旧内网页面在
+ * Firefox 里显示错乱的根源。沙盒模板只能产出白名单标签 + class,
+ * 样式由这里单方面供给,注入内容也定义不了能影响系统其它部分的类。 */
+.vw-page {
+  flex: 1 1 auto;
+  min-height: 0; min-width: 0;   /* Firefox:滚动型 flex 条目须显式可收缩,否则内容被裁掉不出滚动条 */
+  overflow-y: auto; padding: 26px 34px; max-width: 860px;
+  user-select: text; -webkit-user-select: text;
+}
 .vw-page h1 { font-size: 21px; margin-bottom: 6px; }
 .vw-page h2 { font-size: 17px; margin-bottom: 8px; }
 .vw-page h3 { font-size: 14.5px; margin: 14px 0 6px; }
@@ -191,33 +201,86 @@
 .vw-page b { color: var(--text); }
 .vw-page ul { padding-left: 22px; line-height: 1.8; }
 
-.vw-hero {
+/* 通用构件:横幅 / 卡片 / 行 / 辅助文本(作用域内等价于全局 .card 系) */
+.vw-page .vp-hero {
   padding: 26px 30px; border-radius: var(--radius); margin-bottom: 16px;
   background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 22%, transparent), transparent 65%);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
-.vw-hero h1 { margin: 0; }
-.vw-hero p { color: var(--text-2); margin: 6px 0 0; }
-.vw-hero.ok { background: color-mix(in srgb, #10b981 16%, transparent); border-color: color-mix(in srgb, #10b981 40%, var(--border)); }
-.vw-hero.err { background: color-mix(in srgb, #ef4444 13%, transparent); border-color: color-mix(in srgb, #ef4444 40%, var(--border)); }
-.vw-hero.dark { background: linear-gradient(120deg, rgba(255, 42, 212, 0.14), transparent 65%); border-color: rgba(255, 42, 212, 0.3); }
-
-.vw-link-row {
+.vw-page .vp-hero h1 { margin: 0; }
+.vw-page .vp-hero p { color: var(--text-2); margin: 6px 0 0; }
+.vw-page .vp-hero-ok { background: color-mix(in srgb, #10b981 16%, transparent); border-color: color-mix(in srgb, #10b981 40%, var(--border)); }
+.vw-page .vp-hero-err { background: color-mix(in srgb, #ef4444 13%, transparent); border-color: color-mix(in srgb, #ef4444 40%, var(--border)); }
+.vw-page .vp-hero-dark { background: linear-gradient(120deg, rgba(255, 42, 212, 0.14), transparent 65%); border-color: rgba(255, 42, 212, 0.3); }
+.vw-page .vp-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel-solid); padding: 16px; margin: 14px 0;
+}
+.vw-page .vp-card-title { font-size: 13.5px; font-weight: 700; margin-bottom: 12px; }
+.vw-page .vp-row {
   display: flex; align-items: baseline; gap: 12px;
   padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px;
 }
-.vw-link-row:last-child { border-bottom: none; }
-.vw-link { font-weight: 600; }
-.vw-ip { color: var(--text-2); font-size: 12px; }
+.vw-page .vp-row:last-child { border-bottom: none; }
+.vw-page .vw-link { font-weight: 600; }
+.vw-page .vp-dim { color: var(--text-2); }
+.vw-page .vp-mono { font-family: var(--mono); font-size: 12px; }
 
-.vw-form { display: flex; flex-direction: column; gap: 12px; max-width: 320px; }
-.vw-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--text-2); }
-.vw-form input {
-  height: 32px; border-radius: 8px; padding: 0 10px;
-  border: 1px solid var(--border); background: var(--panel-solid); color: var(--text);
-  outline: none; font-size: 13px;
+/* 起始页搜索框(宿主 UI,表单拦截走 wirePage) */
+.vw-start-search { display: flex; gap: 8px; margin-top: 18px; }
+.vw-start-search .input { flex: 1; }
+
+/* 键盘式登录(沙盒模板无表单元素,口令按键都是链接) */
+.vw-page .vp-pass {
+  font-family: var(--mono); font-size: 18px; letter-spacing: 6px;
+  min-height: 30px; margin: 10px 0 12px; color: var(--text);
 }
-.vw-form input:focus { border-color: var(--accent); }
+.vw-page .vp-keypad {
+  display: grid; grid-template-columns: repeat(3, 84px); gap: 8px;
+  margin: 6px 0 4px;
+}
+.vw-page .vp-key {
+  display: grid; place-items: center;
+  height: 44px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--panel-solid);
+  color: var(--text); font-size: 16px; font-weight: 600; font-family: var(--mono);
+  border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+}
+.vw-page .vp-key:hover { background: var(--hover); border-bottom-color: var(--border); }
+.vw-page .vp-key:active { transform: translateY(1px); }
+.vw-page .vp-key-fn { color: var(--text-2); font-size: 14px; }
+.vw-page .vp-key-go {
+  grid-column: 1 / -1; width: auto;
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.vw-page .vp-key-go:hover { background: color-mix(in srgb, var(--accent) 85%, #000); }
+
+/* 搜索引擎(首页大 logo + 结果页) */
+.vw-page .vp-search-home { text-align: center; padding: 34px 0 10px; }
+.vw-page .vp-search-home .vp-card { text-align: left; }
+.vw-page .vp-logo { font-size: 46px; font-weight: 700; letter-spacing: 4px; margin: 0; }
+.vw-page .vp-logo-sm { font-size: 24px; margin: 0; letter-spacing: 2px; }
+.vw-page .vp-l1 { color: #4285f4; } .vw-page .vp-l2 { color: #ea4335; }
+.vw-page .vp-l3 { color: #fbbc05; } .vw-page .vp-l4 { color: #34a853; }
+.vw-page .vp-tagline { letter-spacing: 5px; margin: 4px 0 18px; }
+.vw-page .vp-search-card { max-width: 460px; margin: 0 auto 12px; }
+.vw-page .vp-search-top { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.vw-page .vp-qbox {
+  flex: 1; max-width: 420px; margin: 0;
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 9px 18px; font-size: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vw-page .vp-stats { font-size: 12.5px; margin-bottom: 10px; }
+.vw-page .vp-results { list-style: none; padding: 0; margin: 0; }
+.vw-page .vp-hit { margin: 20px 0; }
+.vw-page .vp-hit-url { color: #0d652d; font-size: 12px; margin: 2px 0; }
+.vw-page .vp-hit-title { margin: 2px 0; }
+.vw-page .vp-hit-title a { font-size: 16.5px; }
+.vw-page .vp-hit-snippet { color: var(--text-2); font-size: 13px; line-height: 1.65; margin: 2px 0; }
+.vw-page .vp-empty { color: var(--text-2); margin: 44px 0 0; text-align: center; }
+.vw-page .vp-search-foot { font-size: 12.5px; margin-top: 34px; }
 
 .vw-error { text-align: center; padding: 70px 20px; }
 .vw-error h2 { font-size: 19px; }

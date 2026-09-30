@@ -1,0 +1,5 @@
+// 内网使用手册 · 「路径转换」处理函数:proxy 键指向站点注册表里
+// 声明的真实外网地址(作者数据;沙盒代码只能引用键)。
+return (args, progress) => {
+  return { template: 0, data: { proxy: "manual", title: "NEXUS 内网使用手册 v3.1" } };
+};

@@ -1,0 +1,24 @@
+{{#if it.tried}}
+<div class="vp-hero vp-hero-err">
+  <h1>口令错误</h1>
+  <p>账号或口令不正确,请重试。</p>
+</div>
+{{else}}
+<div class="vp-hero">
+  <h1>NEXUS 数字图书馆</h1>
+  <p>只读维护模式</p>
+</div>
+{{/if}}
+<div class="vp-card">
+  <div class="vp-card-title">读者登录</div>
+  <p>临时账号 <b>{{it.user}}</b> · 请在键盘上输入口令</p>
+  <p class="vp-pass">{{#if it.hasPass}}{{it.masked}}{{else}}<span class="vp-dim">未输入</span>{{/if}}</p>
+  <div class="vp-keypad">
+    {{#each it.keys as k}}
+    <a class="{{k.cls}}" href="{{k.href}}">{{k.d}}</a>
+    {{/each}}
+    <a class="vp-key vp-key-go" href="{{it.submit}}">登录</a>
+  </div>
+  <p class="vp-dim">口令为数字(馆藏总量,见门户「关于本馆」),最多 12 位;也可以直接在地址栏访问
+  <span class="vp-mono">/?user=reader&amp;pass=口令</span>。</p>
+</div>

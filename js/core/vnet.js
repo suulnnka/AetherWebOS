@@ -17,11 +17,14 @@
 
 import { publish } from './bus.js';
 import fs from './fs.js';
+import { aetherServe } from './aethersite.js';
 
 const KEY = 'webos.vnet.v1';
 const dnsRecords = new Map(); // host -> 记录
-const sites = new Map();      // hostOrIp -> 站点定义
+const sites = new Map();      // hostOrIp -> 站点定义(旧式:HTML 字符串路由)
+const aetherSites = new Map(); // hostOrIp -> AetherJS 站点定义(见 aethersite.js)
 const servers = new Map();    // hostOrIp -> 服务器定义
+let searchHost = null;        // 地址栏非 URL 输入的搜索分流目标(游戏作者注册)
 
 /** 可变状态(持久化):游戏标志位 + 运行时新增的 DNS 记录 */
 let mutable = { flags: {}, dnsExtra: [] };
@@ -96,6 +99,22 @@ export function addSite(host, site) {
   if (site.ip) sites.set(site.ip, site);
 }
 
+/**
+ * 注册 AetherJS 站点(AetherWebFramework 实现,推荐方式):
+ * def: { ip, title, files: { 'router.ajs': 源码, '<名>.ajs': …, '<名>.html': … },
+ *        proxies?: { 键: 真实外网URL } }
+ * 站点在首次被访问时惰性挂载(编译进独立 chunk,不拖慢开机)。
+ */
+export function registerAetherSite(host, def) {
+  const d = { ...def, host: normHost(host) };
+  aetherSites.set(d.host, d);
+  if (d.ip) aetherSites.set(d.ip, d);
+}
+
+/** 注册地址栏搜索引擎主机(浏览器对非 URL 输入改道搜索,Firefox 式) */
+export function setSearchHost(host) { searchHost = host ? normHost(host) : null; }
+export const getSearchHost = () => searchHost;
+
 function matchRoute(site, path) {
   if (site.routes[path] != null) return site.routes[path];
   // 最长前缀匹配('/docs/' 之类目录路由)
@@ -106,24 +125,49 @@ function matchRoute(site, path) {
   return site.routes['*'] ?? null;
 }
 
+/** httpGet / httpGetAsync 的公共前端:解析 + 总线事件 + DNS */
+function frontMatter(rawUrl) {
+  let u;
+  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : 'http://' + rawUrl); }
+  catch { return { err: { status: 'badurl', url: rawUrl } }; }
+  if (!/^https?:$/.test(u.protocol)) return { err: { status: 'badurl', url: rawUrl } };
+
+  publish('vnet:http', { from: 'vnet', type: 'http', payload: { method: 'GET', host: u.hostname, path: u.pathname, url: u.href } });
+
+  const rec = dnsResolve(u.hostname);
+  if (!rec) return { err: { status: 'dns', host: u.hostname, url: u.href } };
+  return { u, rec };
+}
+
 /**
- * 虚拟 HTTP GET。返回:
+ * 虚拟 HTTP GET(异步:AetherJS 站点经 AetherWebFramework 分发,
+ * 旧式 addSite 站点仍走同步路径)。返回形状与 httpGet 相同:
+ * { status:'ok', type:'html'|'proxy', body/proxyUrl, title, host, ip, path, url, ms }
+ * 或 { status:'dns'|'refused'|'404'|'403'|'redirect'|'badurl', ... }
+ */
+export async function httpGetAsync(rawUrl) {
+  const t0 = performance.now();
+  const f = frontMatter(rawUrl);
+  if (f.err) return f.err;
+  const { u, rec } = f;
+  const adef = aetherSites.get(u.hostname) || aetherSites.get(rec.ip);
+  if (adef) {
+    const r = await aetherServe(adef, u, { flags: { ...mutable.flags }, setFlag, dnsResolve });
+    return { ...r, ms: Math.round(performance.now() - t0) };
+  }
+  return httpGet(rawUrl);
+}
+
+/**
+ * 虚拟 HTTP GET(旧式同步路径)。返回:
  * { status:'ok', type:'html'|'proxy', body/proxyUrl, title, host, ip, path, url, ms }
  * 或 { status:'dns'|'refused'|'404'|'403'|'redirect'|'badurl', ... }
  */
 export function httpGet(rawUrl) {
   const t0 = performance.now();
-  let u;
-  try { u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : 'http://' + rawUrl); }
-  catch { return { status: 'badurl', url: rawUrl }; }
-  if (!/^https?:$/.test(u.protocol)) return { status: 'badurl', url: rawUrl };
-
-  publish('vnet:http', { from: 'vnet', type: 'http', payload: { method: 'GET', host: u.hostname, path: u.pathname, url: u.href } });
-
-  const rec = dnsResolve(u.hostname);
-  if (!rec) return { status: 'dns', host: u.hostname, url: u.href };
-
-  const site = sites.get(u.hostname) || sites.get(rec.ip);
+  const f = frontMatter(rawUrl);
+  if (f.err) return f.err;
+  const { u, rec } = f;
   if (!site) return { status: 'refused', host: u.hostname, ip: rec.ip, url: u.href };
 
   const path = (u.pathname || '/') + (u.search || '');
@@ -300,5 +344,10 @@ export function resetState() {
   publish('vnet:flag-changed', { from: 'vnet', type: 'reset', payload: {} });
 }
 
-export const vnet = { addDNS, dnsAdd, dnsResolve, dnsList, addSite, addServer, httpGet, sshConnect, setFlag, getFlag, allFlags, resetState };
+export const vnet = {
+  addDNS, dnsAdd, dnsResolve, dnsList,
+  addSite, registerAetherSite, setSearchHost, getSearchHost,
+  addServer, httpGet, httpGetAsync, sshConnect,
+  setFlag, getFlag, allFlags, resetState,
+};
 export default vnet;

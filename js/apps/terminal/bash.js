@@ -18,7 +18,7 @@ import { isAppLink, appLinkApp } from '../../core/applink.js';
 import { accounts } from '../../core/accounts.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
-import { httpGet, dnsResolve } from '../../core/vnet.js';
+import { httpGetAsync, dnsResolve } from '../../core/vnet.js';
 
 /* 当前 shell 绑定的应用级 FS(createBash 注入;未注入时退回 core) */
 let FS = coreFs;
@@ -312,10 +312,10 @@ CMDS.ping = {
 };
 CMDS.curl = {
   desc: '抓取虚拟站点文本(curl <URL>)',
-  run(args, { piped, print }) {
+  async run(args, { piped, print }) {
     const arg = args[0];
     if (!arg) throw new Error('用法: curl <虚拟URL>');
-    const r = httpGet(arg);
+    const r = await httpGetAsync(arg);
     if (r.status === 'dns') throw new Error(`curl: (6) 无法解析主机 ${r.host} —— 虚拟网络外不可达`);
     if (r.status === 'refused') throw new Error(`curl: (7) 连接 ${r.host} (${r.ip}) 被拒绝`);
     if (r.status === '404') throw new Error(`curl: (22) 404 Not Found:${r.path}`);

@@ -1,0 +1,7 @@
+// Aether 内网搜索 · 路由表
+// /search/ 处理函数做打分排序与摘要高亮;/ 与 /about/ 是静态模板。
+return [
+  { domain: "search.nexus", path: "/", template: "home.html" },
+  { domain: "search.nexus", path: "/search/", script: "search", template: ["results.html"] },
+  { domain: "search.nexus", path: "/about/", template: "about.html" },
+];

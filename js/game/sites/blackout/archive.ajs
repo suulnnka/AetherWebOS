@@ -1,0 +1,9 @@
+// 档案代理 · 「路径转换」+ 通关判定
+// library_ok 已由路由 condition 把关;集齐维护锁(ssh_done)即通关,
+// 置位 quest_done 经 data.flag 指令由宿主执行(progress 对沙盒只读)。
+return (args, progress) => {
+  if (progress.ssh_done === true) {
+    return { template: 0, data: { proxy: "archive", flag: "quest_done", title: "赛博档案 Vol.3" } };
+  }
+  return { template: 0, data: { proxy: "archive", title: "赛博档案 Vol.3" } };
+};

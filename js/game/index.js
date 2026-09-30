@@ -5,100 +5,38 @@
  *  1. 浏览器打开 portal.nexus(内网导航可见)→ 公告提到
  *     图书馆临时账号 reader,口令 = 馆藏总数(去「关于我们」找)
  *  2. portal.nexus/about 显示馆藏 52,831 册 → 口令 52831
- *  3. library.nexus 登录表单提交 reader/52831 → 显示研究服务器
+ *  3. library.nexus 键盘式登录页提交 reader/52831 → 显示研究服务器
  *     凭据 researcher / h3ll0w @ 10.0.0.23(置 library_ok)
  *  4. 终端 ssh researcher@10.0.0.23 → cat notes.txt 提到运行
  *     status 命令解锁维护通道(置 ssh_done)
  *  5. blackout.nexus 首页需 library_ok;《赛博档案 Vol.3》PDF
  *     通过「路径转换」代理自真实互联网;两者齐备 → 通关
  *
- * 本文件同时是「游戏作者指南」的活样例:DNS / 站点 / SSH /
- * 路径转换 / 标志位 全部在此注册。
+ * 内网站点本身是 AetherJS 站点应用(sites/ 目录:路由表 + 处理函数
+ * + 模板),经 AetherWebFramework 沙盒编译分发(见 core/aethersite.js);
+ * 本文件只登记 DNS / SSH / 邮件短信剧情与标志位联动 —— 它仍是
+ * 「游戏作者指南」的活样例。
  * ============================================================ */
 
-import { addDNS, addSite, addServer, setFlag, getFlag } from '../core/vnet.js';
+import { addDNS, addServer, registerAetherSite, setSearchHost, setFlag, getFlag } from '../core/vnet.js';
 import { subscribe, publish } from '../core/bus.js';
 import mail from '../core/mail.js';
 import sms from '../core/sms.js';
+import siteDefs from './sites.js';
 
 /* ================= DNS 记录 ================= */
 addDNS({ host: 'portal.nexus', ip: '10.0.0.10', note: 'NEXUS 集团内网门户', listed: true, latency: 6 });
 addDNS({ host: 'library.nexus', ip: '10.0.0.11', note: 'NEXUS 数字图书馆', listed: true, latency: 9 });
+addDNS({ host: 'search.nexus', ip: '10.0.0.8', note: 'Aether 内网搜索引擎', listed: true, latency: 5 });
 addDNS({ host: 'router.nexus', ip: '10.0.0.1', note: '网关(仅响应 ping)', listed: true, latency: 1 });
 addDNS({ host: 'vault.nexus', ip: '10.0.0.23', note: '研究服务器(未公开)', latency: 14 });
 addDNS({ host: 'blackout.nexus', ip: '10.0.0.66', note: '???', latency: 21 });
 
-/* ================= 站点:portal.nexus ================= */
-addSite('portal.nexus', {
-  ip: '10.0.0.10',
-  title: 'NEXUS 内网门户',
-  routes: {
-    '/': () => `
-      <div class="vw-hero"><h1>NEXUS 集团内网门户</h1><p>员工专用 · 请勿外传</p></div>
-      <div class="card"><div class="card-title">公告</div>
-        <p><b>【临时通知】图书馆系统维护</b></p>
-        <p>数字图书馆(library.nexus)已切换为只读模式。临时查询账号:<b>reader</b>。</p>
-        <p>出于安全要求,口令为 <b>馆藏总量数字</b>。馆藏数据见
-          <a href="/about">关于本馆</a> 页面。</p>
-        <p class="dim">—— 信息管理部</p>
-      </div>
-      <div class="card"><div class="card-title">快捷入口</div>
-        <p><a href="http://library.nexus/">数字图书馆</a></p>
-      </div>`,
-    '/about': () => `
-      <div class="vw-hero"><h1>关于 NEXUS 数字图书馆</h1></div>
-      <div class="card"><div class="card-title">馆藏规模</div>
-        <p>截至目前,本馆共收藏数字化文献 <b style="font-size:20px">52,831</b> 册,
-        其中孤本 217 册。</p>
-        <p class="dim">统计口径:含期刊合订本。</p>
-      </div>
-      <p><a href="/">← 返回门户</a></p>`,
-    // 「路径转换」示例:虚拟 URL → 真实互联网 PDF(邮件附件同用此地址)
-    '/manual.pdf': () => ({
-      proxy: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-      title: 'NEXUS 内网使用手册 v3.1',
-    }),
-  },
-});
-
-/* ================= 站点:library.nexus(口令谜题) ================= */
-addSite('library.nexus', {
-  ip: '10.0.0.11',
-  title: 'NEXUS 数字图书馆',
-  routes: {
-    '/': ({ query }) => {
-      // 提交了表单:验证口令
-      if (query.user != null) {
-        if (query.user === 'reader' && query.pass === '52831') {
-          setFlag('library_ok');
-          return `
-            <div class="vw-hero ok"><h1>登录成功</h1><p>欢迎,读者 reader</p></div>
-            <div class="card"><div class="card-title">🔒 馆际互借备忘(内部)</div>
-              <p>研究服务器 <b>vault.nexus(10.0.0.23)</b> 维护通道:</p>
-              <p class="mono">账号 researcher<br>口令 h3ll0w</p>
-              <p class="dim">仅限研究部使用,严禁张贴。</p>
-            </div>
-            <p class="dim">提示:在终端使用 ssh researcher@10.0.0.23 登录。</p>`;
-        }
-        return `
-          <div class="vw-hero err"><h1>口令错误</h1><p>账号或口令不正确,请重试。</p></div>
-          ${loginForm(query.user)}`;
-      }
-      return `
-        <div class="vw-hero"><h1>NEXUS 数字图书馆</h1><p>只读维护模式</p></div>
-        ${loginForm('')}`;
-    },
-  },
-});
-
-const loginForm = (user) => `
-  <div class="card"><div class="card-title">读者登录</div>
-    <form action="/" method="get" class="vw-form">
-      <label>账号<input name="user" value="${String(user).replace(/"/g, '&quot;')}" required></label>
-      <label>口令<input name="pass" type="password" required placeholder="见门户公告"></label>
-      <button class="btn primary" type="submit">登录</button>
-    </form>
-  </div>`;
+/* ================= AetherJS 站点(sites/ 目录) ================= */
+// 「路径转换」目标(真实外网地址)在 sites.js 的 proxies 表声明,
+// 沙盒内的处理函数只能引用键。
+siteDefs.forEach((s) => registerAetherSite(s.host, s));
+setSearchHost('search.nexus');   // 地址栏输入非 URL 文本 → 改道内网搜索(Firefox 式)
 
 /* ================= SSH 服务器:vault.nexus ================= */
 addServer('vault.nexus', {
@@ -137,33 +75,6 @@ addServer('vault.nexus', {
           ];
         },
       },
-    },
-  },
-});
-
-/* ================= 站点:blackout.nexus(隐藏站 + 路径转换) ================= */
-addSite('blackout.nexus', {
-  ip: '10.0.0.66',
-  title: 'Blackout 档案馆',
-  routes: {
-    '/': ({ flag }) => {
-      if (!flag('library_ok')) return { status: 403 };
-      return `
-        <div class="vw-hero dark"><h1>BLACKOUT 档案馆</h1><p>匿名镜像 · 每周轮换</p></div>
-        <div class="card"><div class="card-title">本周档案</div>
-          <p>📄 <a href="/archive.pdf">《赛博档案 Vol.3》</a>
-             <span class="dim">(外部代理资源,浏览器直接打开)</span></p>
-          <p class="dim">* 镜像只对持有图书馆凭据的访客开放。</p>
-        </div>`;
-    },
-    // 「路径转换」:虚拟 URL → 真实互联网 PDF(游戏作者配置的唯一外网通道)
-    '/archive.pdf': ({ flag }) => {
-      if (!flag('library_ok')) return { status: 403 };
-      if (flag('ssh_done')) setFlag('quest_done');
-      return {
-        proxy: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-        title: '赛博档案 Vol.3',
-      };
     },
   },
 });

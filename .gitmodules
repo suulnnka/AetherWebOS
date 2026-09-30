@@ -22,3 +22,6 @@
 	url = https://github.com/suulnnka/AetherChess3.git
 	# 本地调参数据(tuner/ 产物,gitignore)会让子模块显得 dirty,忽略未跟踪项
 	ignore = untracked
+[submodule "vendor/AetherWebFramework"]
+	path = vendor/AetherWebFramework
+	url = git@github.com:suulnnka/AetherWebFramework.git

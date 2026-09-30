@@ -1,0 +1,26 @@
+<div class="vp-search-top">
+  <p class="vp-logo vp-logo-sm">
+    <span class="vp-l1">A</span><span class="vp-l2">e</span><span class="vp-l3">t</span><span class="vp-l1">h</span><span class="vp-l4">e</span><span class="vp-l2">r</span>
+  </p>
+  <p class="vp-qbox">{{it.query}}{{#if it.hasQuery}}{{else}}<span class="vp-dim">输入关键词…</span>{{/if}}</p>
+</div>
+{{#if it.hasQuery}}
+<p class="vp-dim vp-stats">找到约 {{it.count}} 条结果(用时 {{it.secs}} 秒)</p>
+{{#if it.hasResults}}
+<ul class="vp-results">
+  {{#each it.results as r}}
+  <li class="vp-hit">
+    <p class="vp-hit-url vp-mono">{{r.show}}</p>
+    <p class="vp-hit-title"><a href="{{r.href}}">{{r.title}}</a></p>
+    <p class="vp-hit-snippet">{{#each r.segs as s}}{{#if s.hit}}<b>{{s.text}}</b>{{else}}{{s.text}}{{/if}}{{/each}}</p>
+  </li>
+  {{/each}}
+</ul>
+{{else}}
+<p class="vp-empty">找不到和您查询相符的内容。</p>
+<p class="vp-dim">建议:检查拼写,或改用更短的关键词(多个词用空格分隔,须全部命中)。</p>
+{{/if}}
+{{else}}
+<p class="vp-empty">请输入关键词,例如 <a href="/search/?q=图书馆">图书馆</a>。</p>
+{{/if}}
+<p class="vp-dim vp-search-foot"><a href="/">返回搜索首页</a> · 关键词也可直接在地址栏输入</p>

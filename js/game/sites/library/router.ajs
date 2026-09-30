@@ -1,0 +1,9 @@
+// NEXUS 数字图书馆 · 路由表
+// 登录态写在玩家进度里(library_ok 标志位),同路径 condition 分层:
+//   已登录(library_ok)→ 会员视图(馆际互借备忘);
+//   未登录           → 键盘式口令登录页(拼对口令 → 置位 + 重定向回 /)。
+// 登录不靠 URL 维持:口令只在验证那一次请求的查询串里出现。
+return [
+  { domain: "library.nexus", path: "/", condition: "library_ok === true", template: "ok.html" },
+  { domain: "library.nexus", path: "/", script: "login", template: ["login.html", "ok.html"] },
+];
