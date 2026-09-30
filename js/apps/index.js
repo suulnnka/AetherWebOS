@@ -44,6 +44,7 @@ import pairs from './pairs/manifest.js';
 import sokoban from './sokoban/manifest.js';
 import qq from './qq/manifest.js';
 import dbviewer from './dbviewer/manifest.js';
+import clues from './clues/manifest.js';
 
 const APPS = [
   [browser, () => import('./browser/index.js')],
@@ -77,6 +78,7 @@ const APPS = [
   [sokoban, () => import('./sokoban/index.js')],
   [qq, () => import('./qq/index.js')],
   [dbviewer, () => import('./dbviewer/index.js')],
+  [clues, () => import('./clues/index.js')],
 ];
 
 for (const [manifest, load] of APPS) registerLazy(manifest, load);

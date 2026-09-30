@@ -1,0 +1,231 @@
+/* ============================================================
+ * 线索 —— 节点便签图(画布 / 便签 / 单链 / 聚焦态)
+ * ============================================================ */
+
+/* ---------- 画布(点阵网格,可平移缩放) ---------- */
+.clues-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-image: radial-gradient(color-mix(in srgb, var(--border) 80%, transparent) 1px, transparent 1.2px);
+  background-size: 24px 24px;
+}
+.clues-canvas.panning { cursor: grabbing; }
+.clues-canvas.linking { cursor: crosshair; }
+
+.clues-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;             /* 线条命中走 hit 路径 */
+}
+
+.clues-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+/* ---------- 连线 ---------- */
+.clue-edge {
+  fill: none;
+  stroke: #8b94a1;
+  stroke-width: 2;
+}
+.clue-edge:hover { stroke: #5d6673; }
+.clue-edge.on {
+  stroke: var(--accent);
+  stroke-width: 2.6;
+}
+.clue-edge-hit {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0);
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.clue-edge-ghost {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* ---------- 便签 ---------- */
+.clue-note {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  user-select: none;
+  touch-action: none;
+  cursor: pointer;
+}
+.clue-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18), 0 8px 14px rgba(0, 0, 0, 0.07);
+  transform: rotate(var(--tilt, 0deg));
+  transition: box-shadow 0.12s, transform 0.12s, outline-color 0.12s;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+.clue-note:hover .clue-card { box-shadow: 0 4px 9px rgba(0, 0, 0, 0.22), 0 12px 20px rgba(0, 0, 0, 0.1); }
+.clue-note.sel .clue-card {
+  outline-color: var(--accent);
+  transform: rotate(0deg);          /* 选中摆正,读起来舒服 */
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.26);
+}
+.clue-note.is-focus .clue-card { outline: 2px dashed var(--accent); outline-offset: 3px; }
+.clue-note.drop .clue-card { outline-color: var(--accent); transform: scale(1.04); }
+
+/* 顶部胶带 */
+.clue-tape {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 44px;
+  height: 15px;
+  transform: translateX(-50%) rotate(-2deg);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.clue-title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #43391f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* 有内容:右下折角 */
+.clue-note.has-body .clue-card::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  border-style: solid;
+  border-width: 0 0 13px 13px;
+  border-color: transparent transparent rgba(0, 0, 0, 0.16) transparent;
+  border-bottom-right-radius: 2px;
+  filter: drop-shadow(-1px -1px 1px rgba(255, 255, 255, 0.45));
+  pointer-events: none;
+}
+
+/* 连线锚点:悬停出现,按住拖出单链 */
+.clue-anchor {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--panel-solid, #fff);
+  padding: 0;
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 0.12s, transform 0.12s;
+  z-index: 2;
+}
+.clue-note:hover .clue-anchor,
+.clues-canvas.linking .clue-anchor { opacity: 1; }
+.clue-anchor:hover { transform: scale(1.25); }
+
+/* 连线模式:目标便签高亮暗示可点 */
+.clues-canvas.linking .clue-note { cursor: crosshair; }
+.clues-canvas.linking .clue-note:hover .clue-card { outline-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* ---------- 空态 ---------- */
+.clues-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  pointer-events: none;
+}
+
+/* ---------- 工具栏 / 状态栏点缀 ---------- */
+.clue-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  max-width: 300px;
+}
+.clue-focus-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.clue-focus-x {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+.clue-focus-x:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+
+.clue-zoom { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+.clue-status-r.accent { color: var(--accent); font-weight: 600; }
+
+/* ---------- 编辑器 ---------- */
+.clue-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  padding: 0;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+.clue-swatch.on { outline-color: var(--accent); }
+.clue-body-in {
+  width: 100%;
+  resize: vertical;
+  min-height: 150px;
+  line-height: 1.6;
+  font-family: inherit;
+}
