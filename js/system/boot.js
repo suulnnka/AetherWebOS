@@ -55,6 +55,16 @@ function boot() {
     renderStartUser();
     renderDesktopIcons();
     tickClock();
+
+    // E2E/调试:URL hash 直开应用(#open=browser&url=http%3A%2F%2Fportal.nexus%2F,
+    // 其余键并入应用 params)—— 无交互环境下(如 Firefox --headless --screenshot)
+    // 也能进入指定页面做渲染比对
+    if (E2E && location.hash.startsWith('#open=')) {
+      const q = new URLSearchParams(location.hash.slice(6));
+      const appId = q.get('open');
+      q.delete('open');
+      if (appId) setTimeout(() => wm.open(appId, { params: Object.fromEntries(q) }), 300);
+    }
   };
   start();
 

@@ -2914,6 +2914,7 @@ group('T41', '应用内右键', async () => {
     if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
     return true;
   })()`);
+  await needApps('memo');   // 安装按用户:登录切换到 todoer 后补装,41.6 才打得开
   await wipeAppData('todoer', 'todo');
   await ev(`WebOS.wm.open('todo')`);
   await waitFor(`!!document.querySelector('.todo-item')`);
@@ -2942,7 +2943,7 @@ group('T41', '应用内右键', async () => {
     card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
     return [...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim());
   })()`);
-  t('T41.6 笔记卡片右键', (ctx4 || []).some(i => i === '置顶' || i === '取消置顶') && (ctx4 || []).includes('删除笔记'),
+  t('T41.6 笔记卡片右键', (Array.isArray(ctx4) ? ctx4 : []).some(i => i === '置顶' || i === '取消置顶') && (Array.isArray(ctx4) ? ctx4 : []).includes('删除笔记'),
     JSON.stringify(ctx4));
 
   // 41.7 浏览器:地址栏右键 → 刷新 + 复制页面地址(先写入地址,初始值为空)
@@ -4428,15 +4429,12 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   await ev(`WebOS.apps.install('weather', { user: 'storeuser', silent: true })`);
   await sleep(500);
   const other = await ev(`(() => ({
-    cur: WebOS.accounts.current(),
     mine: WebOS.apps.isInstalled('weather'),
     other: WebOS.apps.isInstalled('weather', 'storeuser'),
     myDesk: WebOS.fs.exists(WebOS.fs.desktopPath() + '/天气.app'),
     otherDesk: WebOS.fs.exists('/home/storeuser/desktop/天气.app'),
     sm: document.querySelectorAll('.sm-item[data-search*="weather"]').length,
     storeBtn: !!document.querySelector('.st-card[data-app=weather] .st-install'),
-    v2: JSON.parse(localStorage.getItem('webos.installed.v2') || '{}'),
-    myDesktop: (WebOS.fs.list(WebOS.fs.desktopPath(), { as: 'root' }) || []).map(f => f.name),
   }))()`);
   await ev(`WebOS.apps.uninstall('weather', { user: 'storeuser', silent: true })`);
   await sleep(300);
