@@ -109,6 +109,57 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+/* ---- 收藏:地址栏右侧星标(Firefox:已收藏实心着色) ---- */
+.vw-star.on { color: var(--accent); }
+.vw-star.on svg { fill: currentColor; }
+
+/* 收藏夹下拉面板(document.body 挂载,固定定位;样式对齐右键菜单) */
+.vw-bm-pop {
+  position: fixed; z-index: 1350; width: 320px; max-height: min(420px, 62vh);
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  backdrop-filter: blur(26px) saturate(1.5);
+  -webkit-backdrop-filter: blur(26px) saturate(1.5);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.vw-bm-head {
+  flex: none; padding: 9px 12px 7px;
+  font-size: 12.5px; font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.vw-bm-list { overflow-y: auto; padding: 4px; scrollbar-width: thin; }
+.vw-bm-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 8px; border-radius: 7px; cursor: pointer;
+}
+.vw-bm-row:hover { background: var(--hover); }
+/* 网络色圆点(标签栏同款;选择器独立于 .vw-tab 作用域) */
+.vw-bm-row .vw-tab-dot { flex: none; }
+.vw-bm-row .vw-tab-dot.net-in { background: var(--vw-in); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-in) 50%, transparent); }
+.vw-bm-row .vw-tab-dot.net-out { background: var(--vw-out); box-shadow: 0 0 4px color-mix(in srgb, var(--vw-out) 50%, transparent); }
+.vw-bm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vw-bm-name {
+  font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vw-bm-url {
+  color: var(--text-2); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 行内操作:悬停行时浮现(Firefox 书签下拉的行内管理) */
+.vw-bm-act {
+  flex: none; width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  color: var(--text-2); background: transparent; border: none; cursor: pointer;
+  opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.vw-bm-row:hover .vw-bm-act { opacity: 0.85; }
+.vw-bm-act:hover { opacity: 1; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.vw-bm-empty { padding: 16px 14px 4px; color: var(--text-2); font-size: 12.5px; line-height: 1.7; }
+.vw-bm-add { margin: 8px 14px 12px; height: 28px; padding: 0 12px; font-size: 12.5px; }
+
 /* ---- 内容区(每标签一个 tabroot,切换时整体换挂) ---- */
 .vw-body { background: var(--panel-solid); display: flex; flex-direction: column; overflow: hidden; }
 .vw-tabroot { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }

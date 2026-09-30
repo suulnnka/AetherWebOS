@@ -4449,6 +4449,173 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   t('T50.14 全程无错误', errs50 === 0, `errs=${errs50}`);
 });
 
+group('T51', '浏览器收藏(星标 / 收藏夹面板 / 起始页卡片 / Ctrl+D / 持久化)', async () => {
+  /* ---- T51 浏览器收藏:Firefox 式书签 —— 地址栏旁星标一键收藏,已收藏时
+   * 星标菜单改名/删除;收藏夹面板逐条管理(跳转/改名/移除);起始页出现
+   * 收藏卡片;Ctrl+D 收藏;数据按用户落 ~/appdata/browser.awdb,重载仍在 ---- */
+
+  // 前置:钉住登录用户(收藏按用户存储;未登录仅会话内存态)+ 清所有用户收藏库
+  await ev(`(async () => {
+    const a = WebOS.accounts;
+    if (!a.current()) {
+      if (!(await a.login('user', '1234')).ok) {
+        await a.register('surfer', 'surferpass');
+        await a.login('surfer', 'surferpass');
+      }
+    }
+    return true;
+  })()`);
+  await wipeSharedAppData('browser');   // 清各用户 browser.awdb,断言不累积历史
+  await fresh();
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(700);
+
+  // 起始页星标置灰,进入可收藏页面后可用
+  const starStart = await ev(`document.querySelector('.vw-star').disabled`);
+  await nav('portal.nexus');
+  const starNow = await ev(`!document.querySelector('.vw-star').disabled && !document.querySelector('.vw-star').classList.contains('on')`);
+  t('T51 星标:起始页置灰,门户页可用且未点亮', starStart === true && starNow === true);
+
+  // 星标一键收藏(Firefox:点击即收藏,星标点亮,状态栏反馈)
+  await ev(`document.querySelector('.vw-star').click()`);
+  await sleep(200);
+  const s1 = await ev(`(() => ({
+    on: document.querySelector('.vw-star').classList.contains('on'),
+    title: document.querySelector('.vw-star').title,
+    status: document.querySelector('.app-status span').textContent,
+  }))()`);
+  t('T51.1 星标一键收藏(点亮+状态反馈)', s1.on === true && s1.status.includes('已收藏'),
+    JSON.stringify(s1));
+
+  // 已收藏:再点星标 → 编辑菜单(改名 / 删除)
+  await ev(`document.querySelector('.vw-star').click()`);
+  await sleep(200);
+  const starMenu = await ev(`[...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim())`);
+  t('T51.2 已收藏星标菜单(编辑/删除)', starMenu.includes('编辑名称…') && starMenu.includes('删除收藏'),
+    JSON.stringify(starMenu));
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('编辑名称')).click()`);
+  await sleep(400);
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=sysdialog] .dlg-input');
+    inp.value = '内网门户';
+    return [...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')]
+      .find(b => b.textContent.trim() === '确定').click();
+  })()`);
+  await sleep(400);
+
+  // 收藏夹面板:列表 + 改名生效 + 计数
+  await ev(`document.querySelector('.vw-bm-btn').click()`);
+  await sleep(200);
+  const pop1 = await ev(`(() => ({
+    open: !!document.querySelector('.vw-bm-pop'),
+    names: [...document.querySelectorAll('.vw-bm-pop .vw-bm-name')].map(n => n.textContent),
+    head: document.querySelector('.vw-bm-pop .vw-bm-head')?.textContent.trim(),
+    dot: document.querySelector('.vw-bm-pop .vw-bm-row .vw-tab-dot')?.className || '',
+  }))()`);
+  t('T51.3 收藏夹面板列出收藏(改名生效/内网圆点)',
+    pop1.open && pop1.names.length === 1 && pop1.names[0] === '内网门户'
+    && pop1.head === '收藏 1' && pop1.dot.includes('net-in'),
+    JSON.stringify(pop1));
+
+  // 面板行点击 → 当前标签跳转并关面板
+  await nav('example.com');
+  await ev(`document.querySelector('.vw-bm-btn').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('.vw-bm-pop .vw-bm-row').click()`);
+  await sleep(1400);
+  const jump = await ev(`(() => ({
+    page: document.querySelector('.vw-page').textContent.includes('NEXUS 集团内网门户'),
+    pop: !!document.querySelector('.vw-bm-pop'),
+  }))()`);
+  t('T51.4 面板行点击跳转(面板关闭)', jump.page === true && jump.pop === false, JSON.stringify(jump));
+
+  // 起始页收藏卡片 + 卡片链接跳转
+  await ev(`[...document.querySelectorAll('.win[data-app=browser] .app-toolbar .btn')].find(b => b.title === '起始页').click()`);
+  await sleep(600);
+  const card = await ev(`(() => {
+    const c = [...document.querySelectorAll('.vw-page .card')]
+      .find(r => r.querySelector('.card-title')?.textContent.includes('收藏'));
+    return { has: !!c, link: c?.querySelector('.vw-link')?.textContent, href: c?.querySelector('.vw-link')?.getAttribute('href') };
+  })()`);
+  t('T51.5 起始页收藏卡片', card.has === true && card.link === '内网门户' && card.href === 'http://portal.nexus',
+    JSON.stringify(card));
+  await ev(`[...document.querySelectorAll('.vw-page a')].find(a => a.textContent === '内网门户').click()`);
+  await sleep(1400);
+  t('T51.6 卡片链接跳转', await ev(`document.querySelector('.vw-page').textContent.includes('NEXUS 集团内网门户')`));
+
+  // 页面右键:已收藏 → 移除收藏入口(不再重复收藏)
+  await ev(`document.querySelector('.vw-page').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }))`);
+  const pgMenu = await ev(`[...document.querySelectorAll('#ctx .ctx-item')].map(b => b.textContent.trim())`);
+  t('T51.7 页面右键出现「移除收藏」', pgMenu.includes('移除收藏') && !pgMenu.includes('收藏此页'),
+    JSON.stringify(pgMenu));
+  await ev(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);   // 点外部关菜单
+  await sleep(150);
+
+  // Ctrl+D 收藏当前页(Firefox),收藏数变 2
+  await nav('example.com');
+  // 对话框关闭后 .focused 不自动归还:先在窗口上按一下(pointerdown 捕获监听 → focus)
+  await ev(`document.querySelector('.win[data-app=browser]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+  await sleep(100);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true, cancelable: true }))`);
+  await sleep(250);
+  const ctrlD = await ev(`(() => ({
+    on: document.querySelector('.vw-star').classList.contains('on'),
+    n: document.querySelectorAll('.vw-tab').length,
+  }))()`);
+  t('T51.8 Ctrl+D 收藏当前页', ctrlD.on === true, JSON.stringify(ctrlD));
+
+  // 面板逐条移除 → 清空后空态提示;星标随移除熄灭
+  await ev(`document.querySelector('.vw-bm-btn').click()`);
+  await sleep(200);
+  const cnt1 = await ev(`document.querySelectorAll('.vw-bm-pop .vw-bm-row').length`);
+  await ev(`[...document.querySelectorAll('.vw-bm-pop .vw-bm-act')].find(b => b.title === '移除收藏').click()`);
+  await sleep(200);
+  const after = await ev(`(() => ({
+    rows: document.querySelectorAll('.vw-bm-pop .vw-bm-row').length,
+    empty: !!document.querySelector('.vw-bm-pop .vw-bm-empty'),
+  }))()`);
+  t('T51.9 面板移除一条', cnt1 === 2 && after.rows === 1 && after.empty === false, `${cnt1}→${after.rows}`);
+  await ev(`[...document.querySelectorAll('.vw-bm-pop .vw-bm-act')].find(b => b.title === '移除收藏').click()`);
+  await sleep(300);
+  const empty2 = await ev(`(() => ({
+    empty: !!document.querySelector('.vw-bm-pop .vw-bm-empty'),
+    addBtn: !!document.querySelector('.vw-bm-pop .vw-bm-add'),
+    starOn: document.querySelector('.vw-star').classList.contains('on'),
+  }))()`);
+  t('T51.10 清空后空态(含收藏当前页按钮),星标熄灭',
+    empty2.empty === true && empty2.addBtn === true && empty2.starOn === false, JSON.stringify(empty2));
+  // 空态「收藏当前页」一键收藏
+  await ev(`document.querySelector('.vw-bm-pop .vw-bm-add').click()`);
+  await sleep(200);
+  const readd = await ev(`document.querySelectorAll('.vw-bm-pop .vw-bm-row').length`);
+  t('T51.11 空态一键收藏当前页', readd === 1, `rows=${readd}`);
+  await ev(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);   // 点外部关面板
+  await sleep(150);
+  t('T51.12 点外部关闭面板', await ev(`!document.querySelector('.vw-bm-pop')`));
+
+  // 持久化:收藏门户页 → 刷新系统 → 重开浏览器 → 收藏仍在(按用户 ~/appdata/browser.awdb)
+  await nav('portal.nexus');
+  await ev(`document.querySelector('.vw-star').click()`);
+  await sleep(400);   // 等 200ms 防抖保存
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=browser]').dataset.id)`);
+  await sleep(300);
+  await ev(`(async () => { await WebOS.fs.flush(); return true; })()`);   // 落盘元数据在刷新前写进 OPFS
+  await fresh();
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(700);
+  await nav('portal.nexus');
+  const persist = await ev(`(() => ({
+    on: document.querySelector('.vw-star').classList.contains('on'),
+    db: WebOS.fs.exists('/home/' + WebOS.accounts.current() + '/appdata/browser.awdb'),
+  }))()`);
+  t('T51.13 收藏持久化(重载后仍在/库已落盘)', persist.on === true && persist.db === true,
+    JSON.stringify(persist));
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=browser]').dataset.id)`);
+
+  const errs51 = await ev(`window.__errs.length`);
+  t('T51.14 全程无运行错误', errs51 === 0, `errs=${errs51}`);
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);

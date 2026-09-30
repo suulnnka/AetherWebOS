@@ -12,6 +12,9 @@
  *    切换、Ctrl+1..9 定位、Alt+←/→ 与 Backspace 前进后退
  *    (宿主浏览器保留的组合键无法拦截,属正常);
  *  - 刷新按钮在加载中变为「停止」。
+ *  - 收藏(Firefox 式书签):地址栏旁星标一键收藏当前页,已收藏时
+ *    星标菜单改名 / 删除;收藏夹面板逐条管理;起始页出现收藏卡片;
+ *    Ctrl+D 收藏。数据按用户落 ~/appdata/browser.awdb。
  *
  * 分流:域名能被虚拟 DNS 解析(或私网 IP)→ 内网(vnet 游戏世界,
  * 含作者的 proxy 路径转换);否则直达真实互联网(iframe,跨源页面
@@ -22,8 +25,10 @@ import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './browser.css';
-import { httpGet, dnsList, dnsResolve } from '../../core/vnet.js';
+import { httpGetAsync, dnsList, dnsResolve, getSearchHost } from '../../core/vnet.js';
 import { copyText, showMenuAnchored } from '../../core/menu.js';
+import { accounts } from '../../core/accounts.js';
+import { loadState, saveState } from '../../core/appdata.js';
 
 const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 /** 私网 / 回环地址 → 属于虚拟内网;公网 IP → 外网 */
@@ -50,6 +55,17 @@ function routeNet(url) {
   return hostIsIntranet(u.hostname) ? 'in' : 'out';
 }
 
+/**
+ * 地址栏裸输入是否该当搜索词(Firefox 式):带空格,或首段无点又非
+ * IP(内网主机名都是 xxx.nexus 形态)且非 about: → 交给内网搜索引擎。
+ */
+function looksLikeQuery(text) {
+  const t = String(text).trim();
+  if (!t || /\s/.test(t)) return !!t;
+  const first = t.split(/[/?#]/)[0].split(':')[0];
+  return !first.includes('.') && !IP_RE.test(first);
+}
+
 /** 起始页:内网站点(虚拟 DNS listed 记录)+ 外网常用站点(均允许嵌入) */
 const WEB_LINKS = [
   { url: 'https://example.com', name: 'Example.com', note: '演示站点(总是允许嵌入)' },
@@ -57,35 +73,47 @@ const WEB_LINKS = [
   { url: 'https://www.openstreetmap.org', name: 'OpenStreetMap', note: '开源世界地图' },
   { url: 'https://archive.org', name: 'Internet Archive', note: '互联网档案馆' },
 ];
-function startPage() {
+function startPage(marks = []) {
   const hosts = dnsList();
-  return `<div class="vw-hero">
+  const sh = getSearchHost();
+  return `<div class="vp-hero">
       <h1>NEXUS 导航</h1>
       <p>虚拟内网与真实外网 · 地址按虚拟 DNS 自动分流</p>
     </div>
-    <div class="card" style="margin-top:18px">
-      <div class="card-title">${'<span></span>'}内网站点(虚拟 DNS)</div>
+    ${sh ? `<form class="vw-start-search" action="http://${sh}/search/" method="get">
+      <input class="input" name="q" placeholder="搜索内网…(地址栏输入关键词亦可)" spellcheck="false">
+      <button class="btn primary" type="submit">搜索</button>
+    </form>` : ''}
+    ${marks.length ? `<div class="vp-card" style="margin-top:18px">
+      <div class="vp-card-title">收藏</div>
+      ${marks.map(m => `
+        <div class="vp-row">
+          <a href="${escapeHtml(m.url)}" class="vw-link">${escapeHtml(m.name)}</a>
+          <span class="vp-mono vp-dim">${escapeHtml(m.url.replace(/^https?:\/\//, ''))}</span>
+        </div>`).join('')}
+    </div>` : ''}
+    <div class="vp-card" style="margin-top:18px">
+      <div class="vp-card-title">内网站点(虚拟 DNS)</div>
       ${hosts.length ? hosts.map(h => `
-        <div class="vw-link-row">
+        <div class="vp-row">
           <a href="http://${h.host}/" class="vw-link">${h.host}</a>
-          <span class="vw-ip mono">${h.ip}</span>
-          <span class="dim">${escapeHtml(h.note)}</span>
-        </div>`).join('') : '<p class="dim">虚拟网络中没有已登记的站点。</p>'}
+          <span class="vp-mono">${h.ip}</span>
+          <span class="vp-dim">${escapeHtml(h.note)}</span>
+        </div>`).join('') : '<p class="vp-dim">虚拟网络中没有已登记的站点。</p>'}
     </div>
-    <div class="card" style="margin-top:16px">
-      <div class="card-title">${'<span></span>'}外网常用站点</div>
+    <div class="vp-card" style="margin-top:16px">
+      <div class="vp-card-title">外网常用站点</div>
       ${WEB_LINKS.map(l => `
-        <div class="vw-link-row">
+        <div class="vp-row">
           <a href="${l.url}" class="vw-link">${l.name}</a>
-          <span class="vw-ip mono">${escapeHtml(l.url.replace(/^https?:\/\//, ''))}</span>
-          <span class="dim">${escapeHtml(l.note)}</span>
+          <span class="vp-mono vp-dim">${escapeHtml(l.url.replace(/^https?:\/\//, ''))}</span>
+          <span class="vp-dim">${escapeHtml(l.note)}</span>
         </div>`).join('')}
     </div>
-    <p class="dim" style="margin-top:16px;font-size:12px">
-      提示:域名能被虚拟 DNS 解析即入内网,其余直达真实互联网。
-      部分真实站点会拒绝被嵌入(X-Frame-Options),页面空白或报错时,
-      可用工具栏 ↗ 在系统外打开;外网页面内的链接在本页内跳转,
-      「打开新窗口」类的链接会跳出系统浏览器。
+    <p class="vp-dim" style="margin-top:16px;font-size:12px">
+      提示:域名能被虚拟 DNS 解析即入内网,其余直达真实互联网;地址栏输入
+      关键词(带空格或无点号)会改道内网搜索。部分真实站点会拒绝被嵌入
+      (X-Frame-Options),页面空白或报错时,可用工具栏 ↗ 在系统外打开。
     </p>`;
 }
 
@@ -104,9 +132,45 @@ const ERRORS = {
 const isTypingTarget = (t) =>
   !t || !t.closest ? false : !!t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
 
+/* ---- 收藏(书签):{ seq, marks:[{ id, url, name, created }] } ----
+ * 按用户存加密库 ~/appdata/browser.awdb;未登录仅会话内存态(同 memo/todo)。
+ * 模块级状态:浏览器为单例应用,所有窗口共享。 */
+let bm = { seq: 1, marks: [] };
+let bmDirty = false;   // 加载完成前用户已改动 → 丢弃盘上旧档,以内存为准
+
+function bmNormalize(raw) {
+  if (!raw || !Array.isArray(raw.marks)) return null;
+  let seq = +raw.seq || 1;
+  const marks = raw.marks
+    .filter(m => m && typeof m.url === 'string' && /^(https?:|about:)/.test(m.url))
+    .map(m => ({ id: m.id || `b${seq++}`, url: m.url, name: String(m.name || m.url), created: m.created || Date.now() }));
+  return { seq, marks };
+}
+
+async function bmLoad() {
+  const user = accounts.current();
+  if (!user) return;
+  try {
+    const s = bmNormalize(await loadState('browser', user));
+    if (s && !bmDirty) bm = s;
+  } catch (e) { console.warn('[browser] 收藏加载失败', e); }
+}
+
+let bmT;
+function bmPersist() {
+  bmDirty = true;
+  clearTimeout(bmT);
+  bmT = setTimeout(async () => {
+    const user = accounts.current();
+    if (!user) return;   // 未登录:不落盘
+    try { await saveState('browser', bm, user); }
+    catch (e) { console.warn('[browser] 收藏保存失败', e); }
+  }, 200);
+}
+
 register({
   ...manifest,
-  mount({ root, close: closeWin, setTitle, bus, params, onContextMenu }) {
+  mount({ root, close: closeWin, setTitle, bus, params, onContextMenu, dialogs }) {
     /** 标签页:{ history, hIdx, title, seq, net('in'|'out'|null), loading, page, frame, root, sl, sr }
      *  net 由当前地址经 routeNet 派生,仅用于着色与状态展示。 */
     const tabs = [];
@@ -131,6 +195,141 @@ register({
       if (routeNet(u) === 'out') window.open(u, '_blank', 'noopener');
     } }, icon('external', 14));
     paintReloadIcon(false);
+
+    /* ---- 收藏(Firefox 式书签):星标 + 收藏夹面板 ---- */
+
+    /** 当前标签的可收藏地址(起始页 / 错误页不算) */
+    const curUrl = (tb) => {
+      const u = tb?.history[tb?.hIdx];
+      return u && u !== 'about:start' && /^https?:/.test(u) ? u : '';
+    };
+    const markOf = (url) => bm.marks.find(m => m.url === url);
+
+    /** 星标随当前页点亮;起始页置灰(Firefox 空白页星标不可用) */
+    function paintStar() {
+      const u = curUrl(tabs[active]);
+      const on = !!u && !!markOf(u);
+      star.classList.toggle('on', on);
+      star.disabled = !u;
+      star.title = on ? '编辑收藏 (Ctrl+D)' : '收藏此页 (Ctrl+D)';
+      bmBtn.title = `收藏夹(${bm.marks.length})`;
+    }
+
+    /** 起始页收藏卡片与收藏夹面板随增删实时刷新 */
+    function refreshStart(tb) {
+      if (!tb || tb.history[tb.hIdx] !== 'about:start' || tb.page.hidden) return;
+      tb.page.innerHTML = startPage(bm.marks);
+      wirePage(tb);
+    }
+
+    function addMark(tb, url) {
+      let fallback = url;
+      try { fallback = new URL(url).hostname.replace(/^www\./, ''); } catch { /* 保持原样 */ }
+      const name = (tb?.title || fallback || url).trim();
+      bm.marks.push({ id: `b${bm.seq++}`, url, name, created: Date.now() });
+      bmPersist();
+      if (tb) setStatus(tb, `已收藏「${name}」`);
+      paintStar();
+      refreshStart(tb);
+      if (bmPop) renderBmPop();
+    }
+
+    function removeMark(url) {
+      bm.marks = bm.marks.filter(m => m.url !== url);
+      bmPersist();
+      const tb = tabs[active];
+      if (tb && curUrl(tb) === url) setStatus(tb, '已移除收藏');
+      paintStar();
+      refreshStart(tb);
+      if (bmPop) renderBmPop();
+    }
+
+    async function renameMark(m) {
+      const name = await dialogs.prompt({ title: '编辑收藏', message: '收藏名称', value: m.name });
+      if (name == null) return;   // 取消 / 关闭
+      m.name = name.trim() || m.name;
+      bmPersist();
+      const tb = tabs[active];
+      if (tb && curUrl(tb) === m.url) refreshStart(tb);
+      if (bmPop) renderBmPop();
+    }
+
+    /** 星标点击:未收藏 → 一键收藏;已收藏 → 编辑菜单(Firefox) */
+    function onStarClick() {
+      const tb = tabs[active];
+      const u = curUrl(tb);
+      if (!u) return;
+      const m = markOf(u);
+      if (!m) return addMark(tb, u);
+      showMenuAnchored(star, [
+        { label: '编辑名称…', icon: 'pencil', fn: () => renameMark(m) },
+        { label: '删除收藏', icon: 'trash', danger: true, fn: () => removeMark(u) },
+      ]);
+    }
+    const star = el('button', { class: 'btn icon vw-star', title: '收藏此页 (Ctrl+D)', onClick: onStarClick }, icon('star', 15));
+
+    /* 收藏夹下拉面板(document.body 挂载,固定定位,点外部 / Esc / 导航关闭) */
+    let bmPop = null;
+    const closeBmPop = () => {
+      if (!bmPop) return;
+      bmPop.remove();
+      bmPop = null;
+      document.removeEventListener('pointerdown', bmPopOutside, true);
+      document.removeEventListener('keydown', bmPopEsc, true);
+    };
+    function bmPopOutside(e) {
+      if (bmPop && !bmPop.contains(e.target) && !bmBtn.contains(e.target)) closeBmPop();
+    }
+    function bmPopEsc(e) { if (e.key === 'Escape') closeBmPop(); }
+
+    function renderBmPop() {
+      if (!bmPop) return;
+      bmPop.innerHTML = '';
+      bmPop.append(el('div', { class: 'vw-bm-head' }, '收藏',
+        el('span', { class: 'dim' }, ` ${bm.marks.length}`)));
+      if (!bm.marks.length) {
+        const u = curUrl(tabs[active]);
+        bmPop.append(el('div', { class: 'vw-bm-empty' }, '暂无收藏:点击地址栏旁的 ★(或 Ctrl+D)收藏当前页'),
+          u && !markOf(u)
+            ? el('button', { class: 'btn vw-bm-add', onClick: () => addMark(tabs[active], u) }, '收藏当前页')
+            : null);
+        return;
+      }
+      const list = el('div', { class: 'vw-bm-list' });
+      bm.marks.forEach(m => {
+        const net = routeNet(m.url) === 'out' ? 'net-out' : 'net-in';
+        list.append(el('div', {
+          class: 'vw-bm-row',
+          title: m.url,
+          onClick: () => { if (tabs[active]) nav(tabs[active], m.url, { push: true }); closeBmPop(); },
+        },
+          el('span', { class: `vw-tab-dot ${net}` }),
+          el('span', { class: 'vw-bm-main' },
+            el('span', { class: 'vw-bm-name' }, m.name),
+            el('span', { class: 'vw-bm-url mono' }, m.url.replace(/^https?:\/\//, ''))),
+          el('button', { class: 'vw-bm-act', title: '编辑名称', onClick: (e) => { e.stopPropagation(); renameMark(m); } }, icon('pencil', 12)),
+          el('button', { class: 'vw-bm-act', title: '移除收藏', onClick: (e) => { e.stopPropagation(); removeMark(m.url); } }, icon('close', 12))));
+      });
+      bmPop.append(list);
+    }
+
+    function toggleBmPop() {
+      if (bmPop) return closeBmPop();
+      bmPop = el('div', { class: 'vw-bm-pop' });
+      renderBmPop();
+      document.body.append(bmPop);
+      // 右缘对齐按钮;下方放不下翻到上方,整体钳入视口
+      const r = bmBtn.getBoundingClientRect();
+      const left = clamp(r.right - bmPop.offsetWidth, 8, innerWidth - bmPop.offsetWidth - 8);
+      let top = r.bottom + 6;
+      if (top + bmPop.offsetHeight > innerHeight - 8) top = Math.max(8, r.top - bmPop.offsetHeight - 6);
+      bmPop.style.left = left + 'px';
+      bmPop.style.top = top + 'px';
+      document.addEventListener('pointerdown', bmPopOutside, true);
+      document.addEventListener('keydown', bmPopEsc, true);
+    }
+    const bmBtn = el('button', { class: 'btn icon vw-bm-btn', title: '收藏夹', onClick: toggleBmPop }, icon('bookmark', 14));
+    paintStar();
 
     /* ---- 标签栏:滚动区(标签)+ 固定的 + 与「列出所有标签页」 ---- */
     const scroller = el('div', { class: 'vw-tabs-scroll' });
@@ -166,10 +365,17 @@ register({
       const tb = tabs[active];
       const outItem = tb && routeNet(tb.history[tb.hIdx] || '') === 'out'
         ? [{ label: '在系统外打开', icon: 'external', fn: () => openExt.click() }] : [];
+      const cur = tb ? curUrl(tb) : '';
+      const bmItem = cur
+        ? [markOf(cur)
+          ? { label: '移除收藏', icon: 'star', fn: () => removeMark(cur) }
+          : { label: '收藏此页', icon: 'star', fn: () => addMark(tb, cur) }]
+        : [];
       return [
         { label: '刷新', icon: 'refresh', fn: () => reload.click() },
         ...(target.closest('.vw-addr') ? [{ label: '复制页面地址', icon: 'copy', fn: () => copyText(addr.value) }] : []),
         ...outItem,
+        ...bmItem,
       ];
     });
 
@@ -227,6 +433,7 @@ register({
       const cur = tb.history[tb.hIdx];
       addr.value = !cur || cur === 'about:start' ? '' : cur.replace(/^https?:\/\//, '');
       openExt.disabled = routeNet(cur || '') !== 'out';
+      paintStar();
     }
 
     /* ---- 标签页生命周期 ---- */
@@ -434,16 +641,23 @@ register({
 
     /**
      * 导航到指定标签页(自动分流)。base 供页面内相对链接使用;
-     * 来自地址栏(无 base)的裸文本按 DNS 判定补协议:内网 http / 外网 https。
+     * 来自地址栏(无 base)的裸文本:搜索词 → 内网搜索引擎;
+     * 其余按 DNS 判定补协议:内网 http / 外网 https。
      */
     function nav(tb, input, { push = true, base } = {}) {
       const seq = ++tb.seq;
+      closeBmPop();   // 导航即关收藏夹面板(面板行点击已在回调关闭,此处兜底)
       let url = String(input).trim();
       if (!/^([a-z][a-z0-9+.-]*:|about:)/i.test(url)) {
         if (base) { try { url = new URL(url, base).href; } catch { /* 保持原样 */ } }
         else {
-          const hostLike = url.split(/[/?#]/)[0].split(':')[0];
-          url = (hostIsIntranet(hostLike) ? 'http://' : 'https://') + url;
+          const sh = getSearchHost();
+          if (sh && looksLikeQuery(url) && dnsResolve(sh)) {
+            url = `http://${sh}/search/?q=${encodeURIComponent(url)}`;
+          } else {
+            const hostLike = url.split(/[/?#]/)[0].split(':')[0];
+            url = (hostIsIntranet(hostLike) ? 'http://' : 'https://') + url;
+          }
         }
       }
       if (push) { tb.history = tb.history.slice(0, tb.hIdx + 1); tb.history.push(url); tb.hIdx = tb.history.length - 1; }
@@ -467,7 +681,7 @@ register({
         if (seq !== tb.seq) return;
         setLoading(tb, false);
         tb.page.hidden = false;
-        tb.page.innerHTML = startPage();
+        tb.page.innerHTML = startPage(bm.marks);
         wirePage(tb);
         applyMute(tb);
         setStatus(tb, '导航页', '');
@@ -475,14 +689,15 @@ register({
       }, 120);
     }
 
-    function navIn(tb, url, seq) {
+    async function navIn(tb, url, seq) {
       tb.frame.hidden = true;
       tb.frame.src = 'about:blank';
 
-      // 模拟加载阶段(DNS → 连接 → 响应)
+      // 模拟加载阶段(DNS → 连接 → 响应);AetherJS 站点经沙盒编译分发,
+      // 首访含挂载编译,响应阶段天然异步
       setStatus(tb, '正在解析 DNS…');
       let r;
-      try { r = httpGet(url); } catch { r = { status: 'badurl' }; }
+      try { r = await httpGetAsync(url); } catch { r = { status: 'badurl' }; }
 
       const step = (ms, fn) => setTimeout(() => { if (seq === tb.seq) fn(); }, ms);
       step(220, () => {
@@ -616,6 +831,7 @@ register({
       if ((ctrl && (k === 'l' || k === 'L')) || k === 'F6' || (e.altKey && (k === 'd' || k === 'D'))) {
         e.preventDefault(); addr.focus(); addr.select(); return;
       }
+      if (ctrl && (k === 'd' || k === 'D')) { e.preventDefault(); return onStarClick(); }
       if (e.altKey && k === 'ArrowLeft') { e.preventDefault(); return go(-1); }
       if (e.altKey && k === 'ArrowRight') { e.preventDefault(); return go(1); }
       if (k === 'Backspace' && !isTypingTarget(e.target)) { e.preventDefault(); return go(-1); }
@@ -628,10 +844,18 @@ register({
       el('div', { class: 'app-toolbar vw-toolbar' },
         back, fwd, reload, home,
         addr,
-        openExt),
+        star, bmBtn, openExt),
       content,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }), statusR)));
+
+    // 收藏水合:完成后再刷一次星标与起始页卡片(此前渲染用空列表)
+    bmLoad().then(() => {
+      const tb = tabs[active];
+      if (!tb) return;
+      paintStar();
+      refreshStart(tb);
+    });
 
     makeTab(params?.url);
 
@@ -644,6 +868,7 @@ register({
     // 窗口关闭时清理 document 级监听
     return {
       onClose() {
+        closeBmPop();
         document.removeEventListener('keydown', onKey);
         window.removeEventListener('pointermove', onTabPointerMove);
         window.removeEventListener('pointerup', endTabDrag);
