@@ -141,13 +141,15 @@ export function uninstallApp(id, opts = {}) {
   return true;
 }
 
-/** store 应用在 user 桌面上的候选快捷方式路径(根目录 + 棋类文件夹) */
+/** store 应用在 user 桌面上的候选快捷方式路径(根目录 + 棋类文件夹)。
+ * 注意 fs.joinPath 是两参函数,嵌套调用拼三段路径 */
 function shortcutCandidates(m, user) {
   const desk = desktopPath(user);
   if (!desk) return [];
+  const chessDir = fs.joinPath(desk, CHESS_FOLDER);
   return [
     fs.joinPath(desk, m.name + '.app'),
-    fs.joinPath(desk, CHESS_FOLDER, m.name + '.app'),
+    fs.joinPath(chessDir, m.name + '.app'),
   ];
 }
 
@@ -171,7 +173,11 @@ export function reconcileLegacyShortcuts() {
         dirty = true;
       }
     }
-    // 清掉指向已下架应用的残留 id
+  }
+  // 清理残留:已下架应用的 id、已删除用户的整份清单
+  const users = new Set(accounts.list().map(u => u.name));
+  for (const [u, set] of Object.entries(byUser)) {
+    if (!users.has(u)) { delete byUser[u]; dirty = true; continue; }
     for (const id of [...set]) {
       if (!valid.has(id)) { set.delete(id); dirty = true; }
     }

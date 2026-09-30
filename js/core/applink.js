@@ -130,10 +130,11 @@ export function removeAppShortcuts(appId, user = accounts.current()) {
   const app = get(appId);
   const desk = desktopPath(user);
   if (!app || !desk) return 0;
+  const chessDir = fs.joinPath(desk, CHESS_FOLDER);   // joinPath 两参:嵌套拼三段
   let n = 0;
   for (const p of [
     fs.joinPath(desk, app.name + APPEXT),
-    fs.joinPath(desk, CHESS_FOLDER, app.name + APPEXT),
+    fs.joinPath(chessDir, app.name + APPEXT),
   ]) {
     if (fs.rm(p, { as: 'root' })) n++;
   }
