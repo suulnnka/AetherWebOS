@@ -3,13 +3,14 @@
  * 引擎体积闸门
  *
  * 约束:各棋类的引擎 worker chunk gzip 后必须 ≤ 预算
- *   预算统一 50 KB(2026-09 定;wasm 通道的引擎为「.wasm + 胶水」求和计费):
- *   国际象棋 / 中国象棋 / 围棋 / 五子棋 / 黑白棋    ≤ 50 KB
+ *   预算基准 50 KB(2026-09 定;wasm 通道的引擎为「.wasm + 胶水」求和计费):
+ *   中国象棋 / 围棋 / 五子棋 / 黑白棋 ≤ 50 KB;
+ *   国际象棋 72 KB(AetherChess3 NNUE 网 ~66KB 高熵权重,见下)
  *
  * 为什么卡 gzip 而不是 raw:线上走的是压缩传输,gzip 体积才等于用户
  * 真正要下载的字节数;raw 体积受标识符长度影响,压缩后会大幅缩水,看它没意义。
  *
- * 定位方式:每个 worker 里各有一个 ENGINE_TAG 字符串('chess-engine-v2' /
+ * 定位方式:每个 worker 里各有一个 ENGINE_TAG 字符串('aether3-engine-v1' /
  * 'xiangqi-engine-v1' / 'go-engine-v1' / 'othello-engine-v1')。字符串字面量不会被压缩器改名,所以哪怕 chunk 文件名带
  * hash 也能认出来;顺带能查出「引擎被误打进主包」这种回归 —— 那时同一个标记
  * 会出现在多个 chunk 里。
@@ -40,11 +41,11 @@ const overrideKB = argOf('--budget', null);
 
 /** 各引擎 chunk 的指纹(worker 里的 ENGINE_TAG)与预算 */
 const ENGINES = [
-  /* wasm 通道(2026-09 zig 移植):规则/评估/搜索/开局谱库二进制全在 chess.wasm
-   * (~41KB gzip,谱库剪枝 + 英中双语族名 ~15KB),worker 胶水 ~1KB,合计 ~42.5KB。
-   * 旧 JS 引擎时代是 35KB(纯 JS chunk);谱库从 JS 文本搬进 wasm 后总量略增,
-   * 换来同节点预算下约 2.4× 的搜索速度。 */
-  { name: '国际象棋', tag: 'chess-engine-v2', kb: 50, wasm: 'chess' },
+  /* wasm 通道(AetherChess3,NNUE):规则/搜索/NNUE 网/开局谱库二进制全在
+   * chess.wasm(~66.4KB gzip,其中 NNUE 权重 aether.nnue 高熵 gzip 压不动),
+   * worker 胶水 ~1KB,合计 ~67.5KB。前代 AetherChess(HCE)时代是 ~42.5KB;
+   * NNUE 升级多花 ~25KB 下载量,棋力显著增强,预算相应从 50KB 提到 72KB。 */
+  { name: '国际象棋', tag: 'aether3-engine-v1', kb: 72, wasm: 'chess' },
   { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 50 },
   { name: '围棋', tag: 'go-engine-v1', kb: 50 },
   { name: '五子棋', tag: 'renju-engine-v1', kb: 50 },

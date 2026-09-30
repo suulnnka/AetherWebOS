@@ -32,7 +32,7 @@ export default defineConfig({
          *    才能避免应用 chunk 反向引用主包)
          * 4. system/session.js(被设置应用引用,同理归入稳定区)
          * 注意:应用只能 import js/core、js/lib、自身目录与 vendor 下各第一方
-         * 子模块的 src(AetherChess/Aether3DLib 等都跟随引用方 chunk,
+         * 子模块的 src(AetherChess3/Aether3DLib 等都跟随引用方 chunk,
          * 不进 core——否则开机就要下载所有应用的引擎与渲染库),
          * 否则会重新引入级联 */
         manualChunks(id) {

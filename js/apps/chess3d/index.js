@@ -2,18 +2,19 @@
  * 应用:国际象棋(2D/3D 双视图,默认 ogl 渲染 3D,工具栏可切 2D 平面视图)
  * - 3D:拖拽旋转视角 / 滚轮缩放;2D:平面棋盘;两视图共用同一局面与点击走子
  * - 棋规、难度表、终局判定全部经 Worker 消息问引擎(levels / state / think 契约,
- *   见 vendor/AetherChess/src/worker.js)—— 本文件**不 import 引擎源码**,
+ *   见 vendor/AetherChess3/src/worker.js)—— 本文件**不 import 引擎源码**,
  *   规则只有引擎一份,UI 持有走法序列(state 回包驱动棋盘重画)
  * - 多档难度:初级 / 中级 / 高级 / 大师;支持换边(与 AI 互换执子方)与悔棋
  * - AI 应手垫到最少 260ms(秒回的开局书/浅搜也不瞬移);棋子入场淡入(落子 / 新对局全体,2D/3D 两视图)
- * - 开局库在引擎内(vendor/AetherChess src/book.js):Worker 查谱命中直接回着,谱外才进搜索
+ * - 开局库在引擎内(编译期嵌进 wasm 的 book.bin):Worker 查谱命中直接回着,谱外才进搜索
  *
  * 渲染用第一方子模块 vendor/Aether3DLib(WebGL2 + GLSL 300 es,minified ~10 KB;ogl 同场景
  * 要 51 KB)。软阴影回来了:深度纹理 + 硬件比较 + 3x3 PCF,边比旧的单点采样更柔。
  *
  * 本文件只负责「渲染 + 交互 + 难度档 UI」;棋规、搜索、评估一律走引擎模块 ——
- * 引擎在独立子项目 vendor/AetherChess(github.com/suulnnka/AetherChess),
- * 不 import ogl 也不碰 DOM,Node 里能直接跑 perft 与战术测试(见该仓库 test/)。
+ * 引擎在独立子项目 vendor/AetherChess3(github.com/suulnnka/AetherChess3,
+ * NNUE 评估,zig/wasm 单实现),不 import ogl 也不碰 DOM,
+ * 逻辑自测在引擎仓库侧由 zig 原生测试承担(zig build test)。
  * 将来要换 WASM 实现,只需替换这一段调用。
  * ============================================================ */
 import {
@@ -1011,7 +1012,7 @@ register({
     function ensureWorker() {
       if (worker) return worker;
       try {
-        worker = new Worker(new URL('../../../vendor/AetherChess/src/worker.js', import.meta.url), { type: 'module' });
+        worker = new Worker(new URL('../../../vendor/AetherChess3/src/worker.js', import.meta.url), { type: 'module' });
         worker.onmessage = onEngineMsg;
         worker.onerror = (ev) => {
           console.warn('[chess3d] AI Worker 异常:', ev.message || ev);
