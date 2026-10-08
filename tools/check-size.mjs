@@ -52,13 +52,19 @@ const ENGINES = [
    * worker 胶水 ~1KB,合计 ~67.5KB。前代 AetherChess(HCE)时代是 ~42.5KB;
    * NNUE 升级多花 ~25KB 下载量,棋力显著增强,预算相应从 50KB 提到 72KB。 */
   { name: '国际象棋', tag: 'aether3-engine-v1', kb: 72, bin: { ext: '.wasm', frag: 'chess' } },
-  { name: '中国象棋', tag: 'xiangqi-engine-v1', kb: 50 },
+  /* 中国象棋 2026-10 切 Zig/wasm 通道(v2-wasm):规则/搜索/蒸馏 NNUE 网
+   * (Rice 压缩嵌入)全在 aetherx.wasm,worker 只剩门面胶水。预算从纯 JS
+   * 时代的 50KB 提到 88KB(wasm gzip ~71KB + 胶水,NNUE 升级换棋力) */
+  { name: '中国象棋', tag: 'xiangqi-engine-v2-wasm', kb: 88, bin: { ext: '.wasm', frag: 'aetherx' } },
   /* aethernn(JS + WebGPU,2026-10 大改版):引擎 JS ~26KB gzip(门面+搜索与
    * WebGPU 内核两个 worker chunk,动态 import 拆分,followChunks 扒齐计费);
    * 模型 b8c96h3tfrs_19.i8.aewn 1.09MB,zstd 权重高熵 gzip 后 ~961KB。
    * 合计 ~987KB,预算取整 1MB(旧 UCT 引擎时代的 50KB 预算随大改版作废)。 */
   { name: '围棋', tag: 'go-engine-nn-v0', kb: 1024, followChunks: true, bin: { ext: '.aewn', frag: 'aewn' } },
-  { name: '五子棋', tag: 'renju-engine-v1', kb: 50 },
+  /* 五子棋 2026-10 切 Rust/wasm 通道(v2,双规则 + RIF 递归禁手 + PVS/VCT):
+   * 规则/评估(权重表嵌入)/搜索全在 aether_renju.wasm。预算从纯 JS 的
+   * 50KB 提到 64KB(wasm gzip ~45KB + 胶水) */
+  { name: '五子棋', tag: 'renju-engine-v2', kb: 64, bin: { ext: '.wasm', frag: 'renju' } },
   /* wasm 通道:wasm 字段是资源名里的可辨识片段(dist 里叫 othello-<hash>.wasm)。
    * 权重书 2026-09 定格 3 相位(监督拟合 Egaroucid lv.17 数据;3×9475B int8,
    * gzip 后 wasm 约 27.8 KB),加胶水合计 ~29.3KB。P3 与 P4 实测等强(200 盘

@@ -3,7 +3,7 @@
  *   2. 顶栏按钮组 + 底栏只有一条(状态 + 等宽搜索信息,没有第二条)
  *   3. 选中红兵 → 出现合法落点提示 → 点击落点真的走子
  *   4. AI(黑方)应答:plies 变 2,底栏右侧有引擎信息
- *   5. 难度下拉 4 档 + 初值同步
+ *   5. 难度下拉 5 档(wasm v2 引擎)+ 初值同步
  *   6. 悔棋把人机对战撤 2 步
  *   7. 换边:玩家执黑、棋盘翻过来、AI 执红先行
  *   8. 无控制台报错
@@ -15,7 +15,9 @@ import { launch } from './cdp.mjs';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const URL = 'http://localhost:4173/?e2e=1';
 
-const c = await launch(URL);
+/* 独立干净 profile:共享 profile 里残留的历史用户数据库会让 sms/mail
+ * 引导期报水合失败,污染控制台检查(与应用本身无关) */
+const c = await launch(URL, { profile: 'probe-xiangqi' });
 const errors = [];
 c.ws.addEventListener('message', (ev) => {
   const m = JSON.parse(ev.data);
@@ -39,6 +41,7 @@ const check = (name, ok, extra) => {
 };
 
 const W = '.win[data-app=xiangqi]';
+await c.evaluate(`WebOS.apps.install('xiangqi', { silent: true })`);   // 商店应用:先装再开(异步下载,await 落地)
 await c.evaluate(`WebOS.wm.open('xiangqi')`);
 await sleep(1500);
 
@@ -128,11 +131,12 @@ const lv = await c.evaluate(`(() => {
   const s = w.querySelector('select.xq-level');
   const opts = [...s.options].map(o => o.value + ':' + o.textContent);
   const initial = s.value + ':' + s.selectedOptions[0].textContent + '|' + window.__xiangqi.level();
-  window.__xiangqi.setLevel(3);
+  window.__xiangqi.setLevel(4);
   return { opts, initial, level: window.__xiangqi.level() };
 })()`);
-check('难度下拉 4 档,setLevel 同步', lv.opts.length === 4 && lv.level === 'master', lv.opts.join(' / ') + ' → ' + lv.level);
-check('下拉初值与引擎档位一致(默认高级)', lv.initial === '2:高级|hard', lv.initial);
+check('难度下拉 5 档,setLevel 同步(wasm v2 引擎五档,档位表无 id 回退下标)',
+  lv.opts.length === 5 && lv.level === 4, lv.opts.join(' / ') + ' → ' + lv.level);
+check('下拉初值与引擎档位一致(默认高级)', lv.initial === '2:高级|2', lv.initial);
 
 /* ---------- 6. 悔棋(撤 2 步经 state 往回,轮询等棋盘还原) ---------- */
 await c.evaluate(`[...document.querySelector('${W}').querySelectorAll('.app-toolbar .btn')]

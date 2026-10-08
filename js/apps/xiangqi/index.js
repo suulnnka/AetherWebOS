@@ -412,16 +412,17 @@ register({
      * 报最小窗口尺寸给 WM,改 CS 不用回头改清单;520 是工具栏挤不下时的兜底宽。 */
     reportBoardMin(ctx, appEl, boardEl, 520);
 
-    /* 供探针/排障:确认窗口活着、引擎档位与对局进度 */
+    /* 供探针/排障:确认窗口活着、引擎档位与对局进度。
+     * level 回退下标:wasm v2 引擎的档位表没有 id 字段,只有名字 */
     window.__xiangqi = {
-      level: () => levels[levelIdx]?.id,
+      level: () => levels[levelIdx]?.id ?? levelIdx,
       setLevel: (i) => {
         if (i < 0 || i >= levels.length) return;
         levelSel.value = String(i);
         levelSel.dispatchEvent(new Event('change', { bubbles: true }));
       },
       stats: () => ({
-        level: levels[levelIdx]?.id, vsAI, searching, plies: hist.length,
+        level: levels[levelIdx]?.id ?? levelIdx, vsAI, searching, plies: hist.length,
         turn, human: humanSide, gameOver,
       }),
       lastText: () => (hist.length ? hist[hist.length - 1].text : ''),

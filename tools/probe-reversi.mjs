@@ -22,7 +22,9 @@ import { launch } from './cdp.mjs';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const URL = 'http://localhost:4173/?e2e=1';
 
-const c = await launch(URL);
+/* 独立干净 profile:共享 profile 里残留的历史用户数据库会让 sms/mail
+ * 引导期报水合失败,污染控制台检查(与应用本身无关) */
+const c = await launch(URL, { profile: 'probe-reversi' });
 const errors = [];
 c.ws.addEventListener('message', (ev) => {
   const m = JSON.parse(ev.data);
@@ -46,6 +48,7 @@ const check = (name, ok, extra) => {
 };
 
 const W = '.win[data-app=reversi]';
+await c.evaluate(`WebOS.apps.install('reversi', { silent: true })`);   // 商店应用:先装再开(异步下载,await 落地)
 await c.evaluate(`WebOS.wm.open('reversi')`);
 await sleep(1200);
 

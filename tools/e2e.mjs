@@ -3385,7 +3385,8 @@ group('T44', '五子棋(双规则 / 禁手标记 / AI 应答)', async () => {
     };
   })()`);
   t('T44.3 点天元真的落子(黑子 1 颗,带上一手标记)',
-    g1.black === 1 && g1.last && g1.stats.plies === 1, JSON.stringify(g1));
+    g1.black === 1 && g1.last && g1.stats.plies >= 1, JSON.stringify(g1));
+  /* plies 用 >=:wasm v2 引擎 ~1ms 就应完,读到时 AI 那手多半已落地 */
 
   let g2 = null;
   for (let i = 0; i < 60; i++) {
