@@ -123,25 +123,33 @@ export async function openAppData(app, user = accounts.current()) {
   if (!ensureAppDataDir(user)) throw new Error('无法创建 appdata 目录');
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(appDataPath(app, user), user);
-  normalizeModes(user, appDataPath(app, user));
-  return openDerived(base, backend, dbPassword(user));
+  const db = await openDerived(base, backend, dbPassword(user));
+  normalizeModes(user, appDataPath(app, user));   // 建库/开库后归一:新建库第一次就被冻结
+  return db;
 }
 
 /**
- * 遗留模式归一:老版本写的 appdata 目录(默认 rwxr-x / rw-r--)与库文件
- * (默认 rw-r--)对其他用户可读 —— 穿越免费的新语义下「知道路径即可达」,
- * 残留 r 就是真泄露。开库时顺手收归私有(目录/文件都 rw----);
- * 幂等,模式已对就零写入。属主自己 chmod,无锁位参与。
- * 注意 chmod 只收 6 位模式串(9 位的会被静默拒绝),比较也对 mode6。
+ * 遗留模式归一:
+ *  · 库文件 —— 收归 **rwx--x**:属主 rw(应用以用户身份读写照常)+
+ *    x 锁定位对属主和其他用户都置位 —— 库文件一旦落盘即冻结:
+ *    rm/rename/chmod 全拒(不然属主一放宽 rw 位,穿越免费的新语义下
+ *    其他用户就能读到密文,而设备密钥就在本机,等于隐私开门),
+ *    解铃须 root。删用户/恢复出厂走 root 不受影响;应用级读写不经
+ *    锁位,照常。
+ *  · 目录 —— 收归 **rwx---**(属主 rw 可建新库 + x 冻结自身):rm 的
+ *    锁检查只看顶层节点,目录不上锁的话 `rm -r ~/appdata` 会把所有
+ *    冻结的库文件整棵带走;others 三位全空本就不可达,无需占 x。
+ *  · 幂等:模式已对就零写入(置锁后属主改不动,靠 stat 比较防抖,
+ *    不会反复撞 chmod 的拒绝)。桌面/文档等用户自管理目录不冻。
  */
 function normalizeModes(user, path) {
-  const want = 'rw----';
+  const want = 'rwx--x';
   if (fs.stat(path, { as: user })?.mode6 !== want) {
     fs.chmod(path, want, { as: user });
   }
   const dir = `/home/${user}/appdata`;
-  if (fs.stat(dir, { as: user })?.mode6 !== want) {
-    fs.chmod(dir, want, { as: user });
+  if (fs.stat(dir, { as: user })?.mode6 !== 'rwx---') {
+    fs.chmod(dir, 'rwx---', { as: user });
   }
 }
 
@@ -174,13 +182,15 @@ export async function openSharedAppData(app) {
   if (!ensureSharedDir()) throw new Error('无法创建共享 appdata 目录');
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(sharedAppDataPath(app), 'root');
-  /* 遗留归一:早期共享库文件是 rw-r--(others 可读),收紧到 root 私有;
-   * 读写都经 root 后端,收紧不影响共享语义 */
-  if (fs.stat(sharedAppDataPath(app), { as: 'root' })?.mode6 !== 'rw----') {
-    fs.chmod(sharedAppDataPath(app), 'rw----', { as: 'root' });
-  }
   /* 无账号应用:以设备身份(SHARED_USER 的密钥材料)按同一规则派生 */
-  return openDerived(base, backend, dbPassword(SHARED_USER));
+  const db = await openDerived(base, backend, dbPassword(SHARED_USER));
+  /* 遗留归一:早期共享库文件是 rw-r--(others 可读),收紧并冻结为
+   * rwx--x(root 私有 + 锁定位);读写都经 root 后端,不受锁影响。
+   * 放在 open 后:首次建库时文件才落盘,先建后冻一次到位 */
+  if (fs.stat(sharedAppDataPath(app), { as: 'root' })?.mode6 !== 'rwx--x') {
+    fs.chmod(sharedAppDataPath(app), 'rwx--x', { as: 'root' });
+  }
+  return db;
 }
 
 export async function loadSharedState(app) {

@@ -2667,6 +2667,34 @@ group('T38', '账号系统', async () => {
   })()`);
   t('T38.1 每用户数据隔离(alice 命名空间)', iso.inStore === true && iso.bobTask === false, JSON.stringify(iso));
 
+  // 库文件冻结:开库归一后 todo.awdb 是 rwx--x —— 属主 rm/rename/chmod 全拒
+  // (锁定位防「放宽 rw 把密文泄露给其他用户」),应用级读写不受影响(38.1 已证);
+  // appdata 目录本身也冻结(rmx--- 口径的 rwx---):rm -r 只查顶层锁,目录不上锁
+  // 会把冻结的库文件整棵带走
+  const frozen = await ev(`(async () => {
+    const p = '/home/alice/appdata/todo.awdb';
+    const dir = '/home/alice/appdata';
+    const mode6 = WebOS.fs.stat(p, { as: 'root' })?.mode6;
+    const dirMode = WebOS.fs.stat(dir, { as: 'root' })?.mode6;
+    return {
+      mode6, dirMode,
+      rm: WebOS.fs.rm(p, { as: 'alice' }) === false,
+      rename: WebOS.fs.rename(p, p + '.bak', { as: 'alice' }) === false,
+      chmod: WebOS.fs.chmod(p, 'rw-r--', { as: 'alice' }) === false,
+      dirRm: WebOS.fs.rm(dir, { as: 'alice' }) === false,
+      dirRename: WebOS.fs.rename(dir, dir + '.bak', { as: 'alice' }) === false,
+      dirChmod: WebOS.fs.chmod(dir, 'rw-r--', { as: 'alice' }) === false,
+      still: WebOS.fs.stat(p, { as: 'root' })?.mode6,
+      dirStill: WebOS.fs.stat(dir, { as: 'root' })?.mode6,
+    };
+  })()`);
+  t('T38.1b 库文件与 appdata 目录冻结(rwx--x / rwx---:属主 rm/rename/chmod 全拒,仅 root 可解)',
+    frozen.mode6 === 'rwx--x' && frozen.dirMode === 'rwx---'
+      && frozen.rm && frozen.rename && frozen.chmod
+      && frozen.dirRm && frozen.dirRename && frozen.dirChmod
+      && frozen.still === 'rwx--x' && frozen.dirStill === 'rwx---',
+    JSON.stringify(frozen));
+
   // 登出 → 未登录时打开 todo 显示登录面板
   await ev(`(async () => {
     const acc = (await import('./js/core/accounts.js')).accounts;
