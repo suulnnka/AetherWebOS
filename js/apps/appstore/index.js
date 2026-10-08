@@ -51,11 +51,19 @@ register({
     const storeCount = () => listApps().filter(a => a.store === true).length;
     const mineCount = () => listApps().filter(a => a.desktop !== false && isInstalled(a.id)).length;
 
-    /* 应用包真实大小(apps.json 到手后填充;未到手显示占位符) */
+    /* 应用包真实大小(apps.json 到手后原位补上体积文本,不整卡重绘 ——
+     * 整卡重绘会打断门禁直达的高亮闪烁这类一次性视图状态) */
     const pkgSizes = {};
     loadCatalog().then((catalog) => {
       for (const [id, p] of Object.entries(catalog.apps || {})) pkgSizes[id] = p.bytes;
-      renderAll();
+      for (const node of content.querySelectorAll('.st-card')) {
+        const bytes = pkgSizes[node.dataset.app];
+        const line = node.querySelector('.st-line');
+        const app = listApps().find(a => a.id === node.dataset.app);
+        if (bytes != null && line && app) {
+          line.textContent = `${app.category || '系统'} · ${fmtBytes(bytes)}`;
+        }
+      }
     }).catch((err) => console.warn('[appstore] 包清单不可用:', err));
 
     /** 当前视图的应用池:发现 = 在售(未安装排前);我的 = 已安装 */
