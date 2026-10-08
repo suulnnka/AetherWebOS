@@ -35,8 +35,8 @@ js/apps/<id>/
 > 软件商店;`WebOS.apps.install(id)` 安装后入口实时出现,卸载则一并移除
 > (应用数据保留)。安装是**真实资源下载**:构建产物由
 > `tools/apps-manifest.mjs` 扫描出应用包(dist/apps.json;dev 由 vite
-> 中间件现场扫描源码树),装时逐文件下载到 `/app/<id>/`(root 所有的
-> 系统包目录,core/pkg.js),成功才记安装标志,失败可重试;包资源是
+> 中间件现场扫描源码树),装时逐文件下载到 `/app/<id>/`(root 私有的
+> 系统包目录,目录/文件均 `rw----`,普通用户不可列/读/写;core/pkg.js),成功才记安装标志,失败可重试;包资源是
 > 设备级缓存,最后一个用户卸载时回收。**安装按用户**(`webos.installed.v2`
 > 每用户一份清单),甲装的应用乙看不到,新用户从系统预装起步。状态与
 > 副作用都在 `js/core/install.js`(叶子模块,通过 `sys:apps-changed`

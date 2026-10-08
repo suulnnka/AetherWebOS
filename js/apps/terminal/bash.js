@@ -139,7 +139,7 @@ CMDS.mkdir = {
   },
 };
 CMDS.chmod = {
-  desc: '修改权限(chmod <八进制如 755> <文件>)',
+  desc: '修改权限(chmod <八进制如 644> <文件>;x=锁定位:禁移动/删除/重命名)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt');
     const mode = args[0];
@@ -150,14 +150,14 @@ CMDS.chmod = {
   },
 };
 CMDS.rm = {
-  desc: '删除(rm [-r] <路径>)',
+  desc: '删除(rm [-r] <路径>;带 x 锁定位的不可删,先 chmod 去 x)',
   run(args, { resolve }) {
     const rec = args.filter(a => a.startsWith('-')).some(a => a.includes('r'));
     const p = args.filter(a => !a.startsWith('-'))[0];
     if (!p) throw new Error('rm: 缺少操作数');
     const target = resolve(p);
     if (FS.isDir(target) && !rec) throw new Error(`rm: 无法删除 ${p}: 是一个目录(使用 -r)`);
-    if (!FS.rm(target)) throw new Error(`rm: 无法删除 ${p}: 没有那个文件或目录`);
+    if (!FS.rm(target)) throw new Error(`rm: 无法删除 ${p}: 不存在、无权限或带 x 锁定位`);
     return '';
   },
 };
@@ -171,21 +171,22 @@ CMDS.touch = {
   },
 };
 CMDS.mv = {
-  desc: '移动/重命名(mv <源> <目标>)',
+  desc: '移动/重命名(mv <源> <目标>;带 x 锁定位的不可移动,先 chmod 去 x)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('mv: 缺少目标文件操作数');
-    if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}`);
+    if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}: 不存在、无权限或带 x 锁定位`);
     return '';
   },
 };
 CMDS.cp = {
-  desc: '复制文件(cp <源> <目标>)',
+  desc: '复制文件(cp <源> <目标>;副本不继承 x 锁定位)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('cp: 缺少目标文件操作数');
     const src = resolve(args[0]);
     if (FS.isDir(src)) throw new Error(`cp: 略过目录 ${args[0]}`);
     const c = FS.read(src);
     if (c == null) throw new Error(`cp: 无法统计 ${args[0]}: 没有那个文件`);
+    // 新文件走默认 FILE_MODE(makeNode 剥 x):副本永不带锁
     FS.write(resolve(args[1]), c);
     return '';
   },

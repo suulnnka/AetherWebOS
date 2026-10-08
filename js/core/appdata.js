@@ -46,7 +46,7 @@ function ensureAppDataDir(user) {
   fs.ensureUserHome(user);
   const dir = `/home/${user}/appdata`;
   if (!fs.isDir(dir)) {
-    fs.mkdir(dir, { as: user, owner: user, mode: 'rwx------' });
+    fs.mkdir(dir, { as: user, owner: user, mode: 'rw------' });
   }
   return fs.isDir(dir);
 }
@@ -146,7 +146,7 @@ export function sharedAppDataPath(app) {
 
 function ensureSharedDir() {
   const dir = `/home/${SHARED_USER}/appdata`;
-  if (!fs.isDir(dir)) fs.mkdir(dir, { as: 'root', owner: 'root', mode: 'rwxr-xr-x' });
+  if (!fs.isDir(dir)) fs.mkdir(dir, { as: 'root', owner: 'root', mode: 'rw-r--r--' });
   return fs.isDir(dir);
 }
 

@@ -2,7 +2,7 @@
  * FS —— 虚拟文件系统 v2(元数据在 OPFS JSON,内容在 OPFS 文件)
  *
  * 存储结构(根节点带版本号 v:2;版本不符 → 清空全部本地数据):
- *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:<ownerUid>, p:'rwxr-x' }
+ *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:<ownerUid>, p:'rw-r--' }
  *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<ownerUid>, p:<mode> }
  *   文件: { t:'f', d:'<内容>', m, o:<ownerUid>, p:<mode> }  ← d 仅在内存
  *
@@ -24,6 +24,10 @@
  * 权限(类 Linux,但无用户组):
  *   p 为 6 位 "rwxrwx":前 3 位属主,后 3 位其他用户;
  *   root 超级用户绕过全部检查。ls 显示时补成 9 位(组位=其他位)。
+ *   r = 读文件 / 列目录并穿越(目录穿越并入 r,无独立运行权限);
+ *   w = 写文件 / 改目录;
+ *   x = **锁定位**:置位后该用户不可移动/删除/重命名此节点
+ *       (chmod 可解除;root 不受限)。复制产生的副本不继承 x。
  *
  * 当前会话用户来自 accounts.current();未登录时仅允许 root 内部操作
  * (as:'root')。所有写操作自动持久化并广播 sys:fs-changed。
@@ -129,10 +133,11 @@ ctx.bus.notify('标题', '内容')
 ctx.bus.onSys('fs-changed', payload => ...)
 `;
 
-/* 默认权限:目录 rwxr-x / 文件 rw-r--(6 位:属主 + 其他) */
-const DIR_MODE = 'rwxr-x';
+/* 默认权限:目录 rw-r-- / 文件 rw-r--(6 位:属主 + 其他)。
+ * 无 x:目录穿越看 r;x 仅作锁定位,默认不锁。 */
+const DIR_MODE = 'rw-r--';
 const FILE_MODE = 'rw-r--';
-const HOME_MODE = 'rwx------';
+const HOME_MODE = 'rw------';
 
 /** 解析整棵树 JSON;结构/版本不符返回 null */
 function parseTree(raw) {
@@ -159,8 +164,10 @@ function freshRoot() {
   return {
     v: FS_VERSION, t: 'd', m: now, o: 0, p: DIR_MODE,
     c: {
-      bin: { t: 'd', m: now, o: 0, p: 'r-xr-x', c: {} },
-      app: { t: 'd', m: now, o: 0, p: 'r-xr-x', c: {} },
+      // 系统目录:可列可穿越(r),无 x(锁定位默认不锁;root 本就绕过)
+      bin: { t: 'd', m: now, o: 0, p: 'r--r--', c: {} },
+      // 商店应用包目录:root 私有(others 三位全空),用户不可列/不可读/不可写
+      app: { t: 'd', m: now, o: 0, p: 'rw----', c: {} },
       home: { t: 'd', m: now, o: 0, p: DIR_MODE, c: {} },
     },
   };
@@ -383,6 +390,7 @@ async function adoptTree(tree) {
     await hydrateContents(tree, '/');
   }
   migrateOwnerUids(tree);
+  migrateDirTraverseX(tree);
   root = tree;
 }
 
@@ -397,6 +405,28 @@ function migrateOwnerUids(n) {
     }
   }
   if (n.c) for (const ch of Object.values(n.c)) migrateOwnerUids(ch);
+}
+
+/**
+ * 老树迁移:目录的穿越位 x 并入 r 后清除。
+ * 旧 x = 进入目录;新 x = 禁移/删/改名的锁定位 —— 不清的话
+ * 全部老目录(rwxr-x 等)一装载就全被锁死。
+ * 文件的 x 不动:旧「可执行」本系统从未使用,按新语义直接视为锁。
+ */
+function migrateDirTraverseX(n) {
+  if (n.t === 'd' && typeof n.p === 'string') {
+    let p = n.p.padEnd(6, '-').slice(0, 6);
+    let changed = false;
+    for (const base of [0, 3]) {
+      if (p[base + 2] === 'x') {
+        if (p[base] !== 'r') p = p.slice(0, base) + 'r' + p.slice(base + 1);
+        p = p.slice(0, base + 2) + '-' + p.slice(base + 3);
+        changed = true;
+      }
+    }
+    if (changed) n.p = p;
+  }
+  if (n.c) for (const ch of Object.values(n.c)) migrateDirTraverseX(ch);
 }
 
 /** 首次启动:OPFS 元数据 → 旧 localStorage 迁移 → 空则默认树 */
@@ -423,6 +453,7 @@ async function bootLoad() {
   if (fromLs) {
     // 旧整树:保留内存中的 d,立刻拆到 OPFS(persistMark=0 → 首写全量)
     migrateOwnerUids(fromLs);
+    migrateDirTraverseX(fromLs);
     root = fromLs;
     persistMark = 0;
     markBooted();
@@ -537,7 +568,7 @@ function uidOfActor(user) {
   return u == null ? -1 : u;
 }
 
-/** 解析 6 位模式 → 属主/其他 的 {r,w,x}(user 为登录名) */
+/** 解析 6 位模式 → 属主/其他 的 {r,w,x}(user 为登录名;x=锁定位) */
 function modeFor(n, user) {
   const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
   if (user === 'root') return { r: true, w: true, x: true };
@@ -547,9 +578,9 @@ function modeFor(n, user) {
 }
 
 /**
- * 是否允许对 path 做 r/w/x。
- * 规则(无用户组):祖先目录逐级需 x;目标节点查属主位或"其他"位。
- * bit 为 'r'|'w'|'x';祖先穿越不额外要求 r。
+ * 是否允许对 path 做 r/w。
+ * 规则(无用户组):祖先目录逐级需 r(穿越已并入 r);目标节点查属主位或"其他"位。
+ * bit 为 'r'|'w'('x' 查锁定位,不用于穿越)。
  */
 function allow(p, bit, user) {
   if (!user) return false;
@@ -558,11 +589,11 @@ function allow(p, bit, user) {
   if (!segs.length) return modeFor(root, user)[bit] === true;
   let cur = root;
   for (let i = 0; i < segs.length - 1; i++) {
-    if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+    if (cur.t !== 'd' || !modeFor(cur, user).r) return false;
     cur = cur.c[segs[i]];
     if (!cur) return false;
   }
-  if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+  if (cur.t !== 'd' || !modeFor(cur, user).r) return false;
   const target = cur.c[segs[segs.length - 1]];
   if (!target) return false;
   return modeFor(target, user)[bit] === true;
@@ -577,26 +608,36 @@ function actor(opts) {
 }
 
 /**
- * 穿越检查:path 上每一级目录(不含终点自身)对 user 是否可进入(x)。
- * 用于 exists/stat 前提;终点本身的 r/w/x 由 allow() 判定。
+ * 穿越检查:path 上每一级目录(不含终点自身)对 user 是否可进入(r)。
+ * 用于 exists/stat 前提;终点本身的 r/w 由 allow() 判定。
  */
 function canTraverse(p, user) {
   if (!user) return false;
   if (user === 'root') return true;
   const segs = normPath(p).split('/').filter(Boolean);
-  if (!segs.length) return modeFor(root, user).x === true;
+  if (!segs.length) return modeFor(root, user).r === true;
   let cur = root;
-  if (!modeFor(root, user).x) return false;
+  if (!modeFor(root, user).r) return false;
   for (let i = 0; i < segs.length - 1; i++) {
-    if (cur.t !== 'd' || !modeFor(cur, user).x) return false;
+    if (cur.t !== 'd' || !modeFor(cur, user).r) return false;
     cur = cur.c[segs[i]];
     if (!cur) return false;
   }
-  // 终点的父目录必须可进入;若终点是目录,进入它也要 x(由调用方按需再查 allow)
-  return cur.t === 'd' && modeFor(cur, user).x === true;
+  // 终点的父目录必须可进入;若终点是目录,进入它也要 r(由调用方按需再查 allow)
+  return cur.t === 'd' && modeFor(cur, user).r === true;
 }
 
-/** 内部建节点(owner 接受登录名或 uid number;落盘一律 uid) */
+/**
+ * x = 锁定位:该用户不可移动/删除/重命名此节点。
+ * root 不受限;位在该用户的权限段(属主看前 3 位,其他看后 3 位)。
+ */
+function moveLocked(n, user) {
+  if (!user || user === 'root') return false;
+  return modeFor(n, user).x === true;
+}
+
+/** 内部建节点(owner 接受登录名或 uid number;落盘一律 uid)。
+ *  mode 里的 x 一律剥掉:锁定位不可经创建/复制带上,只能事后 chmod。 */
 function makeNode(kind, owner, mode) {
   const m = Date.now();
   let uid;
@@ -604,9 +645,11 @@ function makeNode(kind, owner, mode) {
   else if (owner == null || owner === '') uid = uidOfActor(actor());
   else uid = uidOfActor(owner);
   if (uid < 0) uid = 0;              // 未识别身份:归 root(仅系统路径会出现)
+  const def = kind === 'd' ? DIR_MODE : FILE_MODE;
+  const m6 = String(mode || def).padEnd(6, '-').slice(0, 6).replace(/x/g, '-');
   return kind === 'd'
-    ? { t: 'd', c: {}, m, o: uid, p: mode || DIR_MODE }
-    : { t: 'f', d: '', m, o: uid, p: mode || FILE_MODE };
+    ? { t: 'd', c: {}, m, o: uid, p: m6 }
+    : { t: 'f', d: '', m, o: uid, p: m6 };
 }
 
 /* ---------- 用户家目录 ---------- */
@@ -638,7 +681,7 @@ export function ensureUserHome(user) {
     if (!node(p)) {
       const par = node(home);
       if (name === 'desktop' || name === 'documents' || name === 'pictures' || name === 'music' || name === 'downloads' || name === 'appdata') {
-        par.c[name] = makeNode('d', user, name === 'appdata' ? 'rwx------' : DIR_MODE);
+        par.c[name] = makeNode('d', user, name === 'appdata' ? 'rw------' : DIR_MODE);
       } else {
         const f = makeNode('f', user, FILE_MODE);
         f.d = content ?? '';
@@ -727,9 +770,10 @@ export const fs = {
     return full.slice(0, 3) + full.slice(3, 6) + full.slice(3, 6);
   },
 
-  stat(p) {
+  stat(p, opts = {}) {
     const n = node(p);
     if (!n) return null;
+    if (!allow(p, 'r', actor(opts))) return null;   // 元数据也算读:无读权限连 stat 都不给
     return {
       name: basename(p), path: normPath(p),
       dir: n.t === 'd',
@@ -832,7 +876,7 @@ export const fs = {
     if (n && n.t === 'd') return false;
     if (!n) {
       const parPath = parentPath(p);
-      if (!allow(parPath, 'w', user) || !allow(parPath, 'x', user)) return false;
+      if (!allow(parPath, 'w', user) || !allow(parPath, 'r', user)) return false;
       const mkdirOpts = { silent: true };
       if (opts && Object.prototype.hasOwnProperty.call(opts, 'as') && opts.as !== undefined) {
         mkdirOpts.as = opts.as;
@@ -899,7 +943,7 @@ export const fs = {
       return true;
     }
     const parPath = parentPath(p);
-    if (!allow(parPath, 'w', user) || !allow(parPath, 'x', user)) return false;
+    if (!allow(parPath, 'w', user) || !allow(parPath, 'r', user)) return false;
     // 父目录补齐:仅在显式指定了 as 时传入,避免 as:undefined 被当成无身份
     const mkdirOpts = { silent: true };
     if (opts && Object.prototype.hasOwnProperty.call(opts, 'as') && opts.as !== undefined) {
@@ -931,8 +975,8 @@ export const fs = {
       const seg = segs[i];
       if (n.t !== 'd') return null;
       if (!n.c[seg]) {
-        // 新建子目录:当前目录需可写可进入(root 免检)
-        if (!modeFor(n, user).w || !modeFor(n, user).x) return null;
+        // 新建子目录:当前目录需可写可进入(r=穿越;root 免检)
+        if (!modeFor(n, user).w || !modeFor(n, user).r) return null;
         const isLast = i === segs.length - 1;
         n.c[seg] = makeNode(
           'd',
@@ -948,7 +992,7 @@ export const fs = {
     return n;
   },
 
-  /** 删除文件或目录(含子内容) */
+  /** 删除文件或目录(含子内容);x 锁定位置位时拒绝(root 除外) */
   rm(p, opts = {}) {
     const user = actor(opts);
     const par = node(parentPath(p));
@@ -956,6 +1000,7 @@ export const fs = {
     if (!par || !par.c[name]) return false;
     if (!allow(parentPath(p), 'w', user)) return false;
     const victim = par.c[name];
+    if (moveLocked(victim, user)) return false;
     if ((user !== 'root' && ownerUid(victim) !== uidOfActor(user)) && !modeFor(victim, user).w) return false;
     delete par.c[name];
     removedPaths.add(normPath(p));   // fsdata 遗留待清理
@@ -964,7 +1009,7 @@ export const fs = {
     return true;
   },
 
-  /** 移动/重命名 */
+  /** 移动/重命名;源节点 x 锁定位置位时拒绝(root 除外) */
   rename(oldP, newP, opts = {}) {
     const user = actor(opts);
     const par = node(parentPath(oldP));
@@ -972,8 +1017,9 @@ export const fs = {
     if (!par || !par.c[name]) return false;
     if (!allow(parentPath(oldP), 'w', user)) return false;
     if (!allow(parentPath(newP), 'w', user)) return false;
-    if (!allow(parentPath(newP), 'x', user)) return false;
+    if (!allow(parentPath(newP), 'r', user)) return false;
     const n = par.c[name];
+    if (moveLocked(n, user)) return false;
     delete par.c[name];
     const dstPar = this.mkdir(parentPath(newP), { silent: true, ...opts });
     if (!dstPar) { par.c[name] = n; return false; }
@@ -1036,7 +1082,7 @@ export const fs = {
   /** 当前会话用户(未登录 null) */
   currentUser: () => accounts.current(),
 
-  /** 是否允许 user 对 path 做 r/w/x(应用级 API 经 AppFS 调用) */
+  /** 是否允许 user 对 path 做 r/w(bit 也可传 'x' 查锁定位;应用级 API 经 AppFS 调用) */
   can(p, bit, user = accounts.current()) {
     return allow(p, bit, user);
   },
@@ -1059,6 +1105,7 @@ export const fs = {
   importAll(tree) {
     if (tree?.t === 'd') {
       migrateOwnerUids(tree);
+      migrateDirTraverseX(tree);
       root = tree;
       persistMark = 0;   // 外部整树导入:内容全部重写一次
       emit('import', '/');

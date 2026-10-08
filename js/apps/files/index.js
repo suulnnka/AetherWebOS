@@ -21,7 +21,7 @@ function quickPlaces(home) {
     { name: '音乐', path: `${home}/music`, icon: 'music' },
     { name: '下载', path: `${home}/downloads`, icon: 'download' },
     { name: '系统 /bin', path: '/bin', icon: 'terminal' },
-    { name: '应用 /app', path: '/app', icon: 'grid' },
+    // 「应用 /app」不设侧栏入口:应用包是 root 私有(用户不可列/读/写),列了也进不去
   ];
 }
 

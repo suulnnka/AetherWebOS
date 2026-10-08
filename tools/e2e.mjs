@@ -4373,14 +4373,26 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   t('T50.4 安装后:开始菜单+桌面快捷方式+持久化', opened1 && s1.installed && s1.sm === 1 && s1.desk && s1.persisted, JSON.stringify(s1));
   await c.shot('t50-installed');
 
-  // d2. 真实资源下载:安装即把应用包拉到 /app/<id>/(文件应用「应用 /app」可见)
+  // d2. 真实资源下载:安装即把应用包拉到 /app/<id>/(root 私有,须以 root 视角查看)
   const pkg1 = await ev(`(async () => {
-    const list = WebOS.fs.list('/app/map') || [];
+    const list = WebOS.fs.list('/app/map', { as: 'root' }) || [];
     let bytes = 0;
-    for (const f of list) bytes += (await WebOS.fs.stat('/app/map/' + f.name))?.size || 0;
+    for (const f of list) bytes += (await WebOS.fs.stat('/app/map/' + f.name, { as: 'root' }))?.size || 0;
     return { dir: WebOS.fs.isDir('/app/map'), files: list.length, bytes };
   })()`);
   t('T50.4b 安装即真实下载:包资源落盘 /app/map(非空)', pkg1.dir && pkg1.files >= 2 && pkg1.bytes > 0, JSON.stringify(pkg1));
+
+  // d3. 包资源对普通用户不可见:/app 用户不可列、不可读、stat 也不给
+  const pkg3 = await ev(`(async () => {
+    const list = WebOS.fs.list('/app/map');
+    const anyFile = (WebOS.fs.list('/app/map', { as: 'root' }) || [])[0];
+    const read = anyFile ? WebOS.fs.read('/app/map/' + anyFile.name) : 'no-file';
+    const stat = anyFile ? WebOS.fs.stat('/app/map/' + anyFile.name) : 'no-file';
+    const write = WebOS.fs.write('/app/map/hack.txt', 'x');
+    return { listDenied: list === null, readDenied: read === null, statDenied: stat === null, writeDenied: write === false };
+  })()`);
+  t('T50.4c 包资源用户不可见(列/读/stat/写全被拒)',
+    pkg3.listDenied && pkg3.readDenied && pkg3.statDenied && pkg3.writeDenied, JSON.stringify(pkg3));
 
   // e. 安装后从商店「打开」直达应用
   await ev(`document.querySelector('.st-card[data-app=map] .st-open').click()`);
