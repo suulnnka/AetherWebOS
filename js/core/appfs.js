@@ -34,7 +34,7 @@ export function createAppFs(appId, user) {
     desktopPath: () => desktopPath(user),
 
     /* ---- 查询 ---- */
-    /** 路径是否存在(需能穿越父目录) */
+    /** 路径是否存在(父目录链结构存在即可;穿越不查权限) */
     exists(p) {
       if (!fs.exists(p)) return false;
       if (user === 'root') return true;
