@@ -249,6 +249,25 @@ function renderSection(root, sec, bus) {
       listWrap.innerHTML = '';
       const users = accounts.list();
       for (const u of users) {
+        const ren = el('button', { class: 'btn', title: `重命名 ${u.name}`, style: { flex: 'none' } }, icon('pencil', 13));
+        ren.addEventListener('click', async () => {
+          const nu = await dialogs.prompt({
+            title: `重命名 ${u.name}`,
+            message: '登录名可改;uid 与文件属主、家目录内容不变。输入新用户名。',
+            placeholder: '新用户名', value: u.name, okText: '继续',
+          });
+          if (nu == null || !nu.trim() || nu.trim() === u.name) return;
+          const pw = await dialogs.prompt({
+            title: `确认改名为 ${nu.trim()}`,
+            message: `输入 ${u.name} 的密码以确认。`,
+            placeholder: '密码', okText: '重命名',
+          });
+          if (pw == null) return;
+          const r = await accounts.rename(u.name, nu.trim(), pw);
+          if (!r.ok) { bus.notify('重命名失败', r.error); return; }
+          bus.notify('已重命名', `${u.name} → ${r.user}(uid ${r.uid})`);
+          redrawList();
+        });
         const del = el('button', { class: 'btn danger', title: `删除用户 ${u.name}`, style: { flex: 'none' } }, icon('trash', 13));
         del.addEventListener('click', async () => {
           const pw = await dialogs.prompt({
@@ -266,9 +285,9 @@ function renderSection(root, sec, bus) {
           el('span', { class: 'ss-avatar' }, (u.displayName[0] || '?').toUpperCase()),
           el('div', { style: { flex: 1, minWidth: 0 } },
             el('div', { class: 'u-name' }, u.displayName),
-            el('div', { class: 'u-meta' }, `@${u.name} · 创建于 ${fmtDate(new Date(u.created))}`)),
+            el('div', { class: 'u-meta' }, `@${u.name} · uid ${u.uid} · 创建于 ${fmtDate(new Date(u.created))}`)),
           u.name === cur ? el('span', { class: 'dim', style: { fontSize: '11px', flex: 'none' } }, '当前') : null,
-          del));
+          ren, del));
       }
       if (!users.length) listWrap.append(el('div', { class: 'dim', style: { fontSize: '12px', padding: '4px 2px' } }, '暂无用户,可在下方创建'));
     };

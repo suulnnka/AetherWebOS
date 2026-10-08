@@ -236,8 +236,16 @@ export function reconcileLegacyShortcuts() {
 }
 
 /* 登录/注册:把旧版播种过的商店应用迁成"已安装"(在售入口先于播种生效;
- * 迁移结果经 reconcile 广播,applink 会顺势补桌面快捷方式) */
+ * 迁移结果经 reconcile 广播,applink 会顺势补桌面快捷方式)。
+ * 改登录名:accounts 已改写 webos.installed.v2,这里同步内存 byUser 的键。 */
 subscribe('accounts:changed', (payload, msg) => {
   const t = msg?.type;
   if (t === 'login' || t === 'register') reconcileLegacyShortcuts();
+  if (t === 'renamed' && payload?.from && payload?.to && payload.from !== payload.to) {
+    if (byUser[payload.from] != null && byUser[payload.to] == null) {
+      byUser[payload.to] = byUser[payload.from];
+      delete byUser[payload.from];
+      persist();
+    }
+  }
 });

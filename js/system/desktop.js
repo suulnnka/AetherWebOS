@@ -319,6 +319,11 @@ subscribe('accounts:changed', (payload, msg) => {
     renderDesktopIcons();
   } else if (msg?.type === 'logout' || msg?.type === 'removed') {
     renderDesktopIcons();
+  } else if (msg?.type === 'renamed') {
+    // 家目录目录名跟随改名:路径变了,重建快捷方式并重绘
+    const u = payload?.to || accounts.current();
+    if (u) ensureDesktopShortcuts(u);
+    renderDesktopIcons();
   }
 });
 

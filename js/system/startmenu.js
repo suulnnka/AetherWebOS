@@ -108,7 +108,7 @@ subscribe('sys:settings-changed', (p) => {
 subscribe('sys:apps-changed', () => renderStartMenu());
 /* 安装按用户:切换/注销会话后按本人的安装清单重绘 */
 subscribe('accounts:changed', (p, msg) => {
-  if (['login', 'logout', 'register', 'removed'].includes(msg?.type)) renderStartMenu();
+  if (['login', 'logout', 'register', 'removed', 'renamed'].includes(msg?.type)) renderStartMenu();
 });
 $('#sm-user').addEventListener('click', () => {
   toggleStartMenu(false);

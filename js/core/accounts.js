@@ -7,6 +7,12 @@
  *  - 空密码一律拒绝登录(root 密码为空,故无法登录,仅供系统内部);
  *  - 每个用户的应用数据隔离:数据键 = `${storageKey}::${username}`。
  *
+ * 身份模型(全局 uid 表):
+ *  - 每个账号除用户名外分配**终身不变的数字 uid**(root 固定 0,其余
+ *    从 db.uidSeq 递增;删除不回收);文件属主、改名等以 uid 为准,
+ *    用户名只是可变的登录名/显示别名。
+ *  - uidOf(name) / nameOf(uid) 双向查询;老库首次 load 自动补发 uid。
+ *
  * root 内置账号:
  *  - 启动时确保存在;密码为空、不进入登录用户列表;
  *  - 文件系统等内部操作可用 as:'root' / owner:'root' 使用其身份。
@@ -18,9 +24,12 @@
  *   accounts.logout()                       会话清除
  *   accounts.current()                      当前用户名 | null(会话持久化)
  *   accounts.lastUser()                     上次成功登录的用户(注销后仍保留)
+ *   accounts.uidOf(name)                    用户名 → uid | null(root=0)
+ *   accounts.nameOf(uid)                    uid → 用户名 | null
+ *   accounts.rename(old, new, password)     改登录名(uid 不变;校验密码)
  *   accounts.passwordHint(username)         密码提示 | null
  *   accounts.bootstrapIfNeeded()            首启无用户时自动建默认账号并登录
- *   accounts.list()                         [{ name, displayName, created }](不含 root)
+ *   accounts.list()                         [{ name, uid, displayName, created }](不含 root)
  *   accounts.listAll()                      含系统账号
  *   accounts.displayName(username)          显示名 | null
  *   accounts.remove(username, password)     → { ok } | { ok:false, error }(校验密码后删除)
@@ -54,14 +63,32 @@ async function hashPassword(password, salt) {
   return b64(bits);
 }
 
-/** 系统账号:无密码散列,无法通过登录界面进入 */
+/** 系统账号:无密码散列,无法通过登录界面进入;uid 固定 0 */
 function rootRecord() {
   return {
+    uid: 0,
     salt: '',
     hash: '',
     created: 0,
     profile: { displayName: 'root', system: true },
   };
+}
+
+/** 老库补 uid:root=0,其余按创建序从 uidSeq 发号(删除不回收,避免属主串号) */
+function ensureUids(db) {
+  let dirty = false;
+  if (typeof db.uidSeq !== 'number' || db.uidSeq < 1) { db.uidSeq = 1; dirty = true; }
+  if (db.users.root && db.users.root.uid !== 0) { db.users.root.uid = 0; dirty = true; }
+  for (const [name, u] of Object.entries(db.users)) {
+    if (typeof u.uid === 'number') continue;
+    u.uid = name === 'root' ? 0 : db.uidSeq++;
+    dirty = true;
+  }
+  // 防御:手工改库撞号时把号推到最大值之后
+  let max = 0;
+  for (const u of Object.values(db.users)) if (typeof u.uid === 'number' && u.uid > max) max = u.uid;
+  if (db.uidSeq <= max) { db.uidSeq = max + 1; dirty = true; }
+  return dirty;
 }
 
 function loadDB() {
@@ -78,6 +105,7 @@ function loadDB() {
   } else if (!db.users.root.profile?.system) {
     db.users.root.profile = { ...(db.users.root.profile || {}), system: true, displayName: 'root' };
   }
+  if (ensureUids(db)) saveDB(db);
   return db;
 }
 const saveDB = (db) => {
@@ -97,11 +125,16 @@ function validatePassword(password) {
   return null;
 }
 
-/** 把校验后的用户写入数据库,返回用户记录(不落盘) */
-async function buildUser(name, password, profile = {}) {
+/**
+ * 把校验后的用户写入数据库,返回用户记录(不落盘)。
+ * uid 从调用方传入的 db.uidSeq 发号 —— 调用方随后 saveDB,
+ * 避免本函数另开一份 db 写盘把外层未保存的 uidSeq 冲掉。
+ */
+async function buildUser(name, password, profile = {}, db = loadDB()) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await hashPassword(password, salt);
   return {
+    uid: db.uidSeq++,
     salt: b64(salt),
     hash,
     created: Date.now(),
@@ -119,7 +152,7 @@ const accounts = {
     if (errP) return { ok: false, error: errP };
     const db = loadDB();
     if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
-    db.users[name] = await buildUser(name, password, profile);
+    db.users[name] = await buildUser(name, password, profile, db);
     saveDB(db);
     this._startSession(name);
     publish('accounts:changed', { from: 'accounts', type: 'login', payload: { user: name } });
@@ -135,7 +168,7 @@ const accounts = {
     if (errP) return { ok: false, error: errP };
     const db = loadDB();
     if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
-    db.users[name] = await buildUser(name, password, profile);
+    db.users[name] = await buildUser(name, password, profile, db);
     saveDB(db);
     publish('accounts:changed', { from: 'accounts', type: 'created', payload: { user: name } });
     return { ok: true, user: name };
@@ -215,18 +248,110 @@ const accounts = {
     return this.listAll().filter(u => !u.system);
   },
 
-  /** 全部账号(含 root,供设置/诊断) */
+  /** 全部账号(含 root,供设置/诊断);含终身 uid */
   listAll() {
     const db = loadDB();
     return Object.entries(db.users)
       .map(([name, u]) => ({
         name,
+        uid: typeof u.uid === 'number' ? u.uid : null,
         displayName: u.profile?.displayName || name,
         created: u.created || 0,
         system: !!u.profile?.system || SYSTEM_USERS.has(name),
         passwordHint: u.profile?.passwordHint || null,
       }))
       .sort((a, b) => a.created - b.created);
+  },
+
+  /** 用户名 → 终身 uid(root=0;不存在 null) */
+  uidOf(name) {
+    if (!name) return null;
+    if (name === 'root') return 0;
+    const u = loadDB().users[name];
+    return typeof u?.uid === 'number' ? u.uid : null;
+  },
+
+  /** uid → 用户名(root=0;已删除/不存在 null) */
+  nameOf(uid) {
+    if (typeof uid !== 'number') return null;
+    if (uid === 0) return 'root';
+    const db = loadDB();
+    for (const [name, u] of Object.entries(db.users)) {
+      if (u.uid === uid) return name;
+    }
+    return null;
+  },
+
+  /**
+   * 改登录名:uid 不变,文件属主/家目录随之改名。
+   * 校验新名合法性与占用、原密码;同步会话/上次登录、
+   * localStorage 后缀键(`::旧名`)与按用户名分键的清单(installed)。
+   * 返回 { ok, user } | { ok:false, error }。
+   */
+  async rename(oldName, newName, password) {
+    const from = String(oldName || '').trim();
+    const to = String(newName || '').trim();
+    if (!from) return { ok: false, error: '缺少原用户名' };
+    if (from === to) return { ok: false, error: '新用户名与当前相同' };
+    const errU = validateUsername(to);
+    if (errU) return { ok: false, error: errU };
+    const db = loadDB();
+    const rec = db.users[from];
+    if (!rec) return { ok: false, error: '用户不存在' };
+    if (db.users[to]) return { ok: false, error: '该用户名已被注册' };
+    if (!(await this.verify(from, password))) {
+      return { ok: false, error: password ? '密码错误' : '请输入密码以确认改名' };
+    }
+
+    // 1) 账号表换键(uid 留在 rec 上不动)
+    delete db.users[from];
+    db.users[to] = rec;
+    // 显示名默认跟随新登录名(用户没改过显示名时避免留下旧名)
+    if (rec.profile?.displayName === from) rec.profile.displayName = to;
+    saveDB(db);
+
+    // 2) 会话 / 上次登录
+    try {
+      const s = JSON.parse(localStorage.getItem(SESSION_KEY));
+      if (s?.user === from) {
+        localStorage.setItem(SESSION_KEY, JSON.stringify({ ...s, user: to }));
+      }
+      if (localStorage.getItem(LAST_USER_KEY) === from) {
+        localStorage.setItem(LAST_USER_KEY, to);
+      }
+    } catch { /* 忽略 */ }
+
+    // 3) 以 `::用户名` 结尾的散键(userKey / appdata 密钥 / 迁移旗标…)
+    try {
+      const suffix = '::' + from;
+      const moves = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.endsWith(suffix)) moves.push(k);
+      }
+      for (const k of moves) {
+        const v = localStorage.getItem(k);
+        const nk = k.slice(0, -from.length) + to;
+        if (v != null && localStorage.getItem(nk) == null) localStorage.setItem(nk, v);
+        localStorage.removeItem(k);
+      }
+    } catch { /* 忽略 */ }
+
+    // 4) 按用户名作对象键的清单(已安装应用)
+    try {
+      const raw = localStorage.getItem('webos.installed.v2');
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj[from] != null && obj[to] == null) {
+          obj[to] = obj[from];
+          delete obj[from];
+          localStorage.setItem('webos.installed.v2', JSON.stringify(obj));
+        }
+      }
+    } catch { /* 忽略 */ }
+
+    publish('accounts:changed', { from: 'accounts', type: 'renamed', payload: { from, to, user: to, uid: rec.uid } });
+    return { ok: true, user: to, uid: rec.uid };
   },
 
   /** 用户显示名(未登录/不存在返回 null) */

@@ -783,5 +783,14 @@ export function closeAll() {
   for (const id of [...wins.keys()]) close(id);
 }
 
+/* 改登录名:窗口的执行用户是打开时绑死的旧名,uid 解析不到会失去权限 ——
+ * 全部关掉(应用重开即绑新名);会话已是新名,不影响其他窗口。 */
+subscribe('accounts:changed', (payload, msg) => {
+  if (msg?.type !== 'renamed' || !payload?.from) return;
+  for (const w of [...wins.values()]) {
+    if (w.execUser === payload.from) close(w.id);
+  }
+});
+
 /** 当前活动窗口数(应恒为 0 或 1) */
 export const focusedCount = () => document.querySelectorAll('.win.focused').length;

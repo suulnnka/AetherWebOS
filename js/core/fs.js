@@ -2,9 +2,13 @@
  * FS —— 虚拟文件系统 v2(元数据在 OPFS JSON,内容在 OPFS 文件)
  *
  * 存储结构(根节点带版本号 v:2;版本不符 → 清空全部本地数据):
- *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:'root', p:'rwxr-x' }
- *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<owner>, p:<mode> }
- *   文件: { t:'f', d:'<内容>', m, o:<owner>, p:<mode> }  ← d 仅在内存
+ *   根:   { v:2, t:'d', c:{...}, m:<mtime>, o:<ownerUid>, p:'rwxr-x' }
+ *   目录: { t:'d', c:{ <名称>: <node> }, m, o:<ownerUid>, p:<mode> }
+ *   文件: { t:'f', d:'<内容>', m, o:<ownerUid>, p:<mode> }  ← d 仅在内存
+ *
+ * 属主 o 为**数字 uid**(accounts 全局发号,root=0,改名不变);
+ * 老树里的字符串用户名在装载时迁移成 uid。显示时经
+ * accounts.nameOf 反解;用户已删除的孤儿 uid 显示为 #<uid>。
  *
  * 落盘(inode 式拆分):
  *   · OPFS `webos/fs.v2.json` —— **仅元数据树**(无 d 字段,类似 inode 表)
@@ -153,11 +157,11 @@ function lsLooksStale() {
 function freshRoot() {
   const now = Date.now();
   return {
-    v: FS_VERSION, t: 'd', m: now, o: 'root', p: DIR_MODE,
+    v: FS_VERSION, t: 'd', m: now, o: 0, p: DIR_MODE,
     c: {
-      bin: { t: 'd', m: now, o: 'root', p: 'r-xr-x', c: {} },
-      app: { t: 'd', m: now, o: 'root', p: 'r-xr-x', c: {} },
-      home: { t: 'd', m: now, o: 'root', p: DIR_MODE, c: {} },
+      bin: { t: 'd', m: now, o: 0, p: 'r-xr-x', c: {} },
+      app: { t: 'd', m: now, o: 0, p: 'r-xr-x', c: {} },
+      home: { t: 'd', m: now, o: 0, p: DIR_MODE, c: {} },
     },
   };
 }
@@ -378,7 +382,21 @@ async function adoptTree(tree) {
   if (!hasInlineContent(tree)) {
     await hydrateContents(tree, '/');
   }
+  migrateOwnerUids(tree);
   root = tree;
+}
+
+/** 老树迁移:属主是字符串用户名的,改写为 uid(root→0;已删用户保留字符串,权限侧按孤儿处理) */
+function migrateOwnerUids(n) {
+  if (typeof n.o === 'string') {
+    if (n.o === 'root') n.o = 0;
+    else {
+      const u = accounts.uidOf(n.o);
+      if (u != null) n.o = u;
+      // 用户已删:保留原字符串,ownerUid() 会归为孤儿 -1
+    }
+  }
+  if (n.c) for (const ch of Object.values(n.c)) migrateOwnerUids(ch);
 }
 
 /** 首次启动:OPFS 元数据 → 旧 localStorage 迁移 → 空则默认树 */
@@ -404,6 +422,7 @@ async function bootLoad() {
   const fromLs = parseTree(localStorage.getItem(LS_KEY));
   if (fromLs) {
     // 旧整树:保留内存中的 d,立刻拆到 OPFS(persistMark=0 → 首写全量)
+    migrateOwnerUids(fromLs);
     root = fromLs;
     persistMark = 0;
     markBooted();
@@ -495,11 +514,34 @@ function emit(action, path) {
 }
 
 /* ---------- 权限 ---------- */
-/** 解析 6 位模式 → 属主/其他 的 {r,w,x} */
+/** 节点属主 → uid:数字直用;字符串(老树/外部传入)经 accounts 解析;root/缺省 0 */
+function ownerUid(n) {
+  const o = n?.o;
+  if (typeof o === 'number') return o;
+  if (o == null || o === 'root') return 0;
+  const u = accounts.uidOf(o);
+  return u == null ? -1 : u;          // 用户已删:孤儿 uid,谁都不匹配(仅 root 超管)
+}
+
+/** uid → 显示名:root=0;已删用户显示 #uid;反解失败回落字符串 */
+function ownerName(uid) {
+  if (uid === 0) return 'root';
+  return accounts.nameOf(uid) ?? `#${uid}`;
+}
+
+/** 操作身份字符串 → 落盘用 uid('root'→0,未知用户→-1) */
+function uidOfActor(user) {
+  if (!user) return -1;
+  if (user === 'root') return 0;
+  const u = accounts.uidOf(user);
+  return u == null ? -1 : u;
+}
+
+/** 解析 6 位模式 → 属主/其他 的 {r,w,x}(user 为登录名) */
 function modeFor(n, user) {
   const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
   if (user === 'root') return { r: true, w: true, x: true };
-  const owner = user && n.o === user;
+  const owner = user != null && uidOfActor(user) === ownerUid(n) && ownerUid(n) >= 0;
   const chunk = owner ? full.slice(0, 3) : full.slice(3, 6);
   return { r: chunk[0] === 'r', w: chunk[1] === 'w', x: chunk[2] === 'x' };
 }
@@ -554,12 +596,17 @@ function canTraverse(p, user) {
   return cur.t === 'd' && modeFor(cur, user).x === true;
 }
 
-/** 内部建节点(带属主/权限) */
+/** 内部建节点(owner 接受登录名或 uid number;落盘一律 uid) */
 function makeNode(kind, owner, mode) {
   const m = Date.now();
+  let uid;
+  if (typeof owner === 'number') uid = owner;
+  else if (owner == null || owner === '') uid = uidOfActor(actor());
+  else uid = uidOfActor(owner);
+  if (uid < 0) uid = 0;              // 未识别身份:归 root(仅系统路径会出现)
   return kind === 'd'
-    ? { t: 'd', c: {}, m, o: owner || 'root', p: mode || DIR_MODE }
-    : { t: 'f', d: '', m, o: owner || actor() || 'root', p: mode || FILE_MODE };
+    ? { t: 'd', c: {}, m, o: uid, p: mode || DIR_MODE }
+    : { t: 'f', d: '', m, o: uid, p: mode || FILE_MODE };
 }
 
 /* ---------- 用户家目录 ---------- */
@@ -577,7 +624,7 @@ export function ensureUserHome(user) {
   const home = `/home/${user}`;
   const existing = node(home);
   if (existing) {
-    existing.o = user;
+    existing.o = uidOfActor(user);
     if (existing.p !== HOME_MODE) existing.p = HOME_MODE;
   } else {
     // 沿途创建:仅 /home 下新建
@@ -634,11 +681,33 @@ export function ensureUserHome(user) {
   return true;
 }
 
-/* 登录 / 注册 / 系统建号 → 自动准备家目录 */
+/* 登录 / 注册 / 系统建号 → 自动准备家目录;改登录名 → 家目录目录名跟随 */
 subscribe('accounts:changed', (payload, msg) => {
   const t = msg?.type;
   const u = payload?.user || accounts.current();
   if ((t === 'login' || t === 'created' || t === 'register') && u) ensureUserHome(u);
+  if (t === 'renamed' && payload?.from && payload?.to) {
+    const run = () => {
+      const oldHome = node(`/home/${payload.from}`);
+      if (!oldHome || oldHome.t !== 'd') { ensureUserHome(payload.to); return; }
+      if (node(`/home/${payload.to}`)) return;   // 目标已存在:不动旧目录
+      const homeDir = node('/home');
+      if (!homeDir || homeDir.t !== 'd') return;
+      delete homeDir.c[payload.from];
+      homeDir.c[payload.to] = oldHome;
+      homeDir.m = Date.now();
+      oldHome.m = Date.now();
+      // 内容文件按 rename 语义记 dirty/removed,让 fsdata 跟着搬家
+      const oldNorm = `/home/${payload.from}`, newNorm = `/home/${payload.to}`;
+      for (const f of walkSubtree(oldHome, newNorm)) {
+        dirtyPaths.set(f.path, { copyFrom: f.rel ? oldNorm + '/' + f.rel : oldNorm });
+      }
+      removedPaths.add(oldNorm);
+      emit('rename', newNorm);
+    };
+    if (fsBooted) run();
+    else fsReady().then(() => { try { run(); } catch { /* 忽略 */ } });
+  }
 });
 
 /* ---------- 文件系统 API ---------- */
@@ -666,9 +735,10 @@ export const fs = {
       dir: n.t === 'd',
       size: inodeSize(n),
       mtime: n.m || 0,
-      owner: n.o || 'root',
+      owner: ownerName(ownerUid(n)),
       mode: this.modeString(n),
       mode6: String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6),
+      ownerUid: ownerUid(n),
     };
   },
 
@@ -688,7 +758,7 @@ export const fs = {
         dir: ch.t === 'd',
         size: inodeSize(ch),
         mtime: ch.m || 0,
-        owner: ch.o || 'root',
+        owner: ownerName(ownerUid(ch)),
         mode: this.modeString(ch),
       }))
       .sort((a, b) => (a.dir !== b.dir) ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, 'zh'));
@@ -886,7 +956,7 @@ export const fs = {
     if (!par || !par.c[name]) return false;
     if (!allow(parentPath(p), 'w', user)) return false;
     const victim = par.c[name];
-    if (victim.o !== user && !modeFor(victim, user).w) return false;
+    if ((user !== 'root' && ownerUid(victim) !== uidOfActor(user)) && !modeFor(victim, user).w) return false;
     delete par.c[name];
     removedPaths.add(normPath(p));   // fsdata 遗留待清理
     par.m = Date.now();
@@ -925,7 +995,7 @@ export const fs = {
     if (!n) return false;
     const user = actor(opts);
     if (!user) return false;
-    if (user !== 'root' && n.o !== user) return false;   // 仅属主或 root 可改
+    if (user !== 'root' && ownerUid(n) !== uidOfActor(user)) return false;   // 仅属主或 root 可改
     let m6;
     if (/^[0-7]{4}$/.test(String(mode))) {
       // 四位八进制:忽略特殊位,取属主 + 其他(无用户组)
@@ -952,7 +1022,12 @@ export const fs = {
     if (!n) return false;
     const user = actor(opts);
     if (user !== 'root') return false;   // 仅 root 可 chown
-    n.o = String(newOwner);
+    if (typeof newOwner === 'number') n.o = newOwner;
+    else {
+      const u = uidOfActor(newOwner);
+      if (u < 0) return false;           // 无此用户
+      n.o = u;
+    }
     n.m = Date.now();
     emit('chown', p);
     return true;
@@ -983,6 +1058,7 @@ export const fs = {
   exportAll: () => root,
   importAll(tree) {
     if (tree?.t === 'd') {
+      migrateOwnerUids(tree);
       root = tree;
       persistMark = 0;   // 外部整树导入:内容全部重写一次
       emit('import', '/');
