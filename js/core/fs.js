@@ -626,8 +626,10 @@ function canTraverse(p, user) {
 }
 
 /**
- * x = 锁定位:该用户不可移动/删除/重命名此节点。
- * root 不受限;位在该用户的权限段(属主看前 3 位,其他看后 3 位)。
+ * x = 锁定位:该用户不可移动/删除/重命名此节点,也不可改它的权限
+ * (chmod 同拒 —— 不然一改就把锁去了,锁形同虚设)。锁定即冻结,
+ * 解铃须 root。root 不受限;位在该用户的权限段(属主看前 3 位,
+ * 其他看后 3 位)。
  */
 function moveLocked(n, user) {
   if (!user || user === 'root') return false;
@@ -1041,6 +1043,7 @@ export const fs = {
     const user = actor(opts);
     if (!user) return false;
     if (user !== 'root' && ownerUid(n) !== uidOfActor(user)) return false;   // 仅属主或 root 可改
+    if (moveLocked(n, user)) return false;   // 锁定位冻结:带锁连 chmod 也不可,解铃须 root
     let m6;
     if (/^[0-7]{4}$/.test(String(mode))) {
       // 四位八进制:忽略特殊位,取属主 + 其他(无用户组)

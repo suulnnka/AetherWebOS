@@ -96,8 +96,46 @@ async function fetchFile(url, onChunk) {
 }
 
 /**
- * 确保应用包资源就位(幂等):齐备直接返回;缺失则逐文件真实下载,
- * 以 root 身份写入 /app/<id>/(目录/文件均 rw----,用户不可见)。
+ * 存量树模式归一:老版本写过的 /app(种子 r-xr-x)、/app/<id>(默认
+ * DIR_MODE rwxr-x)与最早用 FILE_MODE rw-r-- 落盘的包文件,权限段残留
+ * 对用户可读 —— 新语义下穿越免费,「知道路径即可到达」,残留 r 就是
+ * 真泄露。统一 chmod 到 root 私有;幂等,缺哪些补哪些。
+ */
+function normalizeModes(id, files) {
+  if (!fs.exists(PKG_ROOT)) return;
+  fs.chmod(PKG_ROOT, PKG_DIR_MODE, { as: 'root' });
+  const dir = `${PKG_ROOT}/${id}`;
+  if (fs.exists(dir)) fs.chmod(dir, PKG_DIR_MODE, { as: 'root' });
+  for (const f of files) {
+    const p = pkgPath(id, f);
+    if (fs.exists(p)) fs.chmod(p, PKG_FILE_MODE, { as: 'root' });
+  }
+}
+
+/**
+ * 归一 /app 整棵树的模式(递归):老版本写过的残留(/app 种子 r-xr-x、
+ * 早期包目录 rwxr-x、最早包文件 rw-r--)在穿越免费的新语义下是真实泄露
+ * (目录名/文件名可列、知道路径即可读)。统一 chmod 到 root 私有;幂等,
+ * 开机兜底一次,安装/重装路径也会顺带跑。
+ */
+export function normalizeAllModes() {
+  if (!fs.exists(PKG_ROOT)) return;
+  fs.chmod(PKG_ROOT, PKG_DIR_MODE, { as: 'root' });
+  const walk = (p) => {
+    for (const e of fs.list(p, { as: 'root' }) || []) {
+      const child = `${p.replace(/\/$/, '')}/${e.name}`;
+      if (e.dir) { fs.chmod(child, PKG_DIR_MODE, { as: 'root' }); walk(child); }
+      else fs.chmod(child, PKG_FILE_MODE, { as: 'root' });
+    }
+  };
+  walk(PKG_ROOT);
+  fs.flush().catch(() => {});
+}
+
+/**
+ * 确保应用包资源就位(幂等):齐备直接返回(顺带归一存量模式);缺失则
+ * 逐文件真实下载,以 root 身份写入 /app/<id>/(目录/文件均 rw----,用户
+ * 不可列/不可读/不可写)。
  * @param {Function} opts.onProgress ({ loaded, total, file }) —— 字节级进度
  * @returns {{ bytes: number, cached: boolean }}
  */
@@ -106,11 +144,10 @@ export async function ensureResources(id, opts = {}) {
   if (!pkg?.files?.length) throw new Error('包清单缺失');
   const total = pkg.bytes || 0;
   if (resourcesPresent(id, pkg.files)) {
+    normalizeAllModes();
     opts.onProgress?.({ loaded: total, total, file: '' });
     return { bytes: total, cached: true };
   }
-  /* /app 存量树兼容:老文件系统种子里 /app 是 r-xr-x(用户可列),
-   * 统一 chmod 锁到 root 私有;幂等 */
   if (!fs.exists(PKG_ROOT)) fs.mkdir(PKG_ROOT, { as: 'root', silent: true });
   fs.chmod(PKG_ROOT, PKG_DIR_MODE, { as: 'root' });
   let loaded = 0;
@@ -128,6 +165,7 @@ export async function ensureResources(id, opts = {}) {
     loaded += data.length;
     opts.onProgress?.({ loaded, total, file });
   }
+  normalizeAllModes();           // 兜底:任何路径写进来的残留模式一并归一
   fs.flush().catch(() => {});   // 下载完成即冲刷,防刷新后「复活」
   return { bytes: loaded, cached: false };
 }

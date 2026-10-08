@@ -14,6 +14,7 @@ import mailSvc from '../core/mail.js';
 import smsSvc from '../core/sms.js';
 import { list as listApps } from '../core/registry.js';
 import { installApp, uninstallApp, isInstalled, reconcileLegacyShortcuts } from '../core/install.js';
+import { normalizeAllModes } from '../core/pkg.js';
 import * as wm from '../core/wm.js';
 import { dialogs } from '../core/dialogs.js';
 import weatherSvc from '../core/weather.js';
@@ -49,6 +50,10 @@ function boot() {
       reconcileLegacyShortcuts();
       ensureDesktopShortcuts(cur);
     }
+    // 应用包模式兜底:老版本写过的 /app 残留模式(r-xr-x / rw-r--)在
+    // 穿越免费的新语义下是真实泄露,开机整树归一到 root 私有(幂等)
+    try { normalizeAllModes(); }
+    catch (e) { console.warn('[boot] /app 模式归一失败:', e); }
     renderPinned();
     renderTasks();
     renderStartMenu();

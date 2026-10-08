@@ -123,7 +123,26 @@ export async function openAppData(app, user = accounts.current()) {
   if (!ensureAppDataDir(user)) throw new Error('无法创建 appdata 目录');
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(appDataPath(app, user), user);
+  normalizeModes(user, appDataPath(app, user));
   return openDerived(base, backend, dbPassword(user));
+}
+
+/**
+ * 遗留模式归一:老版本写的 appdata 目录(默认 rwxr-x / rw-r--)与库文件
+ * (默认 rw-r--)对其他用户可读 —— 穿越免费的新语义下「知道路径即可达」,
+ * 残留 r 就是真泄露。开库时顺手收归私有(目录/文件都 rw----);
+ * 幂等,模式已对就零写入。属主自己 chmod,无锁位参与。
+ * 注意 chmod 只收 6 位模式串(9 位的会被静默拒绝),比较也对 mode6。
+ */
+function normalizeModes(user, path) {
+  const want = 'rw----';
+  if (fs.stat(path, { as: user })?.mode6 !== want) {
+    fs.chmod(path, want, { as: user });
+  }
+  const dir = `/home/${user}/appdata`;
+  if (fs.stat(dir, { as: user })?.mode6 !== want) {
+    fs.chmod(dir, want, { as: user });
+  }
 }
 
 /* ---------- 无系统用户归属的库 ----------
@@ -155,6 +174,11 @@ export async function openSharedAppData(app) {
   if (!ensureSharedDir()) throw new Error('无法创建共享 appdata 目录');
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(sharedAppDataPath(app), 'root');
+  /* 遗留归一:早期共享库文件是 rw-r--(others 可读),收紧到 root 私有;
+   * 读写都经 root 后端,收紧不影响共享语义 */
+  if (fs.stat(sharedAppDataPath(app), { as: 'root' })?.mode6 !== 'rw----') {
+    fs.chmod(sharedAppDataPath(app), 'rw----', { as: 'root' });
+  }
   /* 无账号应用:以设备身份(SHARED_USER 的密钥材料)按同一规则派生 */
   return openDerived(base, backend, dbPassword(SHARED_USER));
 }

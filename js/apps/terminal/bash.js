@@ -139,18 +139,18 @@ CMDS.mkdir = {
   },
 };
 CMDS.chmod = {
-  desc: '修改权限(chmod <八进制如 644> <文件>;x=锁定位:禁移动/删除/重命名)',
+  desc: '修改权限(chmod <八进制如 644> <文件>;x=锁定位:禁移动/删除/重命名/改权限,置锁后仅 root 可解)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt');
     const mode = args[0];
     const p = resolve(args[1]);
     if (!FS.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
-    if (!FS.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改`);
+    if (!FS.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改,且带 x 锁定位的文件连属主也改不了(仅 root 可解)`);
     return '';
   },
 };
 CMDS.rm = {
-  desc: '删除(rm [-r] <路径>;带 x 锁定位的不可删,先 chmod 去 x)',
+  desc: '删除(rm [-r] <路径>;带 x 锁定位的不可删,锁对 chmod 同样生效,仅 root 可解)',
   run(args, { resolve }) {
     const rec = args.filter(a => a.startsWith('-')).some(a => a.includes('r'));
     const p = args.filter(a => !a.startsWith('-'))[0];
@@ -171,7 +171,7 @@ CMDS.touch = {
   },
 };
 CMDS.mv = {
-  desc: '移动/重命名(mv <源> <目标>;带 x 锁定位的不可移动,先 chmod 去 x)',
+  desc: '移动/重命名(mv <源> <目标>;带 x 锁定位的不可移动,锁对 chmod 同样生效,仅 root 可解)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('mv: 缺少目标文件操作数');
     if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}: 不存在、无权限或带 x 锁定位`);
