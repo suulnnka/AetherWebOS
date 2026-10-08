@@ -72,7 +72,29 @@ export function sourceCatalog(appsDir = APPS_DIR) {
  *  import.meta.url)),提取 token 后与 dist/assets 实际清单求交集 */
 const TOKEN = /[A-Za-z0-9._-]+\.(?:js|css|aewn|wasm|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|otf|json|txt|html)\b/g;
 /** 平台公共块:属于操作系统本体,不入应用包 */
-const PLATFORM = /^(?:core|index)-[A-Za-z0-9_-]+\.js$/;
+const PLATFORM = /^(?:core|index)-[A-Za-z0-9_-]+\.(?:js|css)$/;
+
+/** 应用源码里 import 的 css 基名前缀(id → Set,如 'files-'):
+ *  被 ≥2 个应用 import 的 css 会被 rollup 抽成共享 css chunk,命名回落
+ *  [name]-[hash] 不带 app- 前缀、也不被 app chunk 直接引用(只活在
+ *  preload 依赖表里)—— 按「谁 import 了它」归因给每个相关应用 */
+function cssPrefixesByApp() {
+  const out = new Map();
+  for (const id of listAppIds()) {
+    const dir = path.join(APPS_DIR, id);
+    const prefixes = new Set();
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.js')) continue;
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      for (const m of src.matchAll(/import\s+['"]([^'"]+\.css)['"]/g)) {
+        const base = path.basename(m[1]).replace(/\.css$/, '');
+        prefixes.add(base + '-');
+      }
+    }
+    out.set(id, prefixes);
+  }
+  return out;
+}
 
 /**
  * 生产口径:扫描 dist,按「入口 → 引用 BFS」把每个应用的文件归拢成包。
@@ -118,6 +140,24 @@ export function distCatalog(distDir) {
     const list = [...files].sort();
     apps[id] = { files: list.map((f) => 'assets/' + f), bytes: list.reduce((s, f) => s + sizeOf(f), 0) };
   }
+
+  /* 共享 css chunk 归因:被 ≥2 个应用 import 的 css(如 localfiles 复用
+   * files 的 files.css)会被抽成独立 css chunk,命名回落 [name]-[hash]
+   * 不带 app- 前缀,也不被任何 app chunk 直接引用(只活在 preload 依赖
+   * 表里,那里归不了组)—— 按「哪个应用的源码 import 了这个基名」加给
+   * 每个相关应用,包才自洽(装了本地资源也有面包屑样式)。 */
+  const cssPrefixes = cssPrefixesByApp();
+  const packaged = new Set(Object.values(apps).flatMap((a) => a.files.map((f) => f.replace(/^assets\//, ''))));
+  for (const f of assets) {
+    if (!f.endsWith('.css') || packaged.has(f) || PLATFORM.test(f)) continue;
+    for (const [id, prefixes] of cssPrefixes) {
+      if (![...prefixes].some((p) => f.startsWith(p))) continue;
+      apps[id].files.push('assets/' + f);
+      apps[id].bytes += sizeOf(f);
+      packaged.add(f);
+    }
+  }
+  for (const a of Object.values(apps)) a.files.sort();
   return { generatedAt: Date.now(), apps };
 }
 
@@ -147,6 +187,14 @@ export async function validate(distDir, catalog) {
     if (!ids.some((id) => f.startsWith(`app-${id}-`))) {
       problems.push(`产物里有未知应用的 chunk:${f}(js/apps 下没有对应应用目录?)`);
     }
+  }
+  // 全覆盖闸门:dist/assets 里每个文件要么属平台(core/index-*),要么已进
+  // 某个应用包 —— 出现第三种就意味着包归属漏了(如共享 css chunk),
+  // 装出来的包会缺文件,直接让构建失败而不是静默缺资源
+  const packaged = new Set(Object.values(catalog.apps).flatMap((a) => a.files.map((f) => f.replace(/^assets\//, ''))));
+  for (const f of fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir) : []) {
+    if (PLATFORM.test(f) || packaged.has(f)) continue;
+    problems.push(`产物文件未归属任何应用包也不属平台:${f}(检查 apps-manifest 的归因规则)`);
   }
   return problems;
 }

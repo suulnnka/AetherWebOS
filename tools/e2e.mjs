@@ -122,8 +122,10 @@ async function waitReady() {
 async function fresh() { await c.goto(URL_BASE); await waitReady(); }
 
 /* 商店应用前置:store 应用默认未安装(不出现在开始菜单/桌面),
- * 用到它们的用例组开头先装好再测(幂等;安装语义详见 T50 软件商店组) */
-const needApps = (...ids) => ev(`${JSON.stringify(ids)}.forEach(id => WebOS.apps.install(id)); true`);
+ * 用到它们的用例组开头先装好再测(幂等;安装语义详见 T50 软件商店组)。
+ * 安装是异步的真实下载(WebOS.apps.install 返回 Promise),必须等全部
+ * 落地后再继续 —— 否则下面的 wm.open 会撞上安装门禁 */
+const needApps = (...ids) => ev(`Promise.all(${JSON.stringify(ids)}.map(id => WebOS.apps.install(id, { silent: true }))).then(() => true)`);
 
 /* 轮询等待表达式为真值(默认 5s 超时,返回最终值)。
    用于异步 UI 就绪等待:如加密解密(PBKDF2 派生)、弹窗窗口创建等无固定耗时的环节 */
