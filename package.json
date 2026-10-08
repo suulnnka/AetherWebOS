@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "start": "vite",
-    "build": "vite build && node tools/check-size.mjs",
+    "build": "vite build && node tools/apps-manifest.mjs && node tools/check-size.mjs",
     "preview": "vite preview",
     "e2e": "node tools/e2e.mjs",
     "test:sites": "node tools/aether-sites-smoke.mjs",

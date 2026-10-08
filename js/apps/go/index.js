@@ -1,15 +1,22 @@
 /* ============================================================
- * 应用:围棋(Go)9×9
- * 玩家执黑先行(可换边),AI 执白。规则:气尽提子、禁自杀、单劫禁回提、
- * 停一手合法,连续两手停即终局,按中国规则数子(黑贴 5.5 目)。
+ * 应用:围棋(Go)19×19
+ * 玩家执黑先行(可换边),AI 执白。规则:气尽提子、禁自杀、禁全同(superko)、
+ * 停一手合法,连续两手停即终局,按中国规则数子(黑贴 7.5 目)。
  *
- * AI 引擎在独立子项目 vendor/AetherGo(github.com/suulnnka/AetherGo)。
- * 本文件**一行引擎代码都不 import**:难度表、棋盘事实(合法着法 / 劫点 /
- * 提子数 / 双停终局 / 数子结果)全部经 Worker 消息问引擎(见该仓库
- * src/worker.js 的 levels / state / think 契约)—— 规则只有引擎一份,UI 只是渲染层。
+ * AI 引擎在独立子项目 vendor/AetherGo(github.com/suulnnka/AetherGo):
+ * 特征编码 → aethernn 自研推理(WebGPU,i8 权重 f16 计算,权重包 .aewn)
+ * → PUCT 搜索(对齐 KataGo)。本文件**一行引擎代码都不 import**(协议常量
+ * 除外 —— 契约常量在引擎的 src/protocol.js,是 UI 与引擎的唯一共享层):
+ * 难度表、棋盘事实(合法着法 / 劫点 / 提子数 / 双停终局 / 数子)、搜索、
+ * 形势判断全部经 Worker 消息问引擎(见该仓库 src/nn-worker.js 头注的契约)
+ * —— 规则只有引擎一份,UI 只是渲染层。
  *
- * UI 持有的唯一对局状态是**走法序列**(交叉点 0..80 或 PASS=81):落子 / 悔棋 /
- * 新对局都只是改序列再向 Worker 要一次 state 回包,拿回棋盘与数子重画。
+ * 模型要**先 load 再 think**:Worker 建立时即发 load(权重包经 Vite 的
+ * new URL(..., import.meta.url) 进打包,见 NN_MODEL_URL),loaded 回包前
+ * AI 请求挂起(nnWanted),就绪后自动接续。
+ *
+ * UI 持有的唯一对局状态是**走法序列**(交叉点 0..360 或 PASS=361):落子 /
+ * 悔棋 / 新对局都只是改序列再向 Worker 要一次 state 回包,拿回棋盘与数子重画。
  *
  * 顶栏/底栏沿用中国象棋应用的做法:顶栏一组对局级按钮,
  * 底栏**只有一条** —— 左边行棋状态与提子数、右边等宽字体的引擎搜索信息。
@@ -20,37 +27,44 @@ import manifest from './manifest.js';
 import './go.css';
 import { icon } from '../../core/icons.js';
 import { reportBoardMin } from '../../core/wm.js';
-
-/* 协议常量(worker 契约的一部分,不是引擎导出) */
-const BLACK = 0, WHITE = 1;
-const PASS = 81;
+import { N, PASS, BLACK, WHITE, COLS, formatMove } from '../../../vendor/AetherGo/src/protocol.js';
 
 /* 格距(px)。与 go.css 里的 --cs / --pad 必须一致 */
-const CS = 52, PAD = 26;
-const T = PAD * 2 + CS * 8;
+const CS = 30, PAD = 24;
+const T = PAD * 2 + CS * (N - 1);
 const X = (c) => PAD + c * CS;
 const Y = (r) => PAD + r * CS;
-const COLS = 'ABCDEFGHJ';                     // 列标(跳过 I)
 const sideName = (s) => (s === BLACK ? '黑方' : '白方');
 const fmtRate = (w) => Math.round(w * 100) + '%';
 const fmtVisits = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v));
 /** 记谱(显示用):交叉点 → 列字母 + 行号;PASS → 停 */
-const moveText = (mv) => (mv === PASS ? '停' : COLS[mv % 9] + (9 - ((mv / 9) | 0)));
+const moveText = (mv) => (mv === PASS ? '停' : formatMove(mv));
+/** 点的 4 邻居(UI 侧数子模式圈同色连通块用) */
+function neighborsOf(q) {
+  const r = (q / N) | 0, c = q % N, out = [];
+  if (r > 0) out.push(q - N);
+  if (r < N - 1) out.push(q + N);
+  if (c > 0) out.push(q - 1);
+  if (c < N - 1) out.push(q + 1);
+  return out;
+}
 
-/** 棋盘线(SVG):9×9 线 + 五个星位 + 边缘坐标(下 A~J、左 9~1) */
+/** 棋盘线(SVG):19×19 线 + 九个星位 + 边缘坐标(下 A~T、左 19~1) */
 function boardSvg() {
   const d = [];
-  for (let i = 0; i < 9; i++) {
-    d.push(`M${X(0)} ${Y(i)}H${X(8)}`);
-    d.push(`M${X(i)} ${Y(0)}V${Y(8)}`);
+  for (let i = 0; i < N; i++) {
+    d.push(`M${X(0)} ${Y(i)}H${X(N - 1)}`);
+    d.push(`M${X(i)} ${Y(0)}V${Y(N - 1)}`);
   }
-  const stars = [[2, 2], [2, 6], [6, 2], [6, 6], [4, 4]]
-    .map(([r, c]) => `<circle class="go-star" cx="${X(c)}" cy="${Y(r)}" r="3.2"/>`)
+  const s = 3;                               // 星位坐标(19 路 3/9/15 同族)
+  const stars = [[s, s], [s, 9], [s, N - 1 - s], [9, s], [9, 9], [9, N - 1 - s],
+    [N - 1 - s, s], [N - 1 - s, 9], [N - 1 - s, N - 1 - s]]
+    .map(([r, c]) => `<circle class="go-star" cx="${X(c)}" cy="${Y(r)}" r="2.6"/>`)
     .join('');
   const coords = [];
-  for (let c = 0; c < 9; c++) {
+  for (let c = 0; c < N; c++) {
     coords.push(`<text class="go-coord" x="${X(c)}" y="${T - PAD / 2}">${COLS[c]}</text>`);
-    coords.push(`<text class="go-coord" x="${PAD / 2}" y="${Y(c)}">${9 - c}</text>`);
+    coords.push(`<text class="go-coord" x="${PAD / 2}" y="${Y(c)}">${N - c}</text>`);
   }
   return `<svg class="go-lines" viewBox="0 0 ${T} ${T}" aria-hidden="true">`
     + `<path class="go-line" d="${d.join(' ')}"/>${stars}${coords.join('')}</svg>`;
@@ -61,7 +75,7 @@ register({
   mount(ctx) {
     /* dialogs = ctx.dialogs:应用绑定弹框,默认二级(应用模态,只锁本应用) */
     const { root, setTitle, bus, dialogs } = ctx;
-    let board = new Array(81).fill(0);   // 引擎棋盘(state 回包驱动;0 空 / 1 黑 / 2 白)
+    let board = new Array(N * N).fill(0);  // 引擎棋盘(state 回包驱动;0 空 / 1 黑 / 2 白)
     let legal = new Set();               // 行棋方合法着法(state 回包;点击校验以它为准)
     let ko = -1;                         // 劫点(回包;提示「先找劫材」用)
     let captures = [0, 0];               // 黑提 / 白提(state 回包)
@@ -74,6 +88,15 @@ register({
     let searching = false;
     let levels = [];                     // 难度表由**引擎自报**({type:'levels'})
     let levelIdx = 0;
+    let countMode = false;               // 数子模式:点棋子切换死/活,实时重算
+    let deadOverride = null;             // 手改死子点列表(null = 引擎自动判定)
+    let deadShown = new Set();           // 当前标示的死子点(渲染用)
+    let countScore = null;               // 数子模式最新结果
+    let scoreSeq = 0;                    // 数子请求序号(过期回包丢弃)
+    let estimateOn = false;              // 形势判断开关
+    let ownership = null;                // 形势判断 ownership 图(渲染用)
+    let estSeq = 0;                      // 形势请求序号
+    let countPanelWanted = false;        // 等数子回包落地后开窗
 
     const aiSide = () => humanSide ^ 1;
     const lvName = () => levels[levelIdx]?.name ?? '—';
@@ -92,41 +115,118 @@ register({
     const statusL = el('span', {}, '黑方行棋');
     const infoL = el('span', {
       class: 'mono', style: { fontSize: '11px' },
-      title: '引擎搜索信息(胜率是 AI 视角,来自蒙特卡洛演棋)',
+      title: '引擎搜索信息(胜率/目差是 AI 视角;目差来自根局面 NN 网端 lead 头)',
     }, '');
     const layerEl = el('div', { class: 'go-layer' });
     const boardEl = el('div', { class: 'go-board' }, layerEl);
+    const fitWrap = el('div', { class: 'fit-wrap' }, boardEl);
+
+    /** 棋盘按可用空间等比缩放(棋盘内部是固定像素布局,transform 不影响
+     *  reportBoardMin 拿到的自然尺寸) */
+    function fitBoard() {
+      const body = appEl.querySelector('.app-body');
+      if (!body) return;
+      const w = body.clientWidth - 24, h = body.clientHeight - 24;
+      const bw = boardEl.offsetWidth, bh = boardEl.offsetHeight;
+      if (!bw || !bh) return;
+      fitWrap.style.transform = `scale(${Math.min(1, w / bw, h / bh)})`;
+    }
+
+    /* ---------- 数子窗(应用内悬浮卡片,不抢焦点:数子模式下棋盘始终可点,
+     * 点棋子切死/活,窗口开着时回包落地实时刷新)---------- */
+    const countMsgEl = el('div', { class: 'go-count-msg' });
+    const countExitBtn = el('button', {
+      class: 'btn',
+      onClick: () => { closeCountPanel(); if (!gameOver) exitCount(); },
+    }, '继续对局');
+    const countOkBtn = el('button', { class: 'btn primary', onClick: closeCountPanel }, '确定');
+    const countPanel = el('div', { class: 'go-count' },
+      el('div', { class: 'go-count-title' }, '数子(中国规则)'),
+      countMsgEl,
+      el('div', { class: 'go-count-foot' }, countExitBtn, countOkBtn));
+
+    function countDetailText(s) {
+      const dBlack = s.dead.filter((p) => board[p] === 1).length;
+      const dWhite = s.dead.length - dBlack;
+      const win = s.margin > 0 ? '黑胜' : s.margin < 0 ? '白胜' : '和棋';
+      return `黑:子 ${s.blackStones} + 空 ${s.blackTerritory} = ${s.black}\n`
+        + `白:子 ${s.whiteStones} + 空 ${s.whiteTerritory} + 贴目 ${s.komi} = ${s.white}\n`
+        + `${win === '和棋' ? '和棋' : win + ' ' + Math.abs(s.margin).toFixed(1) + ' 目'}`
+        + (s.dead.length ? ` · 死子:黑 ${dBlack} 颗 / 白 ${dWhite} 颗` : '')
+        + `\n${gameOver ? '点击棋子可切换死/活,数子实时更新' : '数子随时可做;点击棋子切换死/活'}`;
+    }
+    function openCountPanel() {
+      countPanelWanted = true;
+      refreshCountPanel();
+    }
+    /** 数子窗内容落地/刷新(数据没到就先不开窗,等回包时开) */
+    function refreshCountPanel() {
+      countExitBtn.style.display = gameOver ? 'none' : '';
+      if (!countScore || countScore.blackStones === undefined) return;
+      countMsgEl.textContent = countDetailText(countScore);
+      countPanel.classList.add('open');
+    }
+    function closeCountPanel() {
+      countPanelWanted = false;
+      countPanel.classList.remove('open');
+    }
 
     /* ---------- 渲染(全部基于最近一次 state 回包的缓存) ---------- */
     function render() {
       layerEl.innerHTML = boardSvg();
       /* 虚影与可点光标只在「轮到玩家」时出现 */
-      const humanTurn = !gameOver && (!vsAI || turn === humanSide);
+      const humanTurn = !gameOver && !countMode && (!vsAI || turn === humanSide);
       boardEl.classList.toggle('turn-b', humanTurn && turn === BLACK);
       boardEl.classList.toggle('turn-w', humanTurn && turn === WHITE);
       const hint = humanTurn ? legal : null;
-      for (let p = 0; p < 81; p++) {
+      for (let p = 0; p < N * N; p++) {
         const btn = el('button', {
-          class: 'go-pt' + (hint && !board[p] && hint.has(p) ? ' can' : ''),
-          style: { left: X(p % 9) + 'px', top: Y((p / 9) | 0) + 'px' },
+          class: 'go-pt' + (hint && !board[p] && hint.has(p) ? ' can' : '')
+            + (countMode && board[p] ? ' countable' : ''),
+          style: { left: X(p % N) + 'px', top: Y((p / N) | 0) + 'px' },
           dataset: { i: String(p) },
           onClick: () => onPoint(p),
         });
         if (board[p]) {
           const st = el('div', {
-            class: `go-stone ${board[p] === 1 ? 'black' : 'white'}${p === lastMove ? ' last' : ''}`,
+            class: `go-stone ${board[p] === 1 ? 'black' : 'white'}${p === lastMove ? ' last' : ''}${countMode && deadShown.has(p) ? ' dead' : ''}`,
           });
           if (p === lastMove) st.classList.add('drop');
           btn.append(st);
         } else if (hint) {
           btn.append(el('div', { class: 'go-ghost' }));
         }
+        /* 形势判断覆盖层(Lizzie/KaTrain 同款方块热图):
+         * 颜色 = 归属方(黑/白),深浅与大小都编码归属强度 —— 越大越实,越小越虚。 */
+        if (ownership && !countMode) {
+          const v = ownership[p], a = Math.abs(v);
+          if (a > 0.06) {
+            const size = Math.round(CS * Math.min(0.62, 0.18 + 0.44 * Math.min(a, 1)));
+            btn.append(el('div', {
+              class: 'go-own ' + (v > 0 ? 'b' : 'w'),
+              style: {
+                width: size + 'px', height: size + 'px',
+                opacity: String(0.32 + 0.42 * Math.min(a, 1)),
+              },
+            }));
+          }
+        }
         layerEl.append(btn);
       }
       passBtn.disabled = !humanTurn;
+      estBtn.disabled = countMode || searching;
+      countBtn.disabled = searching || (vsAI && !gameOver && turn !== humanSide);
+      countBtn.replaceChildren(gameOver ? '结果' : countMode ? '继续对局' : '数子');
     }
 
     function updateStatus() {
+      if (countMode) {
+        if (!countScore) { statusL.textContent = '数子中…'; return; }
+        const m = countScore.margin;
+        const res = m > 0 ? `黑胜 ${m.toFixed(1)} 目` : m < 0 ? `白胜 ${(-m).toFixed(1)} 目` : '和棋';
+        statusL.textContent = `数子:黑 ${countScore.black} · 白 ${countScore.white} —— ${res}(点棋子切换死/活)`;
+        return;
+      }
       if (gameOver) return;
       const caps = `黑提 ${captures[BLACK]} · 白提 ${captures[WHITE]}`;
       statusL.textContent = `${sideName(turn)}行棋 · ${caps}`;
@@ -136,6 +236,7 @@ register({
 
     /* ---------- 落子:合法性以缓存 state 为准,走子 = 改序列 + 再问一次引擎 ---------- */
     function onPoint(p) {
+      if (countMode) { toggleDead(p); return; }
       if (gameOver || board[p] || statePending) return;
       if (vsAI && turn !== humanSide) return;    // AI 回合/思考中不响应点击
       if (!legal.has(p)) {
@@ -147,6 +248,63 @@ register({
       doMove(p);
     }
 
+    /** 数子模式:点棋子 = 整块切死/活,重发数子请求(deadOverride 为空 = 引擎自动判定) */
+    function toggleDead(p) {
+      if (!board[p]) return;
+      const v = board[p], group = [], seen = new Set([p]), stack = [p];
+      while (stack.length) {
+        const q = stack.pop(); group.push(q);
+        for (const nb of neighborsOf(q)) {
+          if (board[nb] === v && !seen.has(nb)) { seen.add(nb); stack.push(nb); }
+        }
+      }
+      const set = new Set(deadOverride ?? deadShown);
+      const allDead = group.every((q) => set.has(q));
+      for (const q of group) { if (allDead) set.delete(q); else set.add(q); }
+      requestScore([...set]);
+    }
+
+    function requestScore(override) {
+      deadOverride = override;
+      countScore = null;
+      render();
+      updateStatus();
+      if (!ensureWorker()) return;
+      worker.postMessage({ type: 'score', id: ++scoreSeq, moves: hist.slice(), deadOverride: override });
+    }
+
+    function enterCount() {
+      cancelEndDlg();
+      if (searching) abortEngine();
+      countMode = true;
+      ownership = null; estimateOn = false;
+      requestScore(null);                        // 先按引擎自动判定标示(NN 加载时带 ownership 辅助)
+      openCountPanel();
+    }
+
+    function exitCount() {
+      countMode = false;
+      closeCountPanel();
+      deadOverride = null;
+      deadShown = new Set();
+      countScore = null;
+      render();
+      updateStatus();
+      if (!gameOver && vsAI && turn === aiSide()) thinkAI();
+    }
+
+    /** 形势判断开关:向引擎要一次 estimate(ownership 覆盖层 + 目差/胜率) */
+    function toggleEstimate() {
+      if (countMode || searching) return;
+      estimateOn = !estimateOn;
+      ownership = null;
+      render();
+      if (!estimateOn) { updateStatus(); return; }
+      infoL.textContent = '形势判断中…';
+      if (!ensureWorker()) return;
+      worker.postMessage({ type: 'estimate', id: ++estSeq, moves: hist.slice() });
+    }
+
     function doMove(mv) {
       hist.push(mv);
       if (mv !== PASS) lastMove = mv;
@@ -154,56 +312,86 @@ register({
       fetchState();
     }
 
-    /** state 回包落地:重画 + 按回包事实终局(双停数子)/ 调度 AI */
+    /** state 回包落地:重画 + 按回包事实终局(双停自动进数子)/ 调度 AI */
     function applyState(d) {
       board = d.board;
       legal = new Set(d.legal);
       ko = d.ko;
       captures = d.captures;
       turn = d.stm;
-      if (d.over) { endGame(d.score); return; }
+      ownership = null; estimateOn = false;      // 新局面:旧形势图作废
+      if (d.over) {
+        /* 双停终局:自动进数子 —— 死子按「规则侧 + NN ownership 辅助」上盘标注,
+         * 可点棋子手改,数子实时更新;结算窗稍后弹出(读最新数子结果)。 */
+        gameOver = true;
+        countMode = true;
+        deadOverride = null; deadShown = new Set();
+        requestScore(null);
+        endGame(d.score);
+        render();
+        return;
+      }
       render();
       if (!gameOver && vsAI && turn === aiSide()) setTimeout(thinkAI, 260);
       else updateStatus();
     }
 
-    function endGame(score) {
+    function endGame(score, isResign = false) {
       gameOver = true;
-      abortEngine();
+      /* 不 terminate worker:数子标注还要用它(自动标注 + 手改重算);过期回包有序号防线 */
       const win = score.margin > 0 ? '黑胜' : score.margin < 0 ? '白胜' : '和棋';
       const diff = Math.abs(score.margin).toFixed(1);
-      const line = `终局 · ${win === '和棋' ? win : win + ' ' + diff + ' 目'}`;
-      /* 结算弹窗缓一拍:让玩家看清终局盘面再弹;缓冲期里的操作会取消它 */
-      popEndDlg(() => dialogs.info({
-        title: '终局(双停)',
-        message: `黑 ${score.black} · 白 ${score.white} —— ${win === '和棋' ? '和棋' : win + ' ' + diff + ' 目'}`,
-      }));
+      const line = isResign
+        ? `终局 · ${win === '和棋' ? win : win}(AI 认输)`
+        : `终局 · ${win === '和棋' ? win : win + ' ' + diff + ' 目'}`;
+      /* 结算窗缓一拍:让玩家看清终局盘面再弹;缓冲期里的操作会取消它。
+       * 双停的结算走数子窗(明细 + 死子分布),认输走系统弹框。 */
+      popEndDlg(() => {
+        if (isResign) {
+          dialogs.info({
+            title: '终局(中盘)',
+            message: `${win === '和棋' ? '和棋' : win}(AI 认输)`,
+          });
+        } else {
+          openCountPanel();
+        }
+      });
       statusL.textContent = line;
       setTitle('围棋 — 终局');
       bus.notify('围棋', line);
     }
 
-    /* ---------- Worker:难度表 / 局面事实 / 搜索都经它 ----------
-     * Worker 里搜索是同步的,新消息只会排队 —— 需要立刻刹车(新对局 / 换难度 /
-     * 关窗)时直接 terminate 再造一个。 */
+    /* ---------- Worker:难度表 / 局面事实 / 搜索 / 数子 / 形势都经它 ----------
+     * 唯一引擎:vendor/AetherGo/src/nn-worker.js(aethernn 自研 WebGPU 推理,
+     * i8 权重 f16 计算,PUCT 搜索对齐 KataGo;旧 UCT 随机演棋引擎已移除)。
+     * Worker 里搜索是同步的,新消息只会排队 —— 需要立刻刹车(且模型已加载、
+     * 重载代价高)时才 terminate 再造一个;空闲动作只作废在途回包。 */
     let worker = null, reqSeq = 0, stateSeq = 0, statePending = null;
+    let nnLoaded = false, nnWanted = false; // 模型是否就绪 / 是否在等它思考
+    /* 内置权重包(b8c96h3tfrs 19 路 i8):必须走 new URL(..., import.meta.url)
+     * 的静态写法,Vite 才会把模型作为资产打进 dist 并改写成产物地址 */
+    const NN_MODEL_URL = new URL('../../../vendor/AetherGo/models/b8c96h3tfrs_19.i8.aewn', import.meta.url).href;
 
     function killWorker() {
       if (worker) { worker.terminate(); worker = null; }
       searching = false;
+      nnLoaded = false;
+      scoreSeq++;                            // 作废在途数子/形势回包
+      estSeq++;
       if (statePending) { const p = statePending; statePending = null; p(null); }
       /* 请求号自增:terminate() 拦不住「已经进了主线程消息队列」的那条结果,
        * 新对局/换档后它要是被当成当前结果应用,就会把旧局面的着法落到新对局上 */
       reqSeq++;
     }
 
-    /** 作废在途请求(局面已变 / 窗口关闭),免得过期着法落到新对局上 */
+    /** 作废在途请求并掐掉引擎(局面已变 / 换人机 / 关窗)。
+     *  注意:模型重载要好几秒,空闲动作(新对局/悔棋/换边)不要走到这里。 */
     function abortEngine() { killWorker(); infoL.textContent = ''; }
 
     function ensureWorker() {
       if (worker) return worker;
       try {
-        worker = new Worker(new URL('../../../vendor/AetherGo/src/worker.js', import.meta.url), { type: 'module' });
+        worker = new Worker(new URL('../../../vendor/AetherGo/src/nn-worker.js', import.meta.url), { type: 'module' });
       } catch (err) {
         console.error('[go] 无法创建 AI Worker:', err);
         worker = null; searching = false;
@@ -216,6 +404,12 @@ register({
         killWorker();
         statusL.textContent = 'AI 出错,已跳过本步';
       };
+      /* 建好就问难度表 + 发模型加载(两不耽误:规则事实不依赖模型) */
+      worker.postMessage({ type: 'levels' });
+      levelSel.disabled = true;
+      levelSel.title = 'NN 引擎加载中…';
+      infoL.textContent = 'NN:加载运行时与模型…';
+      worker.postMessage({ id: ++reqSeq, type: 'load', modelUrl: NN_MODEL_URL });
       return worker;
     }
 
@@ -223,17 +417,56 @@ register({
       const d = e.data;
       if (!d) return;
       if (d.type === 'levels') { applyLevels(d); return; }
+      if (d.type === 'status') { infoL.textContent = 'NN:' + d.text; return; }
+      if (d.type === 'loaded') {
+        nnLoaded = true;
+        infoL.textContent = 'NN 就绪(WebGPU)';
+        if (nnWanted) { nnWanted = false; thinkAI(); }
+        return;
+      }
       if (d.type === 'state') {
         if (!statePending || d.id !== stateSeq) return;   // 过期局面直接丢
         const p = statePending; statePending = null;
         p(d.error ? null : d);
         return;
       }
-      /* ---- 以下是搜索回包(progress / 最终结果)---- */
+      if (d.type === 'score') {
+        if (d.id !== scoreSeq) return;                    // 过期数子直接丢
+        countScore = d.detail ?? d.score;                 // detail 带子/空/贴明细(旧回包兜底)
+        deadShown = new Set(countScore.dead);
+        render();
+        updateStatus();
+        if (countPanelWanted && countScore.blackStones !== undefined) { countPanelWanted = false; refreshCountPanel(); }
+        else if (countPanel.classList.contains('open')) refreshCountPanel();   // 窗开着:实时刷新明细
+        return;
+      }
+      if (d.type === 'estimate') {
+        if (d.id !== estSeq || !estimateOn) return;       // 过期/已关掉的形势直接丢
+        if (d.error) { infoL.textContent = '形势判断失败:' + d.error; return; }
+        ownership = d.ownership ? Float32Array.from(d.ownership) : null;
+        const wr = fmtRate(d.winRate);
+        /* 目差双口径:网端 lead 头(已含贴目,模型自己的分数预测)优先,
+         * 缺了回落归属求和口径(旧模型没有 lead 消费) */
+        const lead = d.netScoreLead ?? d.scoreLead;
+        infoL.textContent = '形势:黑胜率 ' + wr
+          + (lead != null ? ` · 黑目差 ${lead > 0 ? '+' : ''}${lead.toFixed(1)}` : '');
+        render();
+        return;
+      }
+      /* ---- 以下是搜索回包(progress / 最终结果 / load 失败)---- */
       if (d.id !== reqSeq) return;               // 过期结果(换难度/新对局)直接丢
       if (d.type === 'progress') { showInfo(d); return; }
       searching = false;
-      if (d.error) { statusL.textContent = '引擎异常:' + d.error; return; }
+      if (d.error) {
+        statusL.textContent = (nnLoaded ? '引擎异常:' : 'NN 引擎加载失败:') + d.error;
+        return;
+      }
+      if (d.resign) {                            // NN 引擎动态认输(实战 GTP 配方)
+        gameOver = true;
+        render();
+        endGame({ margin: aiSide() === BLACK ? -999 : 999 }, true);
+        return;
+      }
       if (!d.move && d.move !== 0) { fetchState(); return; }  // AI 无着法 = 判终局,事实以 state 为准
       hist.push(d.move);
       if (d.move !== PASS) lastMove = d.move;
@@ -253,7 +486,8 @@ register({
       worker.postMessage({ type: 'state', id, moves: hist.slice() });
     }
 
-    /** 开局问一次引擎的难度表,拿到才填下拉 —— UI 与引擎的档位认知就此对齐 */
+    /** 引擎的难度表到了才填下拉 —— UI 与引擎的档位认知就此对齐。
+     *  Worker 重建会重报一次:用户已选的档位只要还在表里就保留(否则回默认)。 */
     function applyLevels(d) {
       const table = Array.isArray(d.levels)
         ? d.levels.filter((lv) => lv && typeof lv.name === 'string' && lv.name) : [];
@@ -261,17 +495,19 @@ register({
         levelSel.title = 'AI 难度不可用(引擎未上报)';
         return;
       }
+      const keep = levels.length && levelIdx < table.length ? levelIdx : -1;
       levels = table;
       const def = Number.isInteger(d.default) && d.default >= 0 && d.default < table.length ? d.default : 0;
-      levelIdx = def;
-      levelSel.append(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
-      levelSel.value = String(def);
+      levelIdx = keep >= 0 ? keep : def;
+      levelSel.replaceChildren(...table.map((lv, i) => el('option', { value: String(i) }, lv.name)));
+      levelSel.value = String(levelIdx);
       levelSel.disabled = false;
       levelSel.title = 'AI 难度:' + table.map((lv) => lv.name).join(' / ');
     }
 
     function thinkAI() {
-      if (gameOver || searching) return;
+      if (gameOver || searching || countMode) return;
+      if (!nnLoaded) { nnWanted = true; statusL.textContent = 'NN 引擎加载中…'; return; }
       searching = true;
       render();
       statusL.textContent = `${sideName(aiSide())}思考中…`;
@@ -288,16 +524,26 @@ register({
 
     /** 底栏右侧的引擎信息行(等宽字体,与象棋应用同一套写法) */
     function showInfo(d) {
-      infoL.textContent = `${lvName()} · ${fmtVisits(d.visits)} 演棋 · ${d.ms}ms · 胜率 ${fmtRate(d.winRate)}`;
+      const lead = d.scoreLead != null
+        ? ` · 目差 ${d.scoreLead > 0 ? '+' : ''}${d.scoreLead.toFixed(1)}` : '';
+      infoL.textContent = `NN·${lvName()} · ${fmtVisits(d.visits)} 访问 · ${d.ms}ms · 胜率 ${fmtRate(d.winRate)}${lead}`;
     }
 
     /* ---------- 工具栏动作 ---------- */
+    /** 数子态清零(新对局 / 悔棋 / 换边共用):窗、模式、手改死子、缓存结果 */
+    function clearCount() {
+      closeCountPanel();
+      countMode = false; deadOverride = null; deadShown = new Set(); countScore = null;
+    }
+
     function resetGame() {
-      abortEngine();
+      if (searching) abortEngine(); else reqSeq++;  // 空闲不杀 worker(模型别重载)
       cancelEndDlg();
+      clearCount();
       turn = BLACK; hist = []; lastMove = null;
       gameOver = false;
-      board = new Array(81).fill(0);
+      ownership = null; estimateOn = false;
+      board = new Array(N * N).fill(0);
       legal = new Set(); ko = -1; captures = [0, 0];
       render();
       fetchState();                                // 初始局面事实照问引擎
@@ -310,8 +556,10 @@ register({
      *  序列改完问一次 state,棋盘 / 提子 / 数子全部以回包为准。 */
     function doUndo() {
       if (!hist.length) return;
-      abortEngine();
+      if (searching) abortEngine(); else reqSeq++; // 空闲不杀 worker(模型别重载)
       cancelEndDlg();
+      clearCount();
+      ownership = null; estimateOn = false;
       let n = 1;
       if (vsAI && turn === humanSide && hist.length >= 2) n = 2;
       while (n-- > 0 && hist.length) hist.pop();
@@ -328,8 +576,10 @@ register({
 
     /** 换边:与 AI 互换执子方。围棋不翻盘(坐标恒定),中途换边作废在途搜索并立即接手。 */
     function switchSide() {
-      abortEngine();
+      if (searching) abortEngine(); else reqSeq++; // 空闲不杀 worker(模型别重载)
       cancelEndDlg();
+      clearCount();
+      ownership = null; estimateOn = false;
       humanSide ^= 1;
       render();
       if (!gameOver && vsAI && turn === aiSide()) thinkAI();
@@ -370,6 +620,21 @@ register({
       class: 'btn', title: '停一手:双方连续停一手即终局数子',
       onClick: () => { if (!gameOver && (!vsAI || turn === humanSide)) doMove(PASS); },
     }, '停一手');
+    const countBtn = el('button', {
+      class: 'btn', title: '数子:打开数子窗(子/空/贴明细),点棋子切换死/活实时重算;终局后为「结果」',
+      onClick: () => {
+        if (gameOver) {
+          openCountPanel();
+          if (!countScore) requestScore(deadOverride);
+          return;
+        }
+        if (countMode) exitCount(); else enterCount();
+      },
+    }, '数子');
+    const estBtn = el('button', {
+      class: 'btn', title: '形势判断:NN 逐点归属覆盖层 + 胜率/目差(再点一次关闭)',
+      onClick: toggleEstimate,
+    }, '形势');
     const undoBtn = el('button', {
       class: 'btn', title: '悔棋:人机模式连 AI 的应手一起撤,人人模式撤一手',
       onClick: doUndo,
@@ -380,15 +645,21 @@ register({
         newBtn,
         el('label', { class: 'go-level-wrap', title: 'AI 难度' },
           el('span', { class: 'dim', style: { fontSize: '12px' } }, '难度'), levelSel),
-        passBtn, aiBtn, sideBtn, undoBtn),
-      el('div', { class: 'app-body', style: { display: 'grid', placeItems: 'center' } }, boardEl),
+        passBtn, countBtn, estBtn, aiBtn, sideBtn, undoBtn),
+      el('div', { class: 'app-body', style: { display: 'grid', placeItems: 'center' } }, fitWrap),
+      countPanel,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }),
         infoL));
     root.append(appEl);
-    /* 棋盘是固定像素的(CS 52 × 9 路 + 边距),窗口再小它也不缩 —— 按实测棋盘报
-     * 最小窗口尺寸给 WM;520 是工具栏(让子/停一手等按钮)挤不下时的兜底宽。 */
-    reportBoardMin(ctx, appEl, boardEl, 520);
+    /* 棋盘是固定像素的(CS 30 × 19 路 + 边距),窗口再小它也不缩(交给 fitBoard
+     * 等比缩放);560 是工具栏(难度/停一手/数子/形势等按钮)挤不下时的兜底宽。 */
+    reportBoardMin(ctx, appEl, boardEl, 560);
+
+    /* 棋盘按窗口大小缩放:窗口装不下自然尺寸就等比缩小 */
+    const ro = new ResizeObserver(fitBoard);
+    ro.observe(appEl.querySelector('.app-body'));
+    fitBoard();
 
     /* 供探针/排障:确认窗口活着、引擎档位与对局进度 */
     window.__go = {
@@ -400,25 +671,21 @@ register({
       },
       stats: () => ({
         level: levels[levelIdx]?.id, vsAI, searching, plies: hist.length,
-        turn, human: humanSide, gameOver,
+        turn, human: humanSide, gameOver, nnLoaded, countMode, estimateOn,
       }),
       lastText: () => (hist.length ? moveText(hist[hist.length - 1]) : ''),
     };
 
     render();
     updateStatus();
-    fetchLevels();
     fetchState();                                  // 初始局面的合法点等事实也要问引擎
-
-    function fetchLevels() {
-      if (!ensureWorker()) return;
-      worker.postMessage({ type: 'levels' });      // 回包经 onEngineMsg → applyLevels
-    }
+    // (难度表与模型加载在 ensureWorker 里随 Worker 建立一并发起)
 
     return {
       onClose() {
         cancelEndDlg();
         killWorker();
+        ro.disconnect();
         delete window.__go;
       },
     };

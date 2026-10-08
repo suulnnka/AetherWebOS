@@ -1,8 +1,26 @@
 import { defineConfig } from 'vite';
+import { sourceCatalog } from './tools/apps-manifest.mjs';
+
+// dev 的应用包清单(商店真实下载用):生产由 tools/apps-manifest.mjs 扫描
+// dist 生成 apps.json,dev 现场扫描 js/apps 源码树 —— 两条口径对运行时是
+// 同一个接口(fetch('apps.json'))
+function appsManifestDev() {
+  return {
+    name: 'apps-manifest-dev',
+    configureServer(server) {
+      server.middlewares.use('/apps.json', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(sourceCatalog()));
+      });
+    },
+  };
+}
 
 // base:'./' 使 dist 产物可放在任意子路径下用任意静态服务器运行
 export default defineConfig({
   base: './',
+  plugins: [appsManifestDev()],
   server: { port: 8080 },
   preview: { port: 8080 },
   /* 各棋类的引擎(国际象棋 ai-worker.js / 中国象棋 worker.js)走独立 Worker chunk:

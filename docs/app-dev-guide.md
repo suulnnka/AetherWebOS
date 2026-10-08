@@ -33,10 +33,14 @@ js/apps/<id>/
 > **软件商店与安装语义**:清单标 `store: true` 的应用默认**未安装**——
 > 不进开始菜单、不播种桌面快捷方式,`wm.open` 会被安装门禁拦下并引导去
 > 软件商店;`WebOS.apps.install(id)` 安装后入口实时出现,卸载则一并移除
-> (应用数据保留)。**安装按用户**(`webos.installed.v2` 每用户一份清单),
-> 甲装的应用乙看不到,新用户从系统预装起步。状态与副作用都在
-> `js/core/install.js`(叶子模块,通过 `sys:apps-changed` 广播联动
-> applink / wm / 开始菜单 / 商店)。
+> (应用数据保留)。安装是**真实资源下载**:构建产物由
+> `tools/apps-manifest.mjs` 扫描出应用包(dist/apps.json;dev 由 vite
+> 中间件现场扫描源码树),装时逐文件下载到 `/app/<id>/`(root 所有的
+> 系统包目录,core/pkg.js),成功才记安装标志,失败可重试;包资源是
+> 设备级缓存,最后一个用户卸载时回收。**安装按用户**(`webos.installed.v2`
+> 每用户一份清单),甲装的应用乙看不到,新用户从系统预装起步。状态与
+> 副作用都在 `js/core/install.js`(叶子模块,通过 `sys:apps-changed`
+> 广播联动 applink / wm / 开始菜单 / 商店)。
 
 > **⚠️ import 边界**:应用只能 import `js/core/*`、`js/lib/*`(自研库,
 > 如地图内核 minimap、Markdown 内核 md.js / mdedit.js)与自身目录的文件,
@@ -101,12 +105,12 @@ register({
 | `resizable` | boolean | true | 是否允许拖拽调整大小 |
 | `desktop` | boolean | true | 是否出现在开始菜单;false 同时不参与桌面快捷方式播种 |
 | `desktopIcon` | boolean | true | 初始化/迁移时是否在桌面生成 `.app` 快捷方式;设 false 则不播种(棋类应用收纳进「棋类游戏」文件夹即此模式) |
-| `store` | boolean | false | 商店应用:默认未安装,需经软件商店(`WebOS.apps.install`)安装后才进开始菜单/桌面且可打开;卸载移除入口但保留数据 |
+| `store` | boolean | false | 商店应用:默认未安装,需经软件商店(`WebOS.apps.install`,真实下载应用包到 /app/<id>/)安装后才进开始菜单/桌面且可打开;卸载移除入口(末位卸载回收包资源)但保留数据 |
 | `category` | string | — | 分类(软件商店侧栏:游戏/工具/效率/社交/娱乐/系统) |
 | `desc` | string | — | 一句话简介(软件商店卡片) |
 | `order` | number | 100 | 菜单排序权重,小的在前 |
 | `prefetch` | boolean | false | 高频应用预读:启动空闲后后台拉取应用 chunk,首次打开免等(browser/terminal/files 已启用) |
-| `hoverPrefetch` | boolean | true | 悬停预读:鼠标移到启动入口(桌面图标/开始菜单/任务栏)上时预读应用 chunk;重型应用可设 false 关闭(围棋:引擎包后续会很大,已关闭) |
+| `hoverPrefetch` | boolean | true | 悬停预读:鼠标移到启动入口(桌面图标/开始菜单/任务栏)上时预读应用 chunk;重型应用可设 false 关闭(围棋:引擎 chunk 与 1.1MB 模型权重都不小,已关闭) |
 | `dialog` | boolean | false | 对话框型窗口(无最小化/最大化,配合模态遮罩) |
 
 ## 4. `mount(ctx)` 上下文

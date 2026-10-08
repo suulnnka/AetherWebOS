@@ -1,13 +1,16 @@
 /* 围棋专属样式
  * --cs(格距)与 index.js 里的 CS 常量必须一致:棋盘线是 SVG 画的,
- * 棋子/点击热区按 JS 算出的像素定位,两边不同步就会错位。 */
+ * 棋子/点击热区按 JS 算出的像素定位,两边不同步就会错位。
+ * 棋盘是固定像素布局,窗口装不下时由 index.js 的 fitBoard 缩放
+ * (.fit-wrap)。 */
+.fit-wrap { flex: none; transform-origin: center center; }
 .go-board {
-  --cs: 52px;
-  --pad: 26px;
+  --cs: 30px;
+  --pad: 24px;
   position: relative;
   flex: none;
-  width: calc(var(--cs) * 8 + var(--pad) * 2);
-  height: calc(var(--cs) * 8 + var(--pad) * 2);
+  width: calc(var(--cs) * 18 + var(--pad) * 2);
+  height: calc(var(--cs) * 18 + var(--pad) * 2);
   border-radius: 10px;
   background: linear-gradient(160deg, #f6e3bd, #e2c288 60%, #d7b478);
   box-shadow: inset 0 0 26px rgba(120, 80, 20, 0.35), 0 12px 34px rgba(0, 0, 0, 0.5);
@@ -22,11 +25,11 @@
 }
 .go-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
 .go-line { stroke: #7c5220; stroke-width: 1.3; fill: none; }
-/* 星位(9 路五个) */
+/* 星位(19 路九个) */
 .go-star { fill: #7c5220; }
-/* 边缘坐标:列 A~J(跳过 I)、行 1~9,给「上一手 D4」一个参照 */
+/* 边缘坐标:列 A~T(跳过 I)、行 1~19,给「上一手 Q16」一个参照 */
 .go-coord {
-  fill: #7c5220; opacity: 0.55; font-size: 11px;
+  fill: #7c5220; opacity: 0.55; font-size: 9px;
   font-family: var(--mono, monospace);
   text-anchor: middle; dominant-baseline: middle;
 }
@@ -90,6 +93,55 @@
   from { transform: scale(1.25); }
   to { transform: scale(1); }
 }
+
+/* 数子模式:可点的棋子(手型光标)+ 被判死的子(降透明 + 红圈) */
+.go-pt.countable { cursor: pointer; }
+.go-stone.dead {
+  opacity: 0.42;
+  outline: 2px solid rgba(225, 55, 55, 0.75);
+  outline-offset: -2px;
+}
+/* 形势判断覆盖层(Lizzie/KaTrain 同款方块热图):
+ * 方块画在交叉点正中,颜色 = 归属方;大小与深浅由 JS 按 |ownership| 内联设置 */
+.go-own {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.go-own.b { background: #0b1220; border: 1px solid rgba(248, 250, 252, 0.65); }
+.go-own.w { background: #f8fafc; border: 1px solid rgba(15, 23, 42, 0.6); }
+
+/* 数子窗:应用内悬浮卡片(不用系统弹框 —— 数子模式下棋盘要一直可点,
+ * 点棋子切死/活时窗内明细实时刷新) */
+.go-count {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  width: min(340px, calc(100% - 28px));
+  z-index: 5;
+  background: var(--panel-solid, #131a2a);
+  color: var(--text, #eef1f8);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow, 0 14px 40px rgba(0, 0, 0, 0.55));
+  padding: 16px;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.16s, transform 0.16s, visibility 0.16s;
+}
+.go-count.open {
+  visibility: visible;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.go-count-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.go-count-msg {
+  font-size: 12.5px; color: var(--text-2, #93a0bd); line-height: 1.7;
+  white-space: pre-line;
+}
+.go-count-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 /* 难度下拉(与象棋应用同款):与 .btn 同高,给足宽度 */
 .go-level-wrap { display: inline-flex; align-items: center; gap: 6px; flex: none; }

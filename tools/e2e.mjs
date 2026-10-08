@@ -4370,6 +4370,15 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   t('T50.4 安装后:开始菜单+桌面快捷方式+持久化', opened1 && s1.installed && s1.sm === 1 && s1.desk && s1.persisted, JSON.stringify(s1));
   await c.shot('t50-installed');
 
+  // d2. 真实资源下载:安装即把应用包拉到 /app/<id>/(文件应用「应用 /app」可见)
+  const pkg1 = await ev(`(async () => {
+    const list = WebOS.fs.list('/app/map') || [];
+    let bytes = 0;
+    for (const f of list) bytes += (await WebOS.fs.stat('/app/map/' + f.name))?.size || 0;
+    return { dir: WebOS.fs.isDir('/app/map'), files: list.length, bytes };
+  })()`);
+  t('T50.4b 安装即真实下载:包资源落盘 /app/map(非空)', pkg1.dir && pkg1.files >= 2 && pkg1.bytes > 0, JSON.stringify(pkg1));
+
   // e. 安装后从商店「打开」直达应用
   await ev(`document.querySelector('.st-card[data-app=map] .st-open').click()`);
   await sleep(700);
@@ -4387,6 +4396,15 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
     sm: document.querySelectorAll('.sm-item[data-search*="map"]').length,
   }))()`);
   t('T50.6 卸载:关窗口/解固定/菜单与卡片回退', s15.win === false && s15.pinned === false && s15.installed === false && s15.installBtn && s15.sm === 0, JSON.stringify(s15));
+
+  // f2. 末位卸载回收:包资源 /app/map 的存在性 ⟺ 仍有用户装着它
+  // (profile 跨运行共享,历史用户的安装状态也在内,故断言不变量而非具体状态)
+  const pkg2 = await ev(`(() => {
+    const v2 = JSON.parse(localStorage.getItem('webos.installed.v2') || '{}');
+    const anyone = Object.values(v2).some(a => a.includes('map'));
+    return { gone: !WebOS.fs.exists('/app/map'), anyone };
+  })()`);
+  t('T50.6b 末位卸载回收包资源(无人安装 ⟺ /app/map 移除)', pkg2.gone === !pkg2.anyone, JSON.stringify(pkg2));
 
   // g. API 安装:商店窗口开着也能实时刷新卡片(总线联动)
   await ev(`WebOS.apps.install('map', { silent: true })`);

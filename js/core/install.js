@@ -1,18 +1,24 @@
 /* ============================================================
- * Install —— 应用安装状态(软件商店,按用户)
+ * Install —— 应用安装(软件商店,按用户)
  *
  * 清单标 store: true 的应用不预装:不出现在开始菜单、不播种桌面
  * 快捷方式、wm.open 被安装门禁拦下,需经软件商店 installApp()
  * 安装后才可用;卸载(uninstallApp)则连同入口一并移除。
  * 其余应用视为预装,所有用户任何时刻都可用。
  *
+ * 安装 = **真实资源下载**(core/pkg.js):把应用包(入口 chunk +
+ * 引擎 worker + 模型等资产,清单由构建产物扫描生成)下载到
+ * /app/<id>/,成功才记安装标志;失败(断网等)不置位可重试。
+ * 包资源是设备级缓存:任何用户装过即就位,其他用户安装免下载;
+ * 最后一个用户卸载时回收 /app/<id>(应用数据 appdata 始终保留,
+ * 重装后原样恢复)。
+ *
  * 安装是**按用户**的:每个用户一份已安装清单(localStorage
  * webos.installed.v2 = { 用户名: [应用 id] }),A 装的应用 B 看不到;
  * 新用户从系统预装起步,开始菜单 / 桌面快捷方式 / 打开门禁都以
- * **本人**清单为准。应用数据(appdata)按用户保留:卸载不清数据,
- * 重装即恢复。
+ * **本人**清单为准。
  *
- * 本模块是**叶子模块**(只依赖 bus/registry/store/fs/accounts,
+ * 本模块是**叶子模块**(只依赖 bus/registry/store/fs/accounts/pkg,
  * 不 import applink / wm —— 避免循环依赖;Vite 开发服务器对
  * 环状模块的 HMR 会拆出重复实例,状态就裂成两份)。桌面快捷方式的
  * 播种/清理(applink)与被卸载窗口的关闭(wm)都由 sys:apps-changed
@@ -23,6 +29,7 @@ import { get, list } from './registry.js';
 import { settings } from './store.js';
 import { accounts } from './accounts.js';
 import fs, { desktopPath } from './fs.js';
+import { ensureResources, removeResources, fmtBytes } from './pkg.js';
 
 const KEY = 'webos.installed.v2';
 const LEGACY_KEY = 'webos.installed.v1';   // 设备级旧版(数组):启动时一次性按用户拆分
@@ -104,40 +111,72 @@ export function storeApps() {
   return list().filter(m => m.store === true);
 }
 
+/** 进行中的资源下载(id → promise):并发安装(商店按钮 + API)共享同一次 */
+const inflight = new Map();
+
 /**
- * 安装应用(幂等,按用户)。广播 sys:apps-changed(action: install)后,
+ * 安装应用(按用户,异步):先把应用包真实下载到 /app/<id>/
+ * (已就位则免下载),成功才记安装标志。下载失败不置位,
+ * 返回 false 可重试。广播 sys:apps-changed(action: install)后,
  * 该用户的桌面快捷方式播种与各处入口由订阅方实时补齐。
+ * @param {Function} opts.onProgress ({ loaded, total, file }) 字节级下载进度
  */
-export function installApp(id, opts = {}) {
+export async function installApp(id, opts = {}) {
   const m = get(id);
   if (!m || m.store !== true) return false;
   const user = opts.user || accounts.current();
   if (!user) return false;
   const set = byUser[user] || (byUser[user] = new Set());
   if (set.has(id)) return true;
+
+  /* 真实资源下载:并发调用共享同一次(进度只回报给发起方) */
+  let dl = inflight.get(id);
+  if (!dl) {
+    dl = ensureResources(id, { onProgress: opts.onProgress })
+      .finally(() => inflight.delete(id));
+    inflight.set(id, dl);
+  }
+  let res;
+  try {
+    res = await dl;
+  } catch (err) {
+    console.warn(`[install] 「${id}」资源下载失败:`, err);
+    if (!opts.silent) notify('安装失败', `「${m.name}」资源下载失败,请检查网络后重试`);
+    return false;
+  }
+
   set.add(id);
   persist();
   announce('install', id, user);
   settle();
-  if (!opts.silent) notify('安装完成', `「${m.name}」已添加到开始菜单与桌面`);
+  if (!opts.silent) {
+    notify('安装完成', res.cached
+      ? `「${m.name}」资源已就位,已添加到开始菜单与桌面`
+      : `「${m.name}」已下载 ${fmtBytes(res.bytes)},添加到开始菜单与桌面`);
+  }
   return true;
 }
 
 /**
- * 卸载应用(幂等,按用户)。广播 sys:apps-changed(action: uninstall)后,
+ * 卸载应用(按用户)。广播 sys:apps-changed(action: uninstall)后,
  * 订阅方关闭其窗口、移出任务栏固定并删除**该用户**桌面上的快捷方式;
- * 应用数据保留,重新安装后原样恢复。
+ * 应用数据保留,重新安装后原样恢复。若已没有任何用户装着它,
+ * 连设备级的包资源(/app/<id>)一并回收。
  */
-export function uninstallApp(id, opts = {}) {
+export async function uninstallApp(id, opts = {}) {
   const m = get(id);
   const user = opts.user || accounts.current();
   if (!m || !byUser[user]?.has(id)) return false;
   byUser[user].delete(id);
   persist();
+  const last = ![...Object.values(byUser)].some((s) => s.has(id));
   if (user === accounts.current()) unpin(id);
   announce('uninstall', id, user);
   settle();
-  if (!opts.silent) notify('已卸载', `「${m.name}」已移出开始菜单与桌面(数据保留)`);
+  if (last) removeResources(id);
+  if (!opts.silent) {
+    notify('已卸载', `「${m.name}」已移出开始菜单与桌面(数据保留${last ? ',包资源已回收' : ''})`);
+  }
   return true;
 }
 
@@ -163,6 +202,7 @@ function shortcutCandidates(m, user) {
  */
 export function reconcileLegacyShortcuts() {
   let dirty = false;
+  const added = [];                 // 本次新认定的安装(需要后台补包资源)
   const valid = new Set(list().map(m => m.id));
   for (const u of accounts.list()) {
     const set = byUser[u.name] || (byUser[u.name] = new Set());
@@ -170,6 +210,7 @@ export function reconcileLegacyShortcuts() {
       if (set.has(m.id)) continue;
       if (shortcutCandidates(m, u.name).some(p => fs.exists(p))) {
         set.add(m.id);
+        added.push(m.id);
         dirty = true;
       }
     }
@@ -185,6 +226,11 @@ export function reconcileLegacyShortcuts() {
   if (dirty) {
     persist();
     announce('reconcile', null, accounts.current());
+    /* 老用户升级:安装标志先行(入口不能等网络),包资源后台补齐;
+     * 失败无碍 —— 打开走部署 chunk,下次安装/重装会再确保资源 */
+    for (const id of new Set(added)) {
+      ensureResources(id).catch((err) => console.warn(`[install] 迁移补包「${id}」失败:`, err));
+    }
   }
   return dirty;
 }

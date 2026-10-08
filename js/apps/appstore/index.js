@@ -2,17 +2,20 @@
  *
  * 在售目录 = 清单标 store:true 的应用:未安装时不进开始菜单、
  * 不播种桌面快捷方式,安装(installApp)后才出现,卸载则一并移除。
- * 本应用只做展示与编排,状态与副作用都在 core/install.js。 */
-import { el, E2E } from '../../core/utils.js';
+ * 安装是**真实资源下载**(core/pkg.js + core/install.js):按 apps.json
+ * 包清单把应用文件逐个下载到 /app/<id>/,进度条由真实字节驱动,
+ * 卡片体积也是包清单里的真实大小。本应用只做展示与编排。 */
+import { el } from '../../core/utils.js';
 import { icon, appTile } from '../../core/icons.js';
 import { register, list as listApps } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './appstore.css';
 import * as wm from '../../core/wm.js';
 import { installApp, uninstallApp, isInstalled } from '../../core/install.js';
+import { loadCatalog, fmtBytes } from '../../core/pkg.js';
 
-/* 展示用的确定性伪元数据:包大小 / 评分 / 安装量由 id 哈希推导,
- * 每次打开都一致 —— 商店氛围数据,零维护成本 */
+/* 氛围用伪元数据:评分 / 安装量由 id 哈希推导,每次打开都一致;
+ * 包大小不在此列 —— 那是真实数据(pkgSizes,来自 apps.json) */
 const hash = (s) => {
   let h = 0;
   for (const ch of String(s)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
@@ -20,11 +23,9 @@ const hash = (s) => {
 };
 function fakeMeta(id) {
   const h = hash(id);
-  const size = (0.5 + (h % 640) / 10).toFixed(1);
   const rating = Math.min(5, 3.6 + ((h >>> 9) % 15) / 10);
   const dl = (1 + (h >>> 14) % 200) * 10;   // 1万 ~ 200万
   return {
-    size,
     rating: rating.toFixed(1),
     dl: dl >= 1000 ? `${(dl / 1000).toFixed(1)} million+` : `${dl} thousand+`,
   };
@@ -50,6 +51,13 @@ register({
     const storeCount = () => listApps().filter(a => a.store === true).length;
     const mineCount = () => listApps().filter(a => a.desktop !== false && isInstalled(a.id)).length;
 
+    /* 应用包真实大小(apps.json 到手后填充;未到手显示占位符) */
+    const pkgSizes = {};
+    loadCatalog().then((catalog) => {
+      for (const [id, p] of Object.entries(catalog.apps || {})) pkgSizes[id] = p.bytes;
+      renderAll();
+    }).catch((err) => console.warn('[appstore] 包清单不可用:', err));
+
     /** 当前视图的应用池:发现 = 在售(未安装排前);我的 = 已安装 */
     function pool() {
       let apps = listApps().filter(a => a.desktop !== false);
@@ -71,30 +79,27 @@ register({
 
     /* ---- 安装 / 卸载编排(按钮态切换 + core 副作用) ---- */
 
-    /** 安装按钮 → 进度条动画(纯装饰:本地安装本就瞬时)→ 落地 installApp。
-     * 计时用 setTimeout 驱动:后台标签页 RAF 会被暂停,安装会卡死 */
+    /** 安装按钮 → 真实下载进度(字节级,来自 core/install 的 onProgress)
+     *  → 落地 installApp。失败时安装标志不置位,重绘回「安装」可重试。 */
     function installFlow(app, btn) {
-      const prog = el('div', { class: 'st-prog' },
+      const prog = el('div', { class: 'st-prog', title: `正在下载 ${app.name} 的应用包` },
         el('div', { class: 'st-prog-bar' }, el('i')),
-        el('span', { class: 'st-prog-t' }, '0%'));
+        el('span', { class: 'st-prog-t' }, '连接中…'));
       btn.replaceWith(prog);
       const bar = prog.querySelector('i');
       const txt = prog.querySelector('.st-prog-t');
-      const total = E2E ? 90 : 900;
-      const t0 = performance.now();
-      bar.offsetWidth;   // 强制回流,保证过渡从 0 起步
-      bar.style.transition = `width ${total}ms linear`;
-      bar.style.width = '100%';
-      const timer = setInterval(() => {
-        const p = Math.min(100, ((performance.now() - t0) / total) * 100);
-        txt.textContent = Math.round(p) + '%';
-      }, 60);
-      setTimeout(() => {
-        clearInterval(timer);
-        txt.textContent = '100%';
-        installApp(app.id);   // 通知 / 开始菜单 / 桌面快捷方式由此落地
+      installApp(app.id, {
+        onProgress: (p) => {
+          const pct = p.total ? Math.min(100, Math.round((p.loaded / p.total) * 100)) : 0;
+          bar.style.width = pct + '%';
+          txt.textContent = p.total
+            ? `${pct}% · ${fmtBytes(p.loaded)} / ${fmtBytes(p.total)}`
+            : fmtBytes(p.loaded);
+        },
+      }).then(() => {
+        /* 成败都重绘:成功出「打开」,失败回「安装」(通知里带原因) */
         renderAll();
-      }, total);
+      });
     }
 
     async function uninstallFlow(app) {
@@ -131,13 +136,15 @@ register({
     function card(app) {
       const m = fakeMeta(app.id);
       const inst = isInstalled(app.id);
+      const size = pkgSizes[app.id];
       return el('div', { class: 'st-card' + (inst ? ' on' : ''), 'data-app': app.id },
         appTile(app, 48, 25),
         el('div', { class: 'st-info' },
           el('div', { class: 'st-name' },
             app.name,
             inst ? el('span', { class: 'st-ok' }, app.store === true ? '已安装' : '系统应用') : null),
-          el('div', { class: 'st-line' }, `${app.category || '系统'} · ${m.size} MB`),
+          el('div', { class: 'st-line' },
+            `${app.category || '系统'} · ${size != null ? fmtBytes(size) : '—'}`),
           el('div', { class: 'st-desc' }, app.desc || ''),
           el('div', { class: 'st-meta' }, `★${m.rating} · ${m.dl} 安装`),
         ),
