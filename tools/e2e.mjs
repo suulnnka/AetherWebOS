@@ -2667,33 +2667,51 @@ group('T38', '账号系统', async () => {
   })()`);
   t('T38.1 每用户数据隔离(alice 命名空间)', iso.inStore === true && iso.bobTask === false, JSON.stringify(iso));
 
-  // 库文件冻结:开库归一后 todo.awdb 是 rwx--x —— 属主 rm/rename/chmod 全拒
-  // (锁定位防「放宽 rw 把密文泄露给其他用户」),应用级读写不受影响(38.1 已证);
-  // appdata 目录本身也冻结(rmx--- 口径的 rwx---):rm -r 只查顶层锁,目录不上锁
-  // 会把冻结的库文件整棵带走
+  // 库文件冻结:x=管理位的语义下,冻结 = 无 x —— 开库归一后 todo.awdb 与
+  // appdata 目录都是 rw----(属主 rw,应用级读写不受影响,38.1 已证),
+  // rm/rename/chmod 因缺管理位全拒(防属主放宽 rw 把密文泄露给其他用户);
+  // appdata 目录无 x 的原因:rm -r 只查顶层管理位,目录可管理的话会把
+  // 冻结的库文件整棵带走。root 授 x 后属主即可解冻(最后验一步)
   const frozen = await ev(`(async () => {
     const p = '/home/alice/appdata/todo.awdb';
     const dir = '/home/alice/appdata';
     const mode6 = WebOS.fs.stat(p, { as: 'root' })?.mode6;
     const dirMode = WebOS.fs.stat(dir, { as: 'root' })?.mode6;
+    const rm = WebOS.fs.rm(p, { as: 'alice' }) === false;
+    const rename = WebOS.fs.rename(p, p + '.bak', { as: 'alice' }) === false;
+    const chmod = WebOS.fs.chmod(p, 'rwx---', { as: 'alice' }) === false;
+    const dirRm = WebOS.fs.rm(dir, { as: 'alice' }) === false;
+    const dirRename = WebOS.fs.rename(dir, dir + '.bak', { as: 'alice' }) === false;
+    const dirChmod = WebOS.fs.chmod(dir, 'rwx---', { as: 'alice' }) === false;
+    // root 授 x 管理位 → 属主获得管理权 → 自行收回(验证位的授权语义)
+    const granted = WebOS.fs.chmod(p, 'rwx---', { as: 'root' }) === true;
+    const manageAfterGrant = WebOS.fs.rename(p, p + '.bak', { as: 'alice' }) === true;
+    WebOS.fs.rename(p + '.bak', p, { as: 'alice' });
+    const revoked = WebOS.fs.chmod(p, 'rw----', { as: 'root' }) === true;
     return {
-      mode6, dirMode,
-      rm: WebOS.fs.rm(p, { as: 'alice' }) === false,
-      rename: WebOS.fs.rename(p, p + '.bak', { as: 'alice' }) === false,
-      chmod: WebOS.fs.chmod(p, 'rw-r--', { as: 'alice' }) === false,
-      dirRm: WebOS.fs.rm(dir, { as: 'alice' }) === false,
-      dirRename: WebOS.fs.rename(dir, dir + '.bak', { as: 'alice' }) === false,
-      dirChmod: WebOS.fs.chmod(dir, 'rw-r--', { as: 'alice' }) === false,
+      mode6, dirMode, rm, rename, chmod, dirRm, dirRename, dirChmod,
+      granted, manageAfterGrant, revoked,
       still: WebOS.fs.stat(p, { as: 'root' })?.mode6,
       dirStill: WebOS.fs.stat(dir, { as: 'root' })?.mode6,
     };
   })()`);
-  t('T38.1b 库文件与 appdata 目录冻结(rwx--x / rwx---:属主 rm/rename/chmod 全拒,仅 root 可解)',
-    frozen.mode6 === 'rwx--x' && frozen.dirMode === 'rwx---'
+  t('T38.1b 库文件与 appdata 目录冻结(rw---- = 无管理位:属主 rm/rename/chmod 全拒;root 授 x 即解冻)',
+    frozen.mode6 === 'rw----' && frozen.dirMode === 'rw----'
       && frozen.rm && frozen.rename && frozen.chmod
       && frozen.dirRm && frozen.dirRename && frozen.dirChmod
-      && frozen.still === 'rwx--x' && frozen.dirStill === 'rwx---',
+      && frozen.granted && frozen.manageAfterGrant && frozen.revoked
+      && frozen.still === 'rw----' && frozen.dirStill === 'rw----',
     JSON.stringify(frozen));
+
+  // 新建文件默认权限 70(rwx----:创建者全权,其他用户无任何位)
+  const def70 = await ev(`(() => {
+    const p = '/home/alice/appdata/def70-probe.txt';
+    WebOS.fs.write(p, 'x');
+    const m = WebOS.fs.stat(p, { as: 'root' })?.mode6;
+    WebOS.fs.rm(p, { as: 'root' });
+    return m;
+  })()`);
+  t('T38.1c 新建文件默认 70(rwx----)', def70 === 'rwx---', String(def70));
 
   // 登出 → 未登录时打开 todo 显示登录面板
   await ev(`(async () => {

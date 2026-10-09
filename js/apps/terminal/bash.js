@@ -139,25 +139,25 @@ CMDS.mkdir = {
   },
 };
 CMDS.chmod = {
-  desc: '修改权限(chmod <模式> <文件>;八进制 3/4 位同 Linux,2 位=属主+其他,如 61=rw---x 创建者私有;x=锁定位:禁移动/删除/重命名/改权限,置锁后仅 root 可解)',
+  desc: '修改权限(chmod <模式> <文件>;八进制 3/4 位同 Linux,2 位=属主+其他,如 70=rwx---- 新文件默认;x=管理位:允移动/删除/重命名/改权限,缺 x 这些操作全拒,授回须 root)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt / chmod 61 笔记.txt');
     const mode = args[0];
     const p = resolve(args[1]);
     if (!FS.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
-    if (!FS.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改,且带 x 锁定位的文件连属主也改不了(仅 root 可解)`);
+    if (!FS.chmod(p, mode)) throw new Error(`chmod: 无法更改 ${args[1]}: 仅属主或 root 可修改,且属主缺 x 管理位时同样被拒(须 root 授 x)`);
     return '';
   },
 };
 CMDS.rm = {
-  desc: '删除(rm [-r] <路径>;带 x 锁定位的不可删,锁对 chmod 同样生效,仅 root 可解)',
+  desc: '删除(rm [-r] <路径>;rm/rename/chmod 需节点带 x 管理位,缺位不可删,root 不限)',
   run(args, { resolve }) {
     const rec = args.filter(a => a.startsWith('-')).some(a => a.includes('r'));
     const p = args.filter(a => !a.startsWith('-'))[0];
     if (!p) throw new Error('rm: 缺少操作数');
     const target = resolve(p);
     if (FS.isDir(target) && !rec) throw new Error(`rm: 无法删除 ${p}: 是一个目录(使用 -r)`);
-    if (!FS.rm(target)) throw new Error(`rm: 无法删除 ${p}: 不存在、无权限或带 x 锁定位`);
+    if (!FS.rm(target)) throw new Error(`rm: 无法删除 ${p}: 不存在、无权限或缺 x 管理位`);
     return '';
   },
 };
@@ -171,15 +171,15 @@ CMDS.touch = {
   },
 };
 CMDS.mv = {
-  desc: '移动/重命名(mv <源> <目标>;带 x 锁定位的不可移动,锁对 chmod 同样生效,仅 root 可解)',
+  desc: '移动/重命名(mv <源> <目标>;需源节点带 x 管理位,缺位不可移动,root 不限)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('mv: 缺少目标文件操作数');
-    if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}: 不存在、无权限或带 x 锁定位`);
+    if (!FS.rename(resolve(args[0]), resolve(args[1]))) throw new Error(`mv: 无法移动 ${args[0]}: 不存在、无权限或缺 x 管理位`);
     return '';
   },
 };
 CMDS.cp = {
-  desc: '复制文件(cp <源> <目标>;副本不继承 x 锁定位)',
+  desc: '复制文件(cp <源> <目标>;副本走默认权限 70,不继承源的 x 管理位)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('cp: 缺少目标文件操作数');
     const src = resolve(args[0]);

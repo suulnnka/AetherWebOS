@@ -26,7 +26,7 @@ import fs from './fs.js';
 
 /** 设备级应用包根目录(root 私有;种子模式见 fs.js freshRoot) */
 const PKG_ROOT = '/app';
-/** 应用包权限:目录/文件都只给 root,普通用户三位全空(不可列/读/写);无 x(锁定位默认不锁) */
+/** 应用包权限:目录/文件都只给 root rw,普通用户三位全空且无管理位(不可列/读/写,更不可删改) */
 const PKG_DIR_MODE = 'rw----';
 const PKG_FILE_MODE = 'rw----';
 /** 文本类扩展名:按文本落盘,系统侧(终端 root / 调试)可直接读 */

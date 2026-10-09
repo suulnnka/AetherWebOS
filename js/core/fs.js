@@ -27,8 +27,8 @@
  *   r = 读文件 / 列目录(目录穿越不查权限:所有目录对已登录用户均可穿过,
  *       r 只管「能否列出该目录」,无独立运行权限);
  *   w = 写文件 / 改目录(在目录里新建条目还需对该目录 w);
- *   x = **锁定位**:置位后该用户不可移动/删除/重命名此节点
- *       (chmod 可解除;root 不受限)。复制产生的副本不继承 x。
+ *   x = **管理位**:置位后该用户可移动/删除/重命名此节点,也可 chmod 它;
+ *       缺 x 这些操作全拒(冻结),授回须 root。root 不受限。
  *
  * 当前会话用户来自 accounts.current();未登录时仅允许 root 内部操作
  * (as:'root')。所有写操作自动持久化并广播 sys:fs-changed。
@@ -134,15 +134,14 @@ ctx.bus.notify('标题', '内容')
 ctx.bus.onSys('fs-changed', payload => ...)
 `;
 
-/* 默认权限:目录 rw-r-- / 文件 rw---x = 八进制 61(6 位:属主 + 其他)。
- * 穿越不查权限;目录 r 只控制列目录。
- * 文件默认「创建者私有」:其他用户无 r(穿越免费下,默认可读等于
- * 全设备可读),x 对其他用户置锁(禁 rm/rename/chmod);属主段无 x,
- * 创建者对自己的文件始终全权。缺省模式不经 makeNode 剥 x(平台基线,
- * 非调用方带入);数据库等敏感文件另有更严的显式模式(appdata
- * rwx--x / rwx---,/app rw----)。 */
-const DIR_MODE = 'rw-r--';
-const FILE_MODE = 'rw---x';
+/* 默认权限:目录 rwx---- / 文件 rwx---- = 八进制 70(6 位:属主 + 其他)。
+ * x = **管理位**:允移动/删除/重命名/改权限(chmod);缺 x 这些操作全拒
+ * (冻结),root 不受限。属主默认持 x(创建者对自己的文件全权),
+ * 其他段默认全空(穿越免费下,默认可读等于全设备可读)。
+ * 冻结某个节点 = 去掉对应段的 x(appdata 库文件/目录 rw---- 即此口径,
+ * 解冻须 root);缺省模式不经 makeNode 剥 x(平台基线,非调用方带入)。 */
+const DIR_MODE = 'rwx----';
+const FILE_MODE = 'rwx----';
 const HOME_MODE = 'rw------';
 
 /** 解析整棵树 JSON;结构/版本不符返回 null */
@@ -168,13 +167,15 @@ function lsLooksStale() {
 function freshRoot() {
   const now = Date.now();
   return {
-    v: FS_VERSION, t: 'd', m: now, o: 0, p: DIR_MODE,
+    v: FS_VERSION, t: 'd', m: now, o: 0, p: 'rw-r--',
+    xs: 1,   // x 语义版本:1 = 管理位(置位允改名/删除/chmod);老树装载时一次性翻转,见 adoptTree
     c: {
-      // 系统目录:r 控制可列;穿越免费,无 x(锁定位默认不锁;root 本就绕过)
+      // 系统目录:r 控制可列;穿越免费;x 是管理位(root 本就绕过)
       bin: { t: 'd', m: now, o: 0, p: 'r--r--', c: {} },
       // 商店应用包目录:root 私有(others 三位全空),用户不可列/不可读/不可写
       app: { t: 'd', m: now, o: 0, p: 'rw----', c: {} },
-      home: { t: 'd', m: now, o: 0, p: DIR_MODE, c: {} },
+      // /home 保持可列(用户名单);各用户家目录自身 HOME_MODE 私有
+      home: { t: 'd', m: now, o: 0, p: 'rw-r--', c: {} },
     },
   };
 }
@@ -396,7 +397,11 @@ async function adoptTree(tree) {
     await hydrateContents(tree, '/');
   }
   migrateOwnerUids(tree);
-  migrateDirTraverseX(tree);
+  if (!tree.xs) {
+    migrateDirTraverseX(tree); // 穿越时代:x=进入目录,并入 r 后清掉
+    migrateXToManage(tree);    // 锁时代 → 管理时代:属主 x 取反(冻结保留),其他段清除
+    tree.xs = 1;               // 标记语义版本,幂等:新树不重跑
+  }
   root = tree;
 }
 
@@ -415,9 +420,8 @@ function migrateOwnerUids(n) {
 
 /**
  * 老树迁移:目录的穿越位 x 并入 r 后清除。
- * 旧 x = 进入目录;新 x = 禁移/删/改名的锁定位 —— 不清的话
- * 全部老目录(rwxr-x 等)一装载就全被锁死。
- * 文件的 x 不动:旧「可执行」本系统从未使用,按新语义直接视为锁。
+ * 仅对无 xs 标记的老树执行(新语义下目录的 x 是管理位,不能每次装载都剥)。
+ * 文件的 x 不动:旧「可执行」本系统从未使用。
  */
 function migrateDirTraverseX(n) {
   if (n.t === 'd' && typeof n.p === 'string') {
@@ -433,6 +437,26 @@ function migrateDirTraverseX(n) {
     if (changed) n.p = p;
   }
   if (n.c) for (const ch of Object.values(n.c)) migrateDirTraverseX(ch);
+}
+
+/**
+ * 锁语义 → 管理语义 一次性翻转(见根节点 xs 标记):
+ *  旧 x = 锁(置位 = 冻结该段),新 x = 管理位(置位 = 允改名/删除/chmod)。
+ *  属主段取反:旧无 x(可管理)→ 新有 x(仍可管理);旧有 x(冻结)→ 新无 x(仍冻结)。
+ *  其他段一律清 x(保守授权:对其他用户的可管理不因翻转而凭空出现)。
+ *  翻转后 appdata/pkg 的开库/安装归一会把各自的冻结域重新收敛(它们的
+ *  目标模式在新语义下就是无 x 的 rw----)。
+ */
+function migrateXToManage(n) {
+  if (typeof n.p === 'string') {
+    let p = n.p.padEnd(6, '-').slice(0, 6);
+    // 属主段:x 取反
+    p = p.slice(0, 2) + (p[2] === 'x' ? '-' : 'x') + p.slice(3);
+    // 其他段:x 清除
+    if (p[5] === 'x') p = p.slice(0, 5) + '-';
+    n.p = p;
+  }
+  if (n.c) for (const ch of Object.values(n.c)) migrateXToManage(ch);
 }
 
 /** 首次启动:OPFS 元数据 → 旧 localStorage 迁移 → 空则默认树 */
@@ -574,7 +598,7 @@ function uidOfActor(user) {
   return u == null ? -1 : u;
 }
 
-/** 解析 6 位模式 → 属主/其他 的 {r,w,x}(user 为登录名;x=锁定位) */
+/** 解析 6 位模式 → 属主/其他 的 {r,w,x}(user 为登录名;x=管理位) */
 function modeFor(n, user) {
   const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
   if (user === 'root') return { r: true, w: true, x: true };
@@ -587,7 +611,7 @@ function modeFor(n, user) {
  * 是否允许对 path 做 r/w。
  * 规则(无用户组):目录穿越不查权限(结构存在即可穿过);
  * 只对目标节点查属主位或"其他"位。
- * bit 为 'r'|'w'('x' 查锁定位,不用于穿越)。
+ * bit 为 'r'|'w'('x' 查管理位,不用于穿越)。
  */
 function allow(p, bit, user) {
   if (!user) return false;
@@ -631,20 +655,19 @@ function canTraverse(p, user) {
 }
 
 /**
- * x = 锁定位:该用户不可移动/删除/重命名此节点,也不可改它的权限
- * (chmod 同拒 —— 不然一改就把锁去了,锁形同虚设)。锁定即冻结,
- * 解铃须 root。root 不受限;位在该用户的权限段(属主看前 3 位,
- * 其他看后 3 位)。
+ * x = 管理位:该用户**可**移动/删除/重命名此节点,也可改它的权限
+ * (chmod)。缺 x 这些操作全拒(冻结),解冻须 root 授回 x。
+ * root 不受限;位在该用户的权限段(属主看前 3 位,其他看后 3 位)。
  */
-function moveLocked(n, user) {
-  if (!user || user === 'root') return false;
+function canManage(n, user) {
+  if (!user || user === 'root') return true;
   return modeFor(n, user).x === true;
 }
 
 /** 内部建节点(owner 接受登录名或 uid number;落盘一律 uid)。
- *  mode 缺省用系统默认(FILE_MODE 自带他人锁位,属平台基线,不剥);
- *  显式传入的 mode 里的 x 一律剥掉:锁定位不可经调用方创建/复制带上,
- *  只能事后 chmod。 */
+ *  mode 缺省用系统默认(FILE_MODE/DIR_MODE 自带属主 x,创建者可管理);
+ *  显式 mode 原样落盘 —— x 是管理位,调用方给什么就是什么
+ *  (系统内部建库/建包都显式给无 x 的 rw----,落盘即冻结)。 */
 function makeNode(kind, owner, mode) {
   const m = Date.now();
   let uid;
@@ -652,9 +675,7 @@ function makeNode(kind, owner, mode) {
   else if (owner == null || owner === '') uid = uidOfActor(actor());
   else uid = uidOfActor(owner);
   if (uid < 0) uid = 0;              // 未识别身份:归 root(仅系统路径会出现)
-  const m6 = mode == null
-    ? (kind === 'd' ? DIR_MODE : FILE_MODE)
-    : String(mode).padEnd(6, '-').slice(0, 6).replace(/x/g, '-');
+  const m6 = String(mode ?? (kind === 'd' ? DIR_MODE : FILE_MODE)).padEnd(6, '-').slice(0, 6);
   return kind === 'd'
     ? { t: 'd', c: {}, m, o: uid, p: m6 }
     : { t: 'f', d: '', m, o: uid, p: m6 };
@@ -1002,7 +1023,7 @@ export const fs = {
     return n;
   },
 
-  /** 删除文件或目录(含子内容);x 锁定位置位时拒绝(root 除外) */
+  /** 删除文件或目录(含子内容);缺 x 管理位时拒绝(root 除外) */
   rm(p, opts = {}) {
     const user = actor(opts);
     const par = node(parentPath(p));
@@ -1010,7 +1031,7 @@ export const fs = {
     if (!par || !par.c[name]) return false;
     if (!allow(parentPath(p), 'w', user)) return false;
     const victim = par.c[name];
-    if (moveLocked(victim, user)) return false;
+    if (!canManage(victim, user)) return false;   // 缺 x 管理位:不可删
     if ((user !== 'root' && ownerUid(victim) !== uidOfActor(user)) && !modeFor(victim, user).w) return false;
     delete par.c[name];
     removedPaths.add(normPath(p));   // fsdata 遗留待清理
@@ -1019,7 +1040,7 @@ export const fs = {
     return true;
   },
 
-  /** 移动/重命名;源节点 x 锁定位置位时拒绝(root 除外) */
+  /** 移动/重命名;源节点缺 x 管理位时拒绝(root 除外) */
   rename(oldP, newP, opts = {}) {
     const user = actor(opts);
     const par = node(parentPath(oldP));
@@ -1028,7 +1049,7 @@ export const fs = {
     if (!allow(parentPath(oldP), 'w', user)) return false;
     if (!allow(parentPath(newP), 'w', user)) return false;
     const n = par.c[name];
-    if (moveLocked(n, user)) return false;
+    if (!canManage(n, user)) return false;   // 缺 x 管理位:不可改名/移动
     delete par.c[name];
     const dstPar = this.mkdir(parentPath(newP), { silent: true, ...opts });
     if (!dstPar) { par.c[name] = n; return false; }
@@ -1051,7 +1072,7 @@ export const fs = {
     const user = actor(opts);
     if (!user) return false;
     if (user !== 'root' && ownerUid(n) !== uidOfActor(user)) return false;   // 仅属主或 root 可改
-    if (moveLocked(n, user)) return false;   // 锁定位冻结:带锁连 chmod 也不可,解铃须 root
+    if (!canManage(n, user)) return false;   // 缺 x 管理位:chmod 同拒,授权须 root
     let m6;
     if (/^[0-7]{4}$/.test(String(mode))) {
       // 四位八进制:忽略特殊位,取属主 + 其他(无用户组)
@@ -1059,11 +1080,11 @@ export const fs = {
       const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
       m6 = bits(parseInt(s[1], 8)) + bits(parseInt(s[3], 8));
     } else if (/^[0-7]{2}$/.test(String(mode))) {
-      // 两位八进制:属主 + 其他(本系统无用户组),如 chmod 61 = rw---x
+      // 两位八进制:属主 + 其他(本系统无用户组),如 chmod 70 = rwx----(新文件默认)
       const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
       m6 = bits(parseInt(String(mode)[0], 8)) + bits(parseInt(String(mode)[1], 8));
-    } else if (/^[rwxt-]{6}$/.test(String(mode))) {
-      m6 = String(mode);
+    } else if (/^[rwxt-]{6,}$/.test(String(mode))) {
+      m6 = String(mode).padEnd(6, '-').slice(0, 6);
     } else if (/^[0-7]{3}$/.test(String(mode))) {
       const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
       const [u, g, o] = String(mode).split('').map(c => parseInt(c, 8));
@@ -1096,7 +1117,7 @@ export const fs = {
   /** 当前会话用户(未登录 null) */
   currentUser: () => accounts.current(),
 
-  /** 是否允许 user 对 path 做 r/w(bit 也可传 'x' 查锁定位;应用级 API 经 AppFS 调用) */
+  /** 是否允许 user 对 path 做 r/w(bit 也可传 'x' 查管理位;应用级 API 经 AppFS 调用) */
   can(p, bit, user = accounts.current()) {
     return allow(p, bit, user);
   },
