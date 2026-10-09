@@ -134,10 +134,15 @@ ctx.bus.notify('标题', '内容')
 ctx.bus.onSys('fs-changed', payload => ...)
 `;
 
-/* 默认权限:目录 rw-r-- / 文件 rw-r--(6 位:属主 + 其他)。
- * 穿越不查权限;目录 r 只控制列目录;x 仅锁定位,默认不锁。 */
+/* 默认权限:目录 rw-r-- / 文件 rw---x = 八进制 61(6 位:属主 + 其他)。
+ * 穿越不查权限;目录 r 只控制列目录。
+ * 文件默认「创建者私有」:其他用户无 r(穿越免费下,默认可读等于
+ * 全设备可读),x 对其他用户置锁(禁 rm/rename/chmod);属主段无 x,
+ * 创建者对自己的文件始终全权。缺省模式不经 makeNode 剥 x(平台基线,
+ * 非调用方带入);数据库等敏感文件另有更严的显式模式(appdata
+ * rwx--x / rwx---,/app rw----)。 */
 const DIR_MODE = 'rw-r--';
-const FILE_MODE = 'rw-r--';
+const FILE_MODE = 'rw---x';
 const HOME_MODE = 'rw------';
 
 /** 解析整棵树 JSON;结构/版本不符返回 null */
@@ -637,7 +642,9 @@ function moveLocked(n, user) {
 }
 
 /** 内部建节点(owner 接受登录名或 uid number;落盘一律 uid)。
- *  mode 里的 x 一律剥掉:锁定位不可经创建/复制带上,只能事后 chmod。 */
+ *  mode 缺省用系统默认(FILE_MODE 自带他人锁位,属平台基线,不剥);
+ *  显式传入的 mode 里的 x 一律剥掉:锁定位不可经调用方创建/复制带上,
+ *  只能事后 chmod。 */
 function makeNode(kind, owner, mode) {
   const m = Date.now();
   let uid;
@@ -645,8 +652,9 @@ function makeNode(kind, owner, mode) {
   else if (owner == null || owner === '') uid = uidOfActor(actor());
   else uid = uidOfActor(owner);
   if (uid < 0) uid = 0;              // 未识别身份:归 root(仅系统路径会出现)
-  const def = kind === 'd' ? DIR_MODE : FILE_MODE;
-  const m6 = String(mode || def).padEnd(6, '-').slice(0, 6).replace(/x/g, '-');
+  const m6 = mode == null
+    ? (kind === 'd' ? DIR_MODE : FILE_MODE)
+    : String(mode).padEnd(6, '-').slice(0, 6).replace(/x/g, '-');
   return kind === 'd'
     ? { t: 'd', c: {}, m, o: uid, p: m6 }
     : { t: 'f', d: '', m, o: uid, p: m6 };
@@ -683,7 +691,7 @@ export function ensureUserHome(user) {
       if (name === 'desktop' || name === 'documents' || name === 'pictures' || name === 'music' || name === 'downloads' || name === 'appdata') {
         par.c[name] = makeNode('d', user, name === 'appdata' ? 'rw------' : DIR_MODE);
       } else {
-        const f = makeNode('f', user, FILE_MODE);
+        const f = makeNode('f', user);
         f.d = content ?? '';
         par.c[name] = f;
       }
@@ -699,7 +707,7 @@ export function ensureUserHome(user) {
   const deskNote = joinPath(home, 'desktop/桌面便签.txt');
   if (!node(deskNote)) {
     const d = node(joinPath(home, 'desktop'));
-    const f = makeNode('f', user, FILE_MODE);
+    const f = makeNode('f', user);
     f.d = DESKTOP_NOTE;
     d.c['桌面便签.txt'] = f;
     d.m = Date.now();
@@ -707,7 +715,7 @@ export function ensureUserHome(user) {
   const welcome = joinPath(home, 'documents/欢迎使用.txt');
   if (!node(welcome)) {
     const d = node(joinPath(home, 'documents'));
-    const f = makeNode('f', user, FILE_MODE);
+    const f = makeNode('f', user);
     f.d = WELCOME;
     d.c['欢迎使用.txt'] = f;
     d.m = Date.now();
@@ -715,7 +723,7 @@ export function ensureUserHome(user) {
   const guide = joinPath(home, 'documents/应用开发指南.md');
   if (!node(guide)) {
     const d = node(joinPath(home, 'documents'));
-    const f = makeNode('f', user, FILE_MODE);
+    const f = makeNode('f', user);
     f.d = DEVGUIDE;
     d.c['应用开发指南.md'] = f;
     d.m = Date.now();
@@ -885,7 +893,7 @@ export const fs = {
       const par = this.mkdir(parPath, mkdirOpts);
       if (!par) return false;
       if (par.c[name]) return false;
-      n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
+      n = makeNode('f', opts.owner || user || 'root', opts.mode);
       n.bin = true;
       par.c[name] = n;
       par.m = Date.now();
@@ -954,7 +962,7 @@ export const fs = {
     const par = this.mkdir(parPath, mkdirOpts);
     if (!par) return false;
     if (par.c[name]) return false;
-    const n = makeNode('f', opts.owner || user || 'root', opts.mode || FILE_MODE);
+    const n = makeNode('f', opts.owner || user || 'root', opts.mode);
     n.d = val;
     if (isBin) {
       n.bin = true;
@@ -1050,6 +1058,10 @@ export const fs = {
       const s = String(mode);
       const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
       m6 = bits(parseInt(s[1], 8)) + bits(parseInt(s[3], 8));
+    } else if (/^[0-7]{2}$/.test(String(mode))) {
+      // 两位八进制:属主 + 其他(本系统无用户组),如 chmod 61 = rw---x
+      const bits = (d) => ((d & 4) ? 'r' : '-') + ((d & 2) ? 'w' : '-') + ((d & 1) ? 'x' : '-');
+      m6 = bits(parseInt(String(mode)[0], 8)) + bits(parseInt(String(mode)[1], 8));
     } else if (/^[rwxt-]{6}$/.test(String(mode))) {
       m6 = String(mode);
     } else if (/^[0-7]{3}$/.test(String(mode))) {

@@ -139,9 +139,9 @@ CMDS.mkdir = {
   },
 };
 CMDS.chmod = {
-  desc: '修改权限(chmod <八进制如 644> <文件>;x=锁定位:禁移动/删除/重命名/改权限,置锁后仅 root 可解)',
+  desc: '修改权限(chmod <模式> <文件>;八进制 3/4 位同 Linux,2 位=属主+其他,如 61=rw---x 创建者私有;x=锁定位:禁移动/删除/重命名/改权限,置锁后仅 root 可解)',
   run(args, { resolve }) {
-    if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt');
+    if (args.length < 2) throw new Error('用法: chmod <模式> <文件>  例如: chmod 644 文件.txt / chmod 61 笔记.txt');
     const mode = args[0];
     const p = resolve(args[1]);
     if (!FS.exists(p)) throw new Error(`chmod: ${args[1]}: 没有那个文件或目录`);
