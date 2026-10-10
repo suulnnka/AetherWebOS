@@ -3,21 +3,25 @@
  *
  * 布局(webos/ 下):
  *   fs.v2.json          虚拟文件系统元数据树(inode 式,无文件内容)
+ *   fs.snaps.v1.json    快照注册表(fs.js 快照/COW 层)
  *   fsdata/<绝对路径>     文件内容(文本或二进制,如 …/sms.awdb)
- *   其余键(设置/账号等)仍在 localStorage
+ *   fsshadow/...        快照遮蔽内容(fs.js COW 层)
+ *
+ * OPFS 是本系统的**硬性前提**:没有 localStorage 降级路径,
+ * 不支持 OPFS 的浏览器由启动序列直接拒之门外(system/boot.js)。
+ * 因此各函数不再判断 navigator.storage —— 真拿不到句柄时会在
+ * 自己的 try/catch 里按「不存在 / 失败」处理(读 → null,
+ * 写 → 抛给调用方按持久化失败处理)。
  *
  * 支持整文件与**按偏移随机读写**(opfsReadSlice / opfsWriteAt)。
  * 库(AetherWebDatabase)不得直接调用本模块,只经 fs.* 托管。
  * 路径可含 `/`,写入时自动创建中间目录。
- * 无 OPFS 时降级 localStorage 键 `webos.opfs.<path>`(base64)。
  * ============================================================ */
 
 const DIR = 'webos';
-const LS_PREFIX = 'webos.opfs.';
 
-function hasOpfs() {
-  return !!(globalThis.navigator?.storage?.getDirectory);
-}
+/** OPFS 是否可用(启动门禁用;日常读写不再判断) */
+export const opfsAvailable = () => !!(globalThis.navigator?.storage?.getDirectory);
 
 /** 拆成 { dirs: [...], file } —— path 可含多级 */
 function splitPath(path) {
@@ -39,11 +43,6 @@ async function fileHandle(path, create = true) {
 
 /** 读文本;不存在 → null */
 export async function opfsReadText(path) {
-  if (!hasOpfs()) {
-    try {
-      return localStorage.getItem(LS_PREFIX + path);
-    } catch { return null; }
-  }
   try {
     const fh = await fileHandle(path, false);
     const file = await fh.getFile();
@@ -55,10 +54,6 @@ export async function opfsReadText(path) {
 
 /** 写文本(覆盖);path 支持多级目录 */
 export async function opfsWriteText(path, text) {
-  if (!hasOpfs()) {
-    localStorage.setItem(LS_PREFIX + path, String(text));
-    return true;
-  }
   const fh = await fileHandle(path, true);
   const w = await fh.createWritable();
   try {
@@ -69,21 +64,8 @@ export async function opfsWriteText(path, text) {
   return true;
 }
 
-const b64 = (u8) => {
-  let s = '';
-  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
-  return btoa(s);
-};
-const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-
-/** 读二进制;不存在 → null(无 OPFS 时 base64 存 localStorage 键) */
+/** 读二进制;不存在 → null */
 export async function opfsReadBytes(path) {
-  if (!hasOpfs()) {
-    try {
-      const s = localStorage.getItem(LS_PREFIX + path);
-      return s == null ? null : unb64(s);
-    } catch { return null; }
-  }
   try {
     const fh = await fileHandle(path, false);
     const file = await fh.getFile();
@@ -96,10 +78,6 @@ export async function opfsReadBytes(path) {
 /** 写二进制(覆盖);path 支持多级目录 */
 export async function opfsWriteBytes(path, bytes) {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (!hasOpfs()) {
-    localStorage.setItem(LS_PREFIX + path, b64(data));
-    return true;
-  }
   const fh = await fileHandle(path, true);
   const w = await fh.createWritable();
   try {
@@ -119,12 +97,6 @@ export async function opfsWriteBytes(path, bytes) {
 export async function opfsReadSlice(path, offset, length) {
   const off = Math.max(0, offset | 0);
   const len = Math.max(0, length | 0);
-  if (!hasOpfs()) {
-    const full = await opfsReadBytes(path);
-    if (!full) return null;
-    if (off >= full.length) return new Uint8Array(0);
-    return full.slice(off, Math.min(off + len, full.length));
-  }
   try {
     const fh = await fileHandle(path, false);
     const file = await fh.getFile();
@@ -139,33 +111,15 @@ export async function opfsReadSlice(path, offset, length) {
 /**
  * 按偏移写字节(随机写);自动扩文件。
  * OPFS: createWritable({keepExistingData}) + write(offset, data)。
- * 无 OPFS: 对 localStorage base64 整串做读-改-写。
  */
 export async function opfsWriteAt(path, data, offset) {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const off = Math.max(0, offset | 0);
-  if (!hasOpfs()) {
-    try {
-      let full = await opfsReadBytes(path);
-      if (!full) full = new Uint8Array(0);
-      const need = off + bytes.length;
-      if (need > full.length) {
-        const next = new Uint8Array(need);
-        next.set(full);
-        full = next;
-      }
-      full.set(bytes, off);
-      localStorage.setItem(LS_PREFIX + path, b64(full));
-      return true;
-    } catch {
-      return false;
-    }
-  }
   try {
     const fh = await fileHandle(path, true);
     const w = await fh.createWritable({ keepExistingData: true });
     try {
-      // 注意:write(offset, data) 两参形式不受支持(offset 会被当数据写入)，
+      // 注意:write(offset, data) 两参形式不受支持(offset 会被当数据写入),
       // 必须用 WriteParams 形式 { type:'write', position, data }
       await w.write({ type: 'write', position: off, data: bytes });
     } finally {
@@ -179,12 +133,6 @@ export async function opfsWriteAt(path, data, offset) {
 
 /** 文件字节数;不存在 → 0 */
 export async function opfsFileSize(path) {
-  if (!hasOpfs()) {
-    try {
-      const s = localStorage.getItem(LS_PREFIX + path);
-      return s == null ? 0 : unb64(s).length;
-    } catch { return 0; }
-  }
   try {
     const fh = await fileHandle(path, false);
     const file = await fh.getFile();
@@ -194,18 +142,22 @@ export async function opfsFileSize(path) {
   }
 }
 
-/** 删文件(单级,在 webos/ 根下);不存在也返回 true */
-export async function opfsRemove(name) {
-  if (!hasOpfs()) {
-    try { localStorage.removeItem(LS_PREFIX + name); } catch { /* 忽略 */ }
-    return true;
-  }
+/**
+ * 枚举 webos/ 下某目录的直接子项:返回 [{ name, dir }](dir=true 为子目录)。
+ * 快照遮蔽层的垃圾回收用它扫 fsshadow/;目录不存在 → null。
+ */
+export async function opfsList(path) {
+  const segs = String(path).split('/').filter(Boolean);
   try {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle(DIR, { create: false });
-    await dir.removeEntry(name);
-  } catch { /* 不存在 */ }
-  return true;
+    let dir = await navigator.storage.getDirectory();
+    dir = await dir.getDirectoryHandle(DIR, { create: false });
+    for (const s of segs) dir = await dir.getDirectoryHandle(s, { create: false });
+    const out = [];
+    for await (const [name, h] of dir) out.push({ name, dir: h.kind === 'directory' });
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -215,10 +167,6 @@ export async function opfsRemove(name) {
 export async function opfsRemovePath(path) {
   const segs = String(path).split('/').filter(Boolean);
   if (!segs.length) return false;
-  if (!hasOpfs()) {
-    try { localStorage.removeItem(LS_PREFIX + segs.join('/')); } catch { /* 忽略 */ }
-    return true;
-  }
   try {
     let dir = await navigator.storage.getDirectory();
     dir = await dir.getDirectoryHandle(DIR, { create: false });
@@ -232,15 +180,6 @@ export async function opfsRemovePath(path) {
 
 /** 清空整个 webos OPFS 目录(完全重置用) */
 export async function opfsClearAll() {
-  if (!hasOpfs()) {
-    const gone = [];
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(LS_PREFIX)) gone.push(k);
-    }
-    for (const k of gone) localStorage.removeItem(k);
-    return true;
-  }
   try {
     const root = await navigator.storage.getDirectory();
     try {
@@ -260,6 +199,3 @@ export async function opfsClearAll() {
     return false;
   }
 }
-
-/** 是否使用了真实 OPFS(而非 localStorage 降级) */
-export const opfsAvailable = hasOpfs;

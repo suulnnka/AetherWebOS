@@ -32,7 +32,13 @@ export async function launch(url = 'http://localhost:8080/', { profile = '' } = 
     } catch { /* Chrome 尚未就绪 */ }
     await sleep(200);
   }
-  if (!port) throw new Error('Chrome DevTools 端口未就绪');
+  if (!port) {
+    // 启动失败也要杀掉自己 spawn 的进程树:泄漏的实例会锁住 user-data-dir,
+    // 令后续同 profile 的每次启动都失败(雪崩式泄漏)
+    try { execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' }); }
+    catch { try { proc.kill(); } catch { /* 已退出 */ } }
+    throw new Error('Chrome DevTools 端口未就绪');
+  }
 
   // 找到页面 target
   let target;

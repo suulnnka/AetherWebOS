@@ -14,8 +14,9 @@
  *   · OPFS `webos/fs.v2.json` —— **仅元数据树**(无 d 字段,类似 inode 表)
  *   · OPFS `webos/fsdata/<绝对路径>` —— 每个文件的真实内容
  *     例:fsdata/home/user/appdata/sms.awdb
- *   · 无 OPFS 时整树(含内容)降级 localStorage 键 webos.fs.v2
- *   · 同步 API 读内存;fsReady 等待首次加载/迁移完成
+ *   · OPFS 是硬性前提:无降级路径,不支持的浏览器由 system/boot.js
+ *     启动门禁直接拒绝(本模块不再有 localStorage 分支)
+ *   · 同步 API 读内存;fsReady 等待首次加载完成
  *
  * 用户与目录绑定:
  *   /bin /app          系统目录(root 所有,预留给系统程序/应用包)
@@ -32,6 +33,15 @@
  *
  * 当前会话用户来自 accounts.current();未登录时仅允许 root 内部操作
  * (as:'root')。所有写操作自动持久化并广播 sys:fs-changed。
+ *
+ * 快照与 COW(写时复制):
+ *   · 快照 = 子树元数据克隆(含属主/权限/mtime),文件节点只记内容引用
+ *     ref(对应活跃树绝对路径),**不拷贝任何内容** → 创建 O(节点数);
+ *   · 活跃树首次覆盖/删除某路径的 fsdata 内容前,把旧字节「遮蔽」到
+ *     fsshadow/<路径>@<代次>(cowGuard),引用它的未遮蔽快照全部转挂新代次
+ *     —— 快照内容与活跃内容只在分叉那一刻复制一次,此后各写各的;
+ *   · 快照注册表(剥掉内存 d 后)单独落盘 fs.snaps.v1.json,装载时重建
+ *     未遮蔽引用索引;文本内容未分叉时直接读活跃 fsdata(必然一致)。
  * ============================================================ */
 
 import { publish, subscribe } from './bus.js';
@@ -42,14 +52,15 @@ import {
   opfsReadText, opfsWriteText,
   opfsReadBytes, opfsWriteBytes,
   opfsReadSlice, opfsWriteAt, opfsFileSize,
-  opfsRemovePath, opfsClearAll, opfsAvailable,
+  opfsRemovePath, opfsClearAll, opfsList,
 } from './opfs.js';
 
-/** localStorage 旧键(迁移源;迁移后删除) */
-const LS_KEY = 'webos.fs.v2';
-const LEGACY_KEYS = ['webos.fs.v1'];
 /** OPFS 中的文件名 */
 const OPFS_NAME = 'fs.v2.json';
+/** 快照注册表文件名 */
+const SNAPS_NAME = 'fs.snaps.v1.json';
+/** 快照遮蔽内容根路径:fsshadow/<原绝对路径>@<代次> */
+const SHADOW_DIR = 'fsshadow';
 const FS_VERSION = 2;
 
 const WELCOME = `欢迎使用 AetherWebOS!
@@ -62,6 +73,8 @@ const WELCOME = `欢迎使用 AetherWebOS!
  · 文件带属主与权限(类 Linux,无用户组)
  · 系统目录 /bin /app 预留给系统程序
  · 应用数据在 ~/appdata/(页加密数据库)
+ · 快照与 COW:终端 snap create <路径> 建快照,创建零拷贝、
+   修改时才分叉复制,可随时 snap restore 整棵恢复
 
 推荐试一试:
  · 双击桌面图标,或点击左下角的开始按钮
@@ -155,15 +168,6 @@ function parseTree(raw) {
   } catch { return null; }
 }
 
-/** localStorage 里是否存在无法识别的 FS 数据(需整体清空) */
-function lsLooksStale() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw && !parseTree(raw)) return true;
-    return LEGACY_KEYS.some((k) => localStorage.getItem(k) != null);
-  } catch { return false; }
-}
-
 function freshRoot() {
   const now = Date.now();
   return {
@@ -212,6 +216,22 @@ function inodeSize(n) {
   if (n.t !== 'f') return Object.keys(n.c).length;
   if (n.s != null) return n.s;
   return contentSize(n.d);
+}
+
+/** 显示用 9 位权限(组位 = 其他位,无组概念);快照节点同构复用 */
+const mode9Of = (n) => {
+  const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
+  return full.slice(0, 3) + full.slice(3, 6) + full.slice(3, 6);
+};
+
+/** 按 id 找快照;调用方鉴权(snapOwnedBy:root 或创建者) */
+function findSnap(id) {
+  const num = Number(id);
+  return snaps.items.find((it) => it.id === num) || null;
+}
+function snapOwnedBy(it, user) {
+  if (!user) return false;
+  return user === 'root' || it.user === uidOfActor(user);
 }
 
 /** 遍历文件:yield { path, content, bin, m } */
@@ -315,61 +335,221 @@ let persistMark = Infinity;                  // boot 完成前不增量:首写�
 const dirtyPaths = new Map();                // 绝对路径 → { copyFrom?: 旧绝对路径 }
 const removedPaths = new Set();              // 待清理的旧绝对路径(文件或目录)
 
+/* ---------- 快照与 COW(遮蔽式写时复制) ----------
+ * 注册表 snaps(内存态,随 writeTree 落盘 fs.snaps.v1.json):
+ *   { nextId, nextGen, items: [{ id, name, path, at, user, files, dirs, tree }] }
+ * 快照树 = 克隆的元数据;文件节点带:
+ *   ref = 内容引用的活跃绝对路径;gen = 遮蔽代次(null=未分叉,内容仍在
+ *   活跃 fsdata/ref;数字=已分叉,内容在 fsshadow/ref@gen);d = 内存中
+ *   与活跃树共享的内容引用(仅内存,落盘剥除)。
+ * 不变量:gen==null ⇒ fsdata/ref 仍是快照时内容(每次覆盖/删除前先遮蔽)。 */
+let snaps = { nextId: 1, nextGen: 1, items: [] };
+let snapsDirty = false;                       // 注册表有变(增删/遮蔽),待落盘
+/** ref 路径 → [{ node }] 未遮蔽引用(cowGuard 快路径;无快照时零开销) */
+const unshadowedRefs = new Map();
+
+/** 遍历快照树节点:yield { node, rel }(rel 相对快照根,'a/b.txt') */
+function* walkSnapNodes(n, rel = '') {
+  yield { node: n, rel };
+  if (n.t === 'd' && n.c) {
+    for (const [k, ch] of Object.entries(n.c)) {
+      yield* walkSnapNodes(ch, rel ? rel + '/' + k : k);
+    }
+  }
+}
+
+/** 快照树里按相对路径取节点 */
+function snapNodeAt(tree, rel) {
+  let n = tree;
+  for (const seg of String(rel || '').split('/').filter(Boolean)) {
+    if (n?.t !== 'd') return null;
+    n = n.c[seg];
+    if (!n) return null;
+  }
+  return n;
+}
+
+/** 克隆子树为快照(元数据深拷贝;内容只记 ref,内存 d 共享引用) */
+function cloneForSnapshot(n, path) {
+  if (n.t === 'f') {
+    const out = { t: 'f', m: n.m || Date.now(), o: n.o ?? 0, p: n.p || FILE_MODE, ref: path };
+    if (n.d != null) out.d = n.d;
+    if (n.bin) out.bin = true;
+    if (n.s != null) out.s = n.s;
+    return out;
+  }
+  const out = { t: 'd', m: n.m || Date.now(), o: n.o ?? 0, p: n.p || DIR_MODE, c: {} };
+  if (n.c) {
+    for (const [k, ch] of Object.entries(n.c)) out.c[k] = cloneForSnapshot(ch, childPath(path, k));
+  }
+  return out;
+}
+
+/** 重建未遮蔽引用索引(装载/删快照后) */
+function reindexSnaps() {
+  unshadowedRefs.clear();
+  for (const it of snaps.items) {
+    for (const { node: n } of walkSnapNodes(it.tree)) {
+      if (n.t !== 'f' || n.gen != null || !n.ref) continue;
+      if (!unshadowedRefs.has(n.ref)) unshadowedRefs.set(n.ref, []);
+      unshadowedRefs.get(n.ref).push({ node: n });
+    }
+  }
+}
+
+const shadowPathOf = (n) => `${SHADOW_DIR}${n.ref}@${n.gen}`;
+
 /**
- * 落盘(增量):
+ * COW 遮蔽:活跃树即将**覆盖或删除** fsdata/<path> 前,把该内容
+ * 复制进快照私有域,所有未遮蔽引用转挂新代次。幂等(遮蔽后索引即摘除),
+ * 无引用时零开销;字节源优先快照自己的内存 d(分叉时内容),缺 d(随机写
+ * 文件)则读现存 backing(覆盖前必为快照时内容)。
+ */
+async function cowGuard(path) {
+  if (!unshadowedRefs.size) return;
+  const refs = unshadowedRefs.get(path);
+  if (!refs) return;
+  const gen = snaps.nextGen++;
+  for (const { node } of refs) node.gen = gen;   // 先同步置位,防并发重复遮蔽
+  unshadowedRefs.delete(path);
+  snapsDirty = true;
+  let src = null;
+  for (const { node } of refs) {
+    if (node.d != null && !(node.d instanceof Uint8Array && node.d.length === 0)) { src = node.d; break; }
+  }
+  const bytes = src != null
+    ? (src instanceof Uint8Array ? src : new TextEncoder().encode(String(src)))
+    : await opfsReadBytes('fsdata' + path);
+  if (bytes && bytes.length) await opfsWriteBytes(`${SHADOW_DIR}${path}@${gen}`, bytes);
+}
+
+/** 读快照文件内容:内存 d → 遮蔽域 → 活跃 backing(未分叉必为快照时内容) */
+async function snapReadFile(n) {
+  if (n.d != null) return n.d;
+  if (n.gen != null) {
+    const p = shadowPathOf(n);
+    return n.bin ? ((await opfsReadBytes(p)) ?? new Uint8Array(0))
+                 : ((await opfsReadText(p)) ?? '');
+  }
+  return n.bin ? ((await opfsReadBytes('fsdata' + n.ref)) ?? new Uint8Array(0))
+               : ((await opfsReadText('fsdata' + n.ref)) ?? '');
+}
+
+/** 快照树物化成可挂回活跃树的普通节点(内容全量读入内存 d) */
+async function materializeSnap(sn, path) {
+  if (sn.t === 'f') {
+    let d = sn.d ?? null;
+    if (d == null) d = await snapReadFile(sn);
+    if (d == null) d = sn.bin ? new Uint8Array(0) : '';
+    const out = { t: 'f', m: sn.m || Date.now(), o: typeof sn.o === 'number' ? sn.o : 0, p: sn.p || FILE_MODE, d: d instanceof Uint8Array ? d : String(d) };
+    if (sn.bin) { out.bin = true; out.s = d.byteLength; }
+    return out;
+  }
+  const out = { t: 'd', m: sn.m || Date.now(), o: typeof sn.o === 'number' ? sn.o : 0, p: sn.p || DIR_MODE, c: {} };
+  for (const [k, ch] of Object.entries(sn.c || {})) out.c[k] = await materializeSnap(ch, childPath(path, k));
+  return out;
+}
+
+/** 装载快照注册表(损坏时静默置空:快照是尽力而为数据,不动主树) */
+async function loadSnaps() {
+  snaps = { nextId: 1, nextGen: 1, items: [] };
+  try {
+    const raw = await opfsReadText(SNAPS_NAME);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (data && Array.isArray(data.items)) {
+      snaps = {
+        nextId: Math.max(1, data.nextId || 1),
+        nextGen: Math.max(1, data.nextGen || 1),
+        items: data.items.filter((it) => it && it.tree && it.path),
+      };
+    }
+  } catch { /* 忽略 */ }
+  reindexSnaps();
+}
+
+/** 序列化注册表(剥内存 d;文件内容靠 ref/gen 落在 fsdata/fsshadow) */
+function serializeSnaps() {
+  return JSON.stringify({
+    nextId: snaps.nextId, nextGen: snaps.nextGen,
+    items: snaps.items.map((it) => ({ ...it, tree: stripContents(it.tree) })),
+  });
+}
+
+/** 清理不再被任何快照引用的遮蔽域文件(删快照后;空目录残留无害不清) */
+async function gcShadows() {
+  const keep = new Set();
+  for (const it of snaps.items) {
+    for (const { node: n } of walkSnapNodes(it.tree)) {
+      if (n.t === 'f' && n.gen != null) keep.add(n.ref.replace(/^\/+/, '') + '@' + n.gen);
+    }
+  }
+  // 递归收齐 fsshadow 下现存文件(相对 fsshadow/ 的路径),不在 keep 的删除
+  const files = [];
+  async function scan(rel) {
+    const entries = (await opfsList(rel ? `${SHADOW_DIR}/${rel}` : SHADOW_DIR)) || [];
+    for (const e of entries) {
+      const child = rel ? `${rel}/${e.name}` : e.name;
+      if (e.dir) await scan(child);
+      else files.push(child);
+    }
+  }
+  await scan('');
+  for (const f of files) {
+    if (!keep.has(f)) await opfsRemovePath(`${SHADOW_DIR}/${f}`);
+  }
+}
+
+/**
+ * 落盘(增量,OPFS 唯一通道):
  *  1) 变化过的文件内容 → OPFS fsdata/<path>(未变的跳过)
  *  2) 元数据树(无 d) → fs.v2.json(每次都写,单文件)
  *  3) 清理 removedPaths 对应的 fsdata 遗留
- * OPFS 不可用时整树(含 d)写入 localStorage 键作回退。
+ *  4) 快照注册表(有变才写)
  */
 async function writeTree() {
   const t0 = Date.now();
   const meta = JSON.stringify(stripContents(root));
-  const full = JSON.stringify(root); // 降级用
   try {
-    if (opfsAvailable()) {
-      // 先内容后元数据;随机访问文件(bin 且无 d)内容已在 fsdata,只写元数据
-      for (const { path, content, bin, m } of walkFiles(root, '/')) {
-        const explicit = dirtyPaths.get(path);
-        if (explicit == null && m < persistMark) continue;   // 未变:与 OPFS 一致
-        if (bin && (content == null || content === '')) {
-          // 重命名移入的随机写文件:从旧路径复制字节
-          if (explicit?.copyFrom != null) {
-            const bytes = await opfsReadBytes('fsdata' + explicit.copyFrom);
-            if (bytes && bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
-          }
-          continue;
+    // 先内容后元数据;随机访问文件(bin 且无 d)内容已在 fsdata,只写元数据
+    for (const { path, content, bin, m } of walkFiles(root, '/')) {
+      const explicit = dirtyPaths.get(path);
+      if (explicit == null && m < persistMark) continue;   // 未变:与 OPFS 一致
+      await cowGuard(path);   // COW:即将覆盖 backing,先遮蔽仍引用它的快照
+      if (bin && (content == null || content === '')) {
+        // 重命名移入的随机写文件:从旧路径复制字节
+        if (explicit?.copyFrom != null) {
+          const bytes = await opfsReadBytes('fsdata' + explicit.copyFrom);
+          if (bytes && bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
         }
-        if (bin || content instanceof Uint8Array) {
-          const bytes = content instanceof Uint8Array
-            ? content
-            : new TextEncoder().encode(String(content ?? ''));
-          if (bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
-        } else {
-          await opfsWriteText('fsdata' + path, content);
-        }
+        continue;
       }
-      await opfsWriteText(OPFS_NAME, meta);
-      /* 路径已被重建(rm 后同路径再建)时保留新内容,只清真正不存在的遗留;
-       * 否则会把刚写好的 fsdata 当垃圾删掉(内存 inode 却还在 → 读到全零) */
-      for (const gone of removedPaths) {
-        if (node(gone)) continue;
-        await opfsRemovePath('fsdata' + gone);
+      if (bin || content instanceof Uint8Array) {
+        const bytes = content instanceof Uint8Array
+          ? content
+          : new TextEncoder().encode(String(content ?? ''));
+        if (bytes.length) await opfsWriteBytes('fsdata' + path, bytes);
+      } else {
+        await opfsWriteText('fsdata' + path, content);
       }
-    } else {
-      await opfsWriteText(OPFS_NAME, full);
     }
-    try {
-      localStorage.removeItem(LS_KEY);
-      for (const k of LEGACY_KEYS) localStorage.removeItem(k);
-    } catch { /* 忽略 */ }
+    await opfsWriteText(OPFS_NAME, meta);
+    /* 路径已被重建(rm 后同路径再建)时保留新内容,只清真正不存在的遗留;
+     * 否则会把刚写好的 fsdata 当垃圾删掉(内存 inode 却还在 → 读到全零) */
+    for (const gone of removedPaths) {
+      if (node(gone)) continue;
+      await cowGuard(gone);   // COW:删除前遮蔽,快照转挂私有内容
+      await opfsRemovePath('fsdata' + gone);
+    }
+    // 快照注册表(含本轮遮蔽产生的 gen 变化;失败保留脏标记下次重写)
+    if (snapsDirty) {
+      const payload = serializeSnaps();
+      await opfsWriteText(SNAPS_NAME, payload);
+      snapsDirty = false;
+    }
   } catch (e) {
-    console.warn('[fs] OPFS 持久化失败,回退 localStorage:', e);
-    try { localStorage.setItem(LS_KEY, full); }
-    catch (e2) {
-      console.warn('[fs] 持久化失败:', e2);
-      publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储空间不足', body: '文件未能保存,请清理数据。' } });
-    }
+    console.warn('[fs] OPFS 持久化失败:', e);
+    publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储写入失败', body: '文件未能保存(OPFS 写入失败),稍后将自动重试。' } });
     return;   // 失败:保留脏簿记,下次再试
   }
   dirtyPaths.clear();
@@ -459,12 +639,15 @@ function migrateXToManage(n) {
   if (n.c) for (const ch of Object.values(n.c)) migrateXToManage(ch);
 }
 
-/** 首次启动:OPFS 元数据 → 旧 localStorage 迁移 → 空则默认树 */
+/** 首次启动:OPFS 元数据 → 空则默认树;损坏(有字节解析不了)整体清空 */
 async function bootLoad() {
-  // 1) OPFS 优先
-  const fromOpfs = parseTree(await opfsReadText(OPFS_NAME));
+  // 1) OPFS 唯一数据源
+  const fsRaw = await opfsReadText(OPFS_NAME);
+  const fromOpfs = parseTree(fsRaw);
   if (fromOpfs) {
     await adoptTree(fromOpfs);
+    await loadSnaps();         // 快照注册表(树装载后再读:遮蔽索引要建在最终树上)
+    await gcShadows().catch(() => {});   // 回收崩溃残留的孤儿遮蔽文件
     persistMark = Date.now();   // 已与 OPFS 一致:此后只写变化过的文件
     markBooted();
     if (pendingPersist) {
@@ -474,21 +657,9 @@ async function bootLoad() {
     return;
   }
 
-  // 2) OPFS 无数据:看 localStorage 旧键(可能仍含内联内容)
-  if (lsLooksStale() && !parseTree(localStorage.getItem(LS_KEY))) {
+  // 2) 有字节但解析失败 = 版本/结构损坏 → 整体清空重载(与根版本号策略一致)
+  if (fsRaw != null) {
     wipeAllAndReload();
-    return;
-  }
-  const fromLs = parseTree(localStorage.getItem(LS_KEY));
-  if (fromLs) {
-    // 旧整树:保留内存中的 d,立刻拆到 OPFS(persistMark=0 → 首写全量)
-    migrateOwnerUids(fromLs);
-    migrateDirTraverseX(fromLs);
-    root = fromLs;
-    persistMark = 0;
-    markBooted();
-    writeChain = writeChain.then(writeTree, writeTree);
-    await writeChain;
     return;
   }
 
@@ -507,7 +678,7 @@ function wipeAllAndReload() {
     localStorage.clear();
     sessionStorage.clear();
   } catch { /* 忽略 */ }
-  // OPFS 清空后再 reload(降级路径下 opfsClearAll 清的是 LS 前缀键)
+  // OPFS 清空后再 reload(localStorage 顺带清掉旧版遗留键)
   Promise.resolve()
     .then(() => opfsClearAll())
     .catch(() => {})
@@ -787,16 +958,15 @@ export const fs = {
   normPath, basename, parentPath, joinPath, homePath, desktopPath, ensureUserHome,
   /** 首次 OPFS 装载/迁移完成(启动序列应 await) */
   ready: fsReady,
-  /** 是否使用真实 OPFS(否则为 localStorage 降级) */
-  storageBackend: () => (opfsAvailable() ? 'opfs' : 'localStorage'),
+  /** 存储后端(OPFS 唯一,无降级;保留接口供监视器/设置展示) */
+  storageBackend: () => 'opfs',
 
   exists: (p) => !!node(p),
   isDir: (p) => node(p)?.t === 'd',
 
   /** 属主 + 显示用 9 位权限(组位 = 其他位,无组概念) */
   modeString(n) {
-    const full = String(n.p || FILE_MODE).padEnd(6, '-').slice(0, 6);
-    return full.slice(0, 3) + full.slice(3, 6) + full.slice(3, 6);
+    return mode9Of(n);
   },
 
   stat(p, opts = {}) {
@@ -893,6 +1063,7 @@ export const fs = {
    * @returns {Promise<boolean>}
    */
   async writeAt(p, offset, data, opts = {}) {
+    if (!fsBooted) await fsReady();   // 快照索引装载完成后再动 backing(COW 遮蔽依赖它)
     const name = basename(p);
     if (!name || name === '/') return false;
     const user = actor(opts);
@@ -922,6 +1093,7 @@ export const fs = {
       return false;
     }
 
+    await cowGuard(path);   // COW:就地覆写 backing 前,先遮蔽引用它的快照
     const ok = await opfsWriteAt('fsdata' + path, bytes, off);
     if (!ok) return false;
 
@@ -1114,6 +1286,143 @@ export const fs = {
     return true;
   },
 
+  /* ---------- 快照与 COW ----------
+   * 快照按创建者(root 或属主)可见;内容引用 + 遮蔽见文件头。 */
+  snapshots: {
+    /**
+     * 创建快照(O(节点数),不拷内容)。
+     * @returns {Promise<{id,name,path,at,files,dirs}|null>} 仅属主或 root 可建
+     */
+    async create(p, opts = {}) {
+      if (!fsBooted) await fsReady();
+      const path = normPath(p);
+      const n = node(path);
+      if (!n) return null;
+      const user = actor(opts);
+      if (!user) return null;
+      if (user !== 'root' && ownerUid(n) !== uidOfActor(user)) return null;
+      const tree = cloneForSnapshot(n, path);
+      let files = 0, dirs = 0;
+      for (const { node: sn } of walkSnapNodes(tree)) {
+        if (sn.t === 'f') {
+          files++;
+          if (sn.gen == null && sn.ref) {
+            if (!unshadowedRefs.has(sn.ref)) unshadowedRefs.set(sn.ref, []);
+            unshadowedRefs.get(sn.ref).push({ node: sn });
+          }
+        } else dirs++;
+      }
+      const it = {
+        id: snaps.nextId++,
+        name: String(opts.name ?? `snap-${snaps.items.length + 1}`),
+        path, at: Date.now(),
+        user: uidOfActor(user),
+        files, dirs, tree,
+      };
+      snaps.items.push(it);
+      snapsDirty = true;
+      emit('snapshot-create', path);
+      return { id: it.id, name: it.name, path: it.path, at: it.at, files: it.files, dirs: it.dirs };
+    },
+
+    /** 快照清单(root 全量;普通用户仅自己创建的) */
+    list(opts = {}) {
+      const user = actor(opts);
+      const uid = uidOfActor(user);
+      return snaps.items
+        .filter((it) => user === 'root' || it.user === uid)
+        .map((it) => ({ id: it.id, name: it.name, path: it.path, at: it.at, files: it.files, dirs: it.dirs, owner: ownerName(it.user) }))
+        .sort((a, b) => a.id - b.id);
+    },
+
+    /** 列快照内目录(元数据,同步);rel 相对快照根,如 'documents' */
+    readDir(id, rel = '', opts = {}) {
+      const it = findSnap(id);
+      if (!it || !snapOwnedBy(it, actor(opts))) return null;
+      const n = snapNodeAt(it.tree, rel);
+      if (!n || n.t !== 'd') return null;
+      return Object.entries(n.c)
+        .map(([name, ch]) => ({
+          name, dir: ch.t === 'd',
+          size: inodeSize(ch),
+          mtime: ch.m || 0,
+          owner: ownerName(ownerUid(ch)),
+          mode: mode9Of(ch),
+        }))
+        .sort((a, b) => (a.dir !== b.dir) ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, 'zh'));
+    },
+
+    /** 读快照内文件(COW:未分叉读活跃内容,分叉读遮蔽域);
+     *  文本 → string,二进制 → Uint8Array;无权限/不存在 → null */
+    async readFile(id, rel = '', opts = {}) {
+      if (!fsBooted) await fsReady();
+      const it = findSnap(id);
+      if (!it || !snapOwnedBy(it, actor(opts))) return null;
+      const n = snapNodeAt(it.tree, rel);
+      if (!n || n.t !== 'f') return null;
+      return await snapReadFile(n);
+    },
+
+    /**
+     * 恢复快照到其原路径:整棵子树替换为快照时状态(权限口径同 rm:
+     * 父目录 w + 目标可管理)。快照本身不受影响,可反复恢复。
+     * @returns {Promise<boolean>}
+     */
+    async restore(id, opts = {}) {
+      if (!fsBooted) await fsReady();
+      const it = findSnap(id);
+      if (!it) return false;
+      const user = actor(opts);
+      if (!snapOwnedBy(it, user)) return false;
+      const path = normPath(it.path);
+      // 整树快照:换根(basename('/') === '/',走常规分支会挂出名为 '/' 的怪孩子);
+      // 快照克隆不含 v/xs 引导字段,换根时补回,否则下次装载按版本不符清盘
+      if (path === '/') {
+        if (user !== 'root') return false;              // 根属 root,恢复同理
+        const freshRootTree = await materializeSnap(it.tree, '/');
+        freshRootTree.v = FS_VERSION;
+        freshRootTree.xs = 1;
+        // 全部文件显式置脏(恢复保留旧 mtime,不触发 m>=persistMark 的常规写);
+        // 恢复后树上不存在的旧路径成为 fsdata 垃圾,无害不清(与 rm 重建同口径)
+        for (const f of walkSubtree(freshRootTree, '/')) dirtyPaths.set(f.path, {});
+        root = freshRootTree;
+        emit('snapshot-restore', '/');
+        return true;
+      }
+      const parPath = parentPath(path), name = basename(path);
+      const par = node(parPath);
+      if (!par || par.t !== 'd') return false;          // 父目录须在(路径被改名/删则手工挪回)
+      if (!allow(parPath, 'w', user)) return false;
+      const old = par.c[name];
+      if (old) {
+        if (!canManage(old, user)) return false;        // 替换 = 删除重建,与 rm 同门
+        if (user !== 'root' && ownerUid(old) !== uidOfActor(user) && !modeFor(old, user).w) return false;
+      }
+      const fresh = await materializeSnap(it.tree, path);
+      if (old) removedPaths.add(path);                  // fsdata 遗留簿记(遮蔽先行)
+      // 恢复保留原 mtime → 不满足 m>=persistMark 的常规写,显式置脏全部文件
+      for (const f of walkSubtree(fresh, path)) dirtyPaths.set(f.path, {});
+      par.c[name] = fresh;
+      par.m = Date.now();
+      emit('snapshot-restore', path);
+      return true;
+    },
+
+    /** 删除快照(创建者或 root);无主遮蔽内容随之回收 */
+    async remove(id, opts = {}) {
+      if (!fsBooted) await fsReady();
+      const it = findSnap(id);
+      if (!it) return false;
+      if (!snapOwnedBy(it, actor(opts))) return false;
+      snaps.items = snaps.items.filter((x) => x !== it);
+      reindexSnaps();
+      snapsDirty = true;
+      emit('snapshot-remove', it.path);
+      await gcShadows();
+      return true;
+    },
+  },
+
   /** 当前会话用户(未登录 null) */
   currentUser: () => accounts.current(),
 
@@ -1142,6 +1451,11 @@ export const fs = {
       migrateOwnerUids(tree);
       migrateDirTraverseX(tree);
       root = tree;
+      // 整树替换:原树全部路径不复存在,快照引用全部悬空 → 整体废弃
+      snaps = { nextId: 1, nextGen: 1, items: [] };
+      reindexSnaps();
+      snapsDirty = true;
+      opfsRemovePath(SHADOW_DIR).catch(() => {});   // 尽力清理遮蔽域
       persistMark = 0;   // 外部整树导入:内容全部重写一次
       emit('import', '/');
       return true;

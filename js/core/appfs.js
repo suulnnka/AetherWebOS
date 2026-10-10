@@ -106,6 +106,22 @@ export function createAppFs(appId, user) {
       return fs.chown(p, newOwner, opts());
     },
 
+    /* ---- 快照与 COW(委托核心 fs,按执行用户鉴权) ---- */
+    snapshots: {
+      /** 创建快照(仅目标属主或 root);详见 core/fs.js */
+      create: (p, o = {}) => fs.snapshots.create(p, { ...o, as: user }),
+      /** 快照清单(仅自己创建的;root 全量) */
+      list: () => fs.snapshots.list({ as: user }),
+      /** 列快照内目录 */
+      readDir: (id, rel) => fs.snapshots.readDir(id, rel, { as: user }),
+      /** 读快照内文件(COW:分叉后仍读快照时内容) */
+      readFile: (id, rel) => fs.snapshots.readFile(id, rel, { as: user }),
+      /** 恢复快照到原路径 */
+      restore: (id) => fs.snapshots.restore(id, { as: user }),
+      /** 删除快照 */
+      remove: (id) => fs.snapshots.remove(id, { as: user }),
+    },
+
     /* ---- 其它 ---- */
     /** 全盘统计(系统信息,不受目录权限裁剪) */
     stats() { return fs.stats(); },

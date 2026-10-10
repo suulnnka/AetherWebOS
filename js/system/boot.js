@@ -20,6 +20,7 @@ import { dialogs } from '../core/dialogs.js';
 import weatherSvc from '../core/weather.js';
 import * as appdata from '../core/appdata.js';
 import { WebOS as SYS } from '../core/exports.js';
+import { opfsAvailable } from '../core/opfs.js';
 import { renderStartMenu, renderStartUser } from './startmenu.js';
 import { renderPinned, renderTasks } from './taskbar.js';
 import { renderDesktopIcons, applyWallpaper } from './desktop.js';
@@ -27,6 +28,24 @@ import { paintVolIcon, paintBell, tickClock } from './tray.js';
 import { setupLayoutButton } from './shortcuts.js';
 
 function boot() {
+  // OPFS 硬门禁:文件系统以 OPFS 为唯一存储、无降级路径,
+  // 不支持的浏览器直接拒绝启动(停留在开机画面给出提示)
+  if (!opfsAvailable()) {
+    const el = document.getElementById('boot');
+    if (el) {
+      el.innerHTML = `
+        <div style="max-width:540px;padding:0 24px;text-align:center;color:#e8ecff;font:14px/1.9 system-ui,-apple-system,sans-serif;">
+          <div style="font-size:38px;margin-bottom:10px;">⚠️</div>
+          <div style="font-size:18px;letter-spacing:2px;margin-bottom:10px;">此浏览器无法运行 AetherWebOS</div>
+          <div style="opacity:.78;">文件系统需要 OPFS(Origin Private File System)作为唯一存储,
+          当前浏览器不支持,且系统不提供任何降级路径。<br>
+          请改用 Chrome / Edge 86+ 等支持 OPFS 的现代浏览器打开。</div>
+        </div>`;
+    }
+    console.warn('[boot] 浏览器不支持 OPFS,拒绝启动');
+    return;
+  }
+
   applyAllSettings();   // 主题 / 强调色 / 风格 / 动效 / 亮度 / 图标尺寸
   $('#start-btn').innerHTML = svg('grid', 19);
   setupLayoutButton();

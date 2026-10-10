@@ -179,14 +179,15 @@ CMDS.mv = {
   },
 };
 CMDS.cp = {
-  desc: '复制文件(cp <源> <目标>;副本走默认权限 70,不继承源的 x 管理位)',
+  desc: '复制文件(cp <源> <目标>;副本走默认权限 70,属主可管理)',
   run(args, { resolve }) {
     if (args.length < 2) throw new Error('cp: 缺少目标文件操作数');
     const src = resolve(args[0]);
     if (FS.isDir(src)) throw new Error(`cp: 略过目录 ${args[0]}`);
     const c = FS.read(src);
     if (c == null) throw new Error(`cp: 无法统计 ${args[0]}: 没有那个文件`);
-    // 新文件走默认 FILE_MODE(makeNode 剥 x):副本永不带锁
+    // 副本是新建文件,走默认权限 70(自带属主 x 管理位)——
+    // cp 天然是「解冻副本」的途径:源冻结(rw----),副本即可管理(rwx---)
     FS.write(resolve(args[1]), c);
     return '';
   },
@@ -275,6 +276,60 @@ CMDS.tree = {
       });
     })(start, '');
     return acc.join('\n') + '\n';
+  },
+};
+
+/* ---- 快照与 COW(写时复制) ---- */
+CMDS.snap = {
+  desc: '快照管理(snap [list] | snap create <路径> [名称] | snap ls <id> [路径] | snap cat <id> <文件> | snap restore <id> | snap rm <id>)',
+  async run(args, { resolve }) {
+    const S = FS.snapshots;
+    if (!S) throw new Error('snap: 当前环境不支持快照');
+    const sub = args[0] || 'list';
+    const rest = args.slice(1);
+    if (sub === 'list') {
+      const items = S.list();
+      if (!items.length) return '暂无快照(snap create <路径> [名称] 创建)';
+      return items.map((i) => {
+        const d = new Date(i.at);
+        return `${String(i.id).padEnd(4)} ${i.name.padEnd(16)} ${i.path.padEnd(30)} ${i.files}文件/${i.dirs}目录  ${fmtDate(d)} ${fmtTime(d)}`;
+      }).join('\n') + '\n';
+    }
+    if (sub === 'create') {
+      const p = resolve(rest[0] || '.');
+      const snap = await S.create(p, { name: rest[1] });
+      if (!snap) throw new Error(`snap: 无法快照 ${p}:不存在,或仅属主/root 可快照`);
+      return `快照 #${snap.id}「${snap.name}」已创建:${snap.path}(${snap.files} 文件 ${snap.dirs} 目录,COW——创建不拷内容,改动时才分叉)`;
+    }
+    if (sub === 'ls') {
+      const id = Number(rest[0]);
+      if (!id) throw new Error('用法: snap ls <id> [快照内路径]');
+      const items = S.readDir(id, rest[1] || '');
+      if (!items) throw new Error(`snap: 快照 #${rest[0]} 不存在、无权限,或该路径不是目录`);
+      return items.map((i) => i.name + (i.dir ? '/' : '')).join('  ') + '\n';
+    }
+    if (sub === 'cat') {
+      const id = Number(rest[0]);
+      if (!id || !rest[1]) throw new Error('用法: snap cat <id> <快照内文件>');
+      const c = await S.readFile(id, rest[1]);
+      if (c == null) throw new Error(`snap: 快照 #${rest[0]} 中没有 ${rest[1]}(或无权限)`);
+      if (c instanceof Uint8Array) return `[二进制 ${c.length} 字节]\n`;
+      return String(c);
+    }
+    if (sub === 'restore') {
+      const id = Number(rest[0]);
+      if (!id) throw new Error('用法: snap restore <id>');
+      const it = S.list().find((x) => x.id === id);
+      if (!(await S.restore(id))) throw new Error(`snap: 恢复失败(不存在、无权限,或原路径父目录已被移动/删除)`);
+      return `已恢复快照 #${id} 到 ${it ? it.path : ''}(快照本体保留,可再次恢复)`;
+    }
+    if (sub === 'rm') {
+      const id = Number(rest[0]);
+      if (!id) throw new Error('用法: snap rm <id>');
+      if (!(await S.remove(id))) throw new Error(`snap: 删除失败(不存在或无权限)`);
+      return `快照 #${id} 已删除`;
+    }
+    throw new Error(`snap: 未知子命令 "${sub}";用法: snap [list] | snap create <路径> [名称] | snap ls <id> [路径] | snap cat <id> <文件> | snap restore <id> | snap rm <id>`);
   },
 };
 
@@ -533,6 +588,7 @@ CMDS.help = {
   run() {
     return `GNU Bash (AetherWebOS) —— 可用命令:
   文件目录  ${['ls', 'cd', 'pwd', 'cat', 'mkdir', 'chmod', 'rm', 'touch', 'mv', 'cp', 'head', 'tail', 'grep', 'wc', 'find', 'tree'].join(' ')}
+  快照COW   snap create <路径> [名称] / snap [list] / snap ls|cat <id> / snap restore|rm <id>
   系统      ${['whoami', 'hostname', 'uname', 'date', 'uptime', 'history', 'clear', 'exit', 'reboot'].join(' ')}
   虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh'].join(' ')}
   应用与IPC ${['apps', 'open', 'edit', 'notify', 'vol', 'theme', 'wallpaper', 'sysinfo'].join(' ')}

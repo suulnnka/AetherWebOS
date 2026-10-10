@@ -4968,6 +4968,227 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
   await c.shot('t52-clues');
 });
 
+group('T53', '快照与 COW(创建零拷贝 / 写时分叉 / 跨重载持久化 / 恢复 / 权限)', async () => {
+  /* ---- T53 snapshots:遮蔽式 COW,快照内容在源文件修改/覆写/删除后不变 ---- */
+  await fresh();
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+
+  // 专用账号(家目录由注册自动播种);全程显式 as,不依赖会话登录态
+  // 先清空上一轮遗留的快照(保证 id 从 1 开始,可重跑)
+  await ev(`(async () => {
+    const fs = WebOS.fs;
+    await WebOS.fs.ready();
+    for (const it of fs.snapshots.list({ as: 'root' })) await fs.snapshots.remove(it.id, { as: 'root' });
+    await fs.flush();
+    const { accounts } = await import('./js/core/accounts.js');
+    if (!accounts.list().some(u => u.name === 'snapuser')) await accounts.register('snapuser', 'snappass1');
+    return true;
+  })()`);
+  await sleep(300);
+
+  // 1) 建快照 → 改文本 / 覆写随机写文件 / 删源文件 → 快照均读快照时内容
+  const cow = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const dir = '/home/snapuser/documents';
+    fs.write(dir + '/cow.txt', 'v1', { as: 'snapuser' });
+    await fs.writeAt(dir + '/bin.dat', 0, new Uint8Array([1,2,3,4,5,6,7,8]), { as: 'snapuser' });
+    const snap = await fs.snapshots.create(dir, { as: 'snapuser', name: 'base' });
+    if (!snap) return { fail: 'create' };
+    const id = snap.id;
+    fs.write(dir + '/cow.txt', 'v2', { as: 'snapuser' });                          // 文本分叉
+    await fs.writeAt(dir + '/bin.dat', 0, new Uint8Array([9,9,9,9]), { as: 'snapuser' });   // backing 覆写分叉
+    const snapTxt = await fs.snapshots.readFile(id, 'cow.txt', { as: 'snapuser' });
+    const liveTxt = fs.read(dir + '/cow.txt', { as: 'snapuser' });
+    const snapBin = await fs.snapshots.readFile(id, 'bin.dat', { as: 'snapuser' });
+    const liveBin = await fs.readAt(dir + '/bin.dat', 0, 8, { as: 'snapuser' });
+    fs.rm(dir + '/cow.txt', { as: 'snapuser' });                                    // 删除源文件
+    await fs.flush();                                                               // 遮蔽域 + 注册表落盘
+    const afterRm = await fs.snapshots.readFile(id, 'cow.txt', { as: 'snapuser' });
+    const names = (fs.snapshots.readDir(id, '', { as: 'snapuser' }) || []).map(e => e.name);
+    return {
+      id, files: snap.files, dirs: snap.dirs,
+      snapTxt, liveTxt,
+      snapBin: snapBin ? Array.from(snapBin) : null,
+      liveBin: liveBin ? Array.from(liveBin) : null,
+      afterRm,
+      hasCow: names.includes('cow.txt'), hasBin: names.includes('bin.dat'),
+      listed: fs.snapshots.list({ as: 'snapuser' }).length,
+    };
+  })()`);
+  t('T53.1 COW 分叉(文本改/随机写覆写/删除源文件,快照仍读旧内容)',
+    cow.fail === undefined
+    && cow.snapTxt === 'v1' && cow.liveTxt === 'v2'
+    && JSON.stringify(cow.snapBin) === JSON.stringify([1,2,3,4,5,6,7,8])
+    && JSON.stringify(cow.liveBin) === JSON.stringify([9,9,9,9,5,6,7,8])
+    && cow.afterRm === 'v1'
+    && cow.hasCow && cow.hasBin && cow.listed === 1,
+    JSON.stringify(cow));
+
+  // 2) reload:注册表 + 遮蔽域从 OPFS 重建,快照内容不变
+  await fresh();
+  const reloaded = await ev(`(async () => {
+    await WebOS.fs.ready();
+    const fs = WebOS.fs;
+    const list = fs.snapshots.list({ as: 'snapuser' });
+    if (!list.length) return { fail: 'no-snaps' };
+    const txt = await fs.snapshots.readFile(list[0].id, 'cow.txt', { as: 'snapuser' });
+    const bin = await fs.snapshots.readFile(list[0].id, 'bin.dat', { as: 'snapuser' });
+    return { txt, bin: bin ? Array.from(bin) : null, name: list[0].name };
+  })()`);
+  t('T53.2 快照跨重载持久化(遮蔽域生效)',
+    reloaded.fail === undefined && reloaded.txt === 'v1'
+    && JSON.stringify(reloaded.bin) === JSON.stringify([1,2,3,4,5,6,7,8])
+    && reloaded.name === 'base',
+    JSON.stringify(reloaded));
+
+  // 3) 恢复:改乱子树后整棵回滚,快照本体不被消费(可再次恢复)
+  const restored = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const id = fs.snapshots.list({ as: 'snapuser' })[0].id;
+    const dir = '/home/snapuser/documents';
+    fs.write(dir + '/cow.txt', 'v3', { as: 'snapuser' });               // 重建并再改
+    fs.write(dir + '/junk.txt', '垃圾', { as: 'snapuser' });             // 快照外的多余文件
+    await fs.writeAt(dir + '/bin.dat', 4, new Uint8Array([7,7,7,7,7,7,7,7]), { as: 'snapuser' });
+    const ok = await fs.snapshots.restore(id, { as: 'snapuser' });
+    await fs.flush();
+    return {
+      ok,
+      cow: fs.read(dir + '/cow.txt', { as: 'snapuser' }),
+      junkGone: fs.exists(dir + '/junk.txt') === false,
+      bin: Array.from(await fs.readAt(dir + '/bin.dat', 0, 8, { as: 'snapuser' })),
+      stillThere: fs.snapshots.list({ as: 'snapuser' }).length === 1,
+      again: await fs.snapshots.readFile(id, 'cow.txt', { as: 'snapuser' }),
+    };
+  })()`);
+  t('T53.3 恢复快照(子树整棵回滚,快照保留可复用)',
+    restored.ok === true && restored.cow === 'v1' && restored.junkGone
+    && JSON.stringify(restored.bin) === JSON.stringify([1,2,3,4,5,6,7,8])
+    && restored.stillThere && restored.again === 'v1',
+    JSON.stringify(restored));
+
+  // 4) 权限:创建/可见/读取限属主与 root;root 可全量管理
+  await ev(`(async () => {
+    const { accounts } = await import('./js/core/accounts.js');
+    if (!accounts.list().some(u => u.name === 'snoop')) await accounts.register('snoop', 'snooppass1');
+    return true;
+  })()`);
+  const guards = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const dir = '/home/snapuser/documents';
+    const sid = fs.snapshots.list({ as: 'snapuser' })[0]?.id ?? -1;
+    const listVisible = fs.snapshots.list({ as: 'snoop' }).length;
+    const cantCreate = (await fs.snapshots.create(dir, { as: 'snoop' })) === null;
+    const rootCan = !!(await fs.snapshots.create('/home/snapuser', { as: 'root', name: 'rootview' }));
+    const rootId = fs.snapshots.list({ as: 'root' }).find((x) => x.name === 'rootview')?.id;
+    const cantRead = sid >= 0 && (await fs.snapshots.readFile(sid, 'cow.txt', { as: 'snoop' })) === null;
+    const rootRead = await fs.snapshots.readFile(sid, 'cow.txt', { as: 'root' });
+    const rootRemove = await fs.snapshots.remove(rootId, { as: 'root' });
+    const countAfter = fs.snapshots.list({ as: 'root' }).length;
+    return { sid, listVisible, cantCreate, rootCan, rootId, cantRead, rootRead, rootRemove, countAfter };
+  })()`);
+  t('T53.4 快照权限(属主或 root:他人不可建/不可见/不可读)',
+    guards.sid >= 1 && guards.listVisible === 0 && guards.cantCreate && guards.rootCan
+    && guards.cantRead && guards.rootRead === 'v1'
+    && guards.rootRemove === true && guards.countAfter === 1,
+    JSON.stringify(guards));
+
+  // 5) 删除快照(遮蔽域随之回收)
+  const cleanup = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const sid = fs.snapshots.list({ as: 'snapuser' })[0]?.id;
+    const ok = await fs.snapshots.remove(sid, { as: 'snapuser' });
+    const empty = fs.snapshots.list({ as: 'snapuser' }).length === 0;
+    await fs.flush();
+    return { ok, empty };
+  })()`);
+  t('T53.5 删除快照', cleanup.ok === true && cleanup.empty === true, JSON.stringify(cleanup));
+
+  // 6) 终端 snap 命令冒烟(会话用户身份):create / list / cat + COW
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(700);
+  const termType = async (cmd) => {
+    await ev(`(() => {
+      const inp = document.querySelector('.win[data-app=terminal] .term-in input');
+      inp.value = ${JSON.stringify(cmd)};
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    await sleep(380);
+  };
+  const termOut = () => ev(`document.querySelector('.win[data-app=terminal] .term-out').textContent`);
+  await termType('echo hi > ~/documents/termtest.txt');
+  await termType('snap create ~/documents demo');
+  await termType('snap');
+  const out1 = await termOut();
+  const idm = /#(\d+)/.exec(out1);
+  await termType('echo changed > ~/documents/termtest.txt');   // 分叉:快照应仍读 hi
+  await termType(`snap cat ${idm ? idm[1] : 0} termtest.txt`);
+  const out2 = await termOut();
+  await termType('cat ~/documents/termtest.txt');
+  const out3 = await termOut();
+  const term = {
+    listed: /demo/.test(out1) && idm != null,
+    snapCat: out2.trimEnd().endsWith('hi'),
+    liveChanged: out3.trimEnd().endsWith('changed'),
+  };
+  t('T53.6 终端 snap 命令(create / list / cat,COW 生效)',
+    term.listed && term.snapCat && term.liveChanged, JSON.stringify(term));
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=terminal]');
+    if (w) WebOS.wm.close(w.dataset.id);
+    const u = WebOS.accounts.current() || 'user';
+    WebOS.fs.rm('/home/' + u + '/documents/termtest.txt', { as: 'root' });
+    return true;
+  })()`);
+
+  // 7) 粒度:单文件快照恢复 + 整树快照('/')换根恢复
+  const gran = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const p = '/home/snapuser/documents/cow.txt';
+    // 单文件快照:改后恢复,只影响这一个文件
+    fs.write(p, 'v9', { as: 'snapuser' });
+    const fsnap = await fs.snapshots.create(p, { as: 'snapuser', name: 'onefile' });
+    fs.write(p, 'v10', { as: 'snapuser' });
+    const old = await fs.snapshots.readFile(fsnap.id, '', { as: 'snapuser' });
+    const r1 = await fs.snapshots.restore(fsnap.id, { as: 'snapuser' });
+    const after = fs.read(p, { as: 'snapuser' });
+    await fs.snapshots.remove(fsnap.id, { as: 'snapuser' });
+    // 整树快照:root 建 '/' → 加脏标记 → 换根恢复 → 标记消失、树完整、根引导字段保留
+    const wsnap = await fs.snapshots.create('/', { as: 'root', name: 'wholefs' });
+    const marker = '/home/snapuser/documents/wholemark.txt';
+    fs.write(marker, 'dirty', { as: 'root' });
+    const r2 = await fs.snapshots.restore(wsnap.id, { as: 'root' });
+    await fs.flush();
+    const gone = fs.exists(marker) === false;
+    const homeIntact = fs.exists('/home/snapuser') === true && fs.read(p, { as: 'root' }) === 'v9';
+    const noBogus = !fs.list('/', { as: 'root' }).some(x => x.name === '/');
+    const rootFields = fs.exportAll().v === 2 && fs.exportAll().xs === 1;
+    await fs.snapshots.remove(wsnap.id, { as: 'root' });
+    await fs.flush();
+    return { fsnapOk: !!fsnap, old, r1, after, wsnapOk: !!wsnap, r2, gone, homeIntact, noBogus, rootFields };
+  })()`);
+  t('T53.7 快照粒度(单文件恢复 + 整树换根恢复)',
+    gran.fsnapOk === true && gran.old === 'v9' && gran.r1 === true && gran.after === 'v9'
+    && gran.wsnapOk === true && gran.r2 === true && gran.gone === true
+    && gran.homeIntact === true && gran.noBogus === true && gran.rootFields === true,
+    JSON.stringify(gran));
+
+  // 8) 换根恢复后重载,树应完整可装载(引导字段缺失会触发整盘清空,这里必须读到旧值)
+  await fresh();
+  const afterReload = await ev(`(async () => {
+    await WebOS.fs.ready();
+    return {
+      v: WebOS.fs.exportAll().v,
+      cow: WebOS.fs.read('/home/snapuser/documents/cow.txt', { as: 'root' }),
+      home: WebOS.fs.exists('/home/snapuser'),
+    };
+  })()`);
+  t('T53.8 整树恢复后重载正常', afterReload.v === 2 && afterReload.cow === 'v9' && afterReload.home === true,
+    JSON.stringify(afterReload));
+
+  const errs53 = await ev(`window.__errs.length`);
+  t('T53.9 全程无错误', errs53 === 0, `errs=${errs53}`);
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);
