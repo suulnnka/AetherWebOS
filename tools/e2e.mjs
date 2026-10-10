@@ -5328,6 +5328,162 @@ group('T55', '浏览器历史(访问记录 / 面板管理 / 起始页卡片 / Ct
   await ev(`WebOS.wm.close(document.querySelector('.win[data-app=browser]').dataset.id)`);
 });
 
+group('T56', '模拟远程终端(认证 / 远端文件系统 / 权限 / 传输 / 跳板 / 多会话 / 持久化)', async () => {
+  /* ---- T56 模拟远程终端:core/vssh.js 引擎 + 实训靶机 lab.nexus ---- */
+  await ev(`WebOS.vnet.resetState()`);   // 清掉上次远端改动(覆盖层/活动树)
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(500);
+
+  /* 在第 idx 个终端窗口输入(多会话场景;断言只看「新增」输出,防累积误判) */
+  const typeIn = async (idx, cmd) => {
+    await ev(`(() => {
+      const w = document.querySelectorAll('.win[data-app=terminal]')[${idx}];
+      const inp = w.querySelector('.term-in input');
+      inp.value = ${JSON.stringify(cmd)};
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    await sleep(340);
+  };
+  const winText = (idx) => ev(`document.querySelectorAll('.win[data-app=terminal] .term-out')[${idx}].textContent`);
+  const winPrompt = (idx) => ev(`document.querySelectorAll('.win[data-app=terminal] .t-prompt')[${idx}].textContent`);
+  let mark = (await winText(0)).length;
+  /* 取「新增」输出;密码提示行被收回时 textContent 变短 → 整段重看(只用于 includes 断言) */
+  const diffFrom = (s, m) => (s.length >= m ? s.slice(m) : s);
+  const run = async (cmd) => { await typeIn(0, cmd); const s = await winText(0); const fresh = diffFrom(s, mark); mark = s.length; return fresh; };
+
+  // 本机准备上传素材
+  await run('echo marker-up-42 > ~/desktop/up.txt');
+
+  // 1) 登录认证:掩码 → 错口令被拒(可重试)→ 正确口令进入
+  await run('ssh guest@lab.nexus');
+  const masked = await ev(`document.querySelector('.win[data-app=terminal] .term-in input').type === 'password'`);
+  await run('wrongpass');
+  const denied = (await winText(0)).includes('Permission denied, please try again.');   // 首次出现,查全文(密码提示行被收回,差分切片会错位)
+  await run('guest');
+  const labPrompt = await winPrompt(0);
+  t('T56 SSH 登录认证(掩码 / 错口令被拒 / 家目录 ~ 提示符)',
+    masked && denied && labPrompt.includes('[guest@lab ~]$'), JSON.stringify({ masked, denied, labPrompt }));
+
+  // 2) 远端读 + 权限机关:shadow 仅 root 可读;ls -a 隐藏文件;ls -l 元数据
+  const read1 = (await run('cat welcome.txt')).includes('练习模拟远程终端');
+  const shadow = await run('cat /etc/shadow');
+  const dot = await run('ls -a');
+  const long = await run('ls -l /etc');
+  t('T56.1 远端读文件与权限机关',
+    read1 && shadow.includes('权限不够') && dot.includes('.bashrc')
+    && long.includes('-rw-------') && /root\s+root\s+\d+\s+\S+\s+shadow/.test(long),
+    JSON.stringify({ read1, shadow: shadow.slice(0, 40), dot: dot.includes('.bashrc') }));
+
+  // 3) 写操作链:echo > 重定向 / mkdir / cp / mv / rm / grep / find
+  const w1 = await run('echo hello-lab > hello.txt');   // 重定向:只回显命令行,不吐输出
+  const w2 = (await run('cat hello.txt')).includes('hello-lab');
+  await run('mkdir docs');
+  await run('cp hello.txt docs/copy.txt');
+  await run('mv hello.txt docs/moved.txt');
+  const lsDocs = await run('ls docs');
+  const grepHit = (await run('grep lab docs/copy.txt')).includes('hello-lab');
+  const findHit = (await run('find docs -name *.txt')).includes('docs/copy.txt');
+  const rmOut = await run('rm docs/moved.txt');
+  const lsAfter = await run('ls docs');
+  t('T56.2 远端写操作(echo > / mkdir / cp / mv / rm / grep / find)',
+    w1.trim().endsWith('echo hello-lab > hello.txt') && w2 && lsDocs.includes('copy.txt') && lsDocs.includes('moved.txt')
+    && grepHit && findHit && !rmOut.includes('rm:') && lsAfter.includes('copy.txt') && !lsAfter.includes('moved.txt'),
+    JSON.stringify({ w1: w1.trim(), w2, grepHit, findHit }));
+
+  // 4) 传输:put 上传本机文件 / get 下载远端文件(落本机 ~/downloads)
+  const putOut = await run('put ~/desktop/up.txt upload.txt');
+  const putCat = (await run('cat upload.txt')).includes('marker-up-42');
+  await run('get /etc/hosts');
+  const hostsLocal = await ev(`(() => {
+    const c = WebOS.fs.read(WebOS.fs.homePath() + '/downloads/hosts');
+    return c != null && c.includes('router.nexus');
+  })()`);
+  t('T56.3 传输(put 上传 / get 下载到本机 downloads)',
+    putOut.includes('已上传') && putCat && hostsLocal === true, putOut.trim());
+
+  // 5) 多会话:第二个终端窗口连入同一主机,远端文件状态双向实时共享
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(450);
+  let mark1 = (await winText(1)).length;
+  const run1 = async (cmd) => { await typeIn(1, cmd); const s = await winText(1); const fresh = diffFrom(s, mark1); mark1 = s.length; return fresh; };
+  await run1('ssh guest@lab.nexus');
+  await run1('guest');
+  const prompt1 = await winPrompt(1);
+  const cross = await run('echo shared-live-tree > cross.txt');   // 窗口 0 写
+  const seeCross = (await run1('cat cross.txt')).includes('shared-live-tree');   // 窗口 1 读
+  await run1('echo from-win-1 > back.txt');                        // 窗口 1 写
+  const seeBack = (await run('cat back.txt')).includes('from-win-1');   // 窗口 0 读
+  t('T56.4 多窗口会话共享远端文件系统', prompt1.includes('[guest@lab') && seeCross && seeBack,
+    JSON.stringify({ prompt1, seeCross, seeBack }));
+
+  // 6) 跳板嵌套:lab 会话里 ssh 到 vault,exit 逐层退回(vault → lab → 本地)
+  await run('ssh researcher@vault.nexus');
+  await run('h3ll0w');
+  const vaultPrompt = await winPrompt(0);
+  const notes = (await run('cat notes.txt')).includes('blackout.nexus');
+  const exit1 = await run('exit');
+  const backLab = await winPrompt(0);
+  await run('exit');
+  const localPrompt = await winPrompt(0);
+  t('T56.5 跳板嵌套与逐层退出',
+    vaultPrompt.includes('[researcher@vault ~]$') && notes
+    && exit1.includes('Connection to vault.nexus closed.') && backLab.includes('[guest@lab')
+    && localPrompt.includes('@aetherwebos:'),
+    JSON.stringify({ vaultPrompt, backLab, localPrompt }));
+
+  // 7) scp:上行(→ /tmp)与下行(→ 本机)一次性传输,口令验证即断
+  await run('scp ~/desktop/up.txt guest@lab.nexus:/tmp/scp-up.txt');
+  await run('guest');
+  await run('scp guest@lab.nexus:/etc/hosts ~/desktop/hosts-dl.txt');
+  await run('guest');
+  const scpAll = await winText(0);   // 认证提示行收回使差分错位,断言用全文(目标串唯一)
+  const hostsDl = await ev(`WebOS.fs.read(WebOS.fs.homePath() + '/desktop/hosts-dl.txt')`);
+  const scpSeen = (await run1('cat /tmp/scp-up.txt')).includes('marker-up-42');   // 窗口 1 仍在会话:立即可见
+  t('T56.6 scp 双向传输(不进交互会话,远端即刻可见)',
+    scpAll.includes('lab.nexus:/tmp/scp-up.txt') && hostsDl != null && hostsDl.includes('router.nexus') && scpSeen,
+    JSON.stringify({ up: scpAll.includes('lab.nexus:/tmp/scp-up.txt'), dl: hostsDl != null, scpSeen }));
+
+  // 8) 远程 Tab 补全(窗口 1 仍在 lab 会话:命令名 / 目录条目)
+  await ev(`(() => {
+    const w = document.querySelectorAll('.win[data-app=terminal]')[1];
+    const inp = w.querySelector('.term-in input');
+    inp.value = 'cat wel';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  })()`);
+  const tabVal = await ev(`document.querySelectorAll('.win[data-app=terminal] .term-in input')[1].value`);
+  t('T56.7 远程会话 Tab 补全', tabVal === 'cat welcome.txt ', JSON.stringify(tabVal));
+
+  // 9) 持久化:刷新页面重连,cross.txt 仍在(覆盖层随 vnet 进度落盘)
+  await sleep(500);   // 等 vnet 防抖落盘
+  await fresh();
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(500);
+  mark = (await winText(0)).length;
+  await run('ssh guest@lab.nexus');
+  await run('guest');
+  const lsReload = await run('ls');
+  const overlaySaved = await ev(`(() => {
+    const v = JSON.parse(localStorage.getItem('webos.vnet.v1') || '{}');
+    return !!(v.sshFs && Object.keys(v.sshFs).some(k => k.includes('lab.nexus') || k.includes('10.0.0.30')));
+  })()`);
+  t('T56.8 跨重载持久化(远端改动保留 / 覆盖层落盘)',
+    lsReload.includes('cross.txt') && lsReload.includes('upload.txt') && overlaySaved === true,
+    JSON.stringify({ lsReload: lsReload.trim(), overlaySaved }));
+
+  // 10) resetState 整机重置:覆盖层与活动树一并清空
+  await ev(`WebOS.vnet.resetState()`);
+  await run('exit');
+  await run('ssh guest@lab.nexus');
+  await run('guest');
+  const lsReset = await run('ls');
+  t('T56.9 vnet.resetState 靶机重置(改动清空)', !lsReset.includes('cross.txt') && !lsReset.includes('upload.txt')
+    && lsReset.includes('welcome.txt'), JSON.stringify(lsReset.trim()));
+
+  const errs56 = await ev(`window.__errs.length`);
+  t('T56.10 全程无运行错误', errs56 === 0, `errs=${errs56}`);
+  await c.shot('t56-remote-terminal');
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);

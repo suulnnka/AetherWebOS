@@ -396,9 +396,24 @@ DNS:  nexus-dns (10.0.0.1) —— 仅解析虚拟网络`;
   },
 };
 CMDS.ssh = {
-  desc: '连接虚拟服务器(ssh <用户>@<主机>,密码登录)',
+  desc: '连接虚拟服务器(ssh <用户>@<主机>,密码登录;远程会话里再输 ssh 即跳板嵌套,exit 逐层断开)',
   run(args, { hooks }) {
     const err = hooks.beginSsh(args[0] || '');
+    if (err) throw new Error(err);
+    return '';
+  },
+};
+CMDS.scp = {
+  desc: '与虚拟服务器传输文件(scp <本地文件> <用户>@<主机>:<远端路径>,方向对调即下载;需口令,不进交互会话)',
+  run(args, { hooks, resolve }) {
+    if (args.length !== 2) throw new Error('用法: scp <本地文件> <用户>@<主机>:<远端路径>  或  scp <用户>@<主机>:<远端路径> <本地文件>');
+    const up = /^([\w.-]+)@([\w.-]+):(.*)$/.exec(args[1]);
+    const down = up ? null : /^([\w.-]+)@([\w.-]+):(.*)$/.exec(args[0]);
+    if (!up && !down) throw new Error('scp: 目标须形如 <用户名>@<主机>:<路径>');
+    const spec = up
+      ? { user: up[1], host: up[2], remote: up[3], local: resolve(args[0]), dir: 'up' }
+      : { user: down[1], host: down[2], remote: down[3], local: resolve(args[1]), dir: 'down' };
+    const err = hooks.beginScp(spec);
     if (err) throw new Error(err);
     return '';
   },
@@ -590,7 +605,7 @@ CMDS.help = {
   文件目录  ${['ls', 'cd', 'pwd', 'cat', 'mkdir', 'chmod', 'rm', 'touch', 'mv', 'cp', 'head', 'tail', 'grep', 'wc', 'find', 'tree'].join(' ')}
   快照COW   snap create <路径> [名称] / snap [list] / snap ls|cat <id> / snap restore|rm <id>
   系统      ${['whoami', 'hostname', 'uname', 'date', 'uptime', 'history', 'clear', 'exit', 'reboot'].join(' ')}
-  虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh'].join(' ')}
+  虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh', 'scp'].join(' ')}
   应用与IPC ${['apps', 'open', 'edit', 'notify', 'vol', 'theme', 'wallpaper', 'sysinfo'].join(' ')}
   文件加密  crypt encrypt|decrypt|islocked <文件> [密码]
   对话框    ${['alert', 'ask', 'progress'].join(' ')}

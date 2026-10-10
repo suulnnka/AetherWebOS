@@ -6,7 +6,9 @@
  *   HTTP    虚拟网站路由:路径 → 页面 / 处理函数 / 代理(proxy)
  *           proxy 即「路径转换」:虚拟 URL 映射到真实互联网资源,
  *           这是用户触达外网的唯一通道,且只能由游戏作者配置。
- *   SSH     虚拟服务器:用户名/口令 + 独立虚拟文件系统 + 自定义命令
+ *   SSH     虚拟服务器:用户名/口令 + 虚拟文件系统 + 自定义命令
+ *           (会话引擎在 core/vssh.js:多会话、远端文件读写、常用命令、
+ *            跳板嵌套、传输 put/get,远端改动随游戏进度持久化)
  *
  * 安全模型:浏览器与终端只能访问本模块解析得到的资源;
  * 任何真实网络请求仅发生在作者声明的 proxy 路径上。
@@ -18,6 +20,7 @@
 import { publish } from './bus.js';
 import fs from './fs.js';
 import { aetherServe } from './aethersite.js';
+import { openSession, resetLiveTrees } from './vssh.js';
 
 const KEY = 'webos.vnet.v1';
 const dnsRecords = new Map(); // host -> 记录
@@ -26,8 +29,8 @@ const aetherSites = new Map(); // hostOrIp -> AetherJS 站点定义(见 aethersi
 const servers = new Map();    // hostOrIp -> 服务器定义
 let searchHost = null;        // 地址栏非 URL 输入的搜索分流目标(游戏作者注册)
 
-/** 可变状态(持久化):游戏标志位 + 运行时新增的 DNS 记录 */
-let mutable = { flags: {}, dnsExtra: [] };
+/** 可变状态(持久化):游戏标志位 + 运行时新增的 DNS + 远端文件系统覆盖层 */
+let mutable = { flags: {}, dnsExtra: [], sshFs: {} };
 try { Object.assign(mutable, JSON.parse(localStorage.getItem(KEY)) || {}); } catch { /* 忽略 */ }
 let saveT;
 function persist() {
@@ -203,16 +206,20 @@ export function httpGet(rawUrl) {
 
 /**
  * 注册 SSH 服务器(游戏作者调用)
- * server: { ip?, port?, banner?, users: { 用户名: { password, home, motd, fs, commands } } }
- * fs: 嵌套对象(目录=对象,文件=字符串)
- * commands: { 命令名: (args, session) => string[] }
+ * server: { ip?, port?, banner?, os?: { hostname, kernel, uptime },
+ *           fs?(全机共享文件系统), users: { 用户名: { password, home, motd, fs?, commands } } }
+ * fs(共享树或 users.<名>.fs 私有树):嵌套对象,目录=对象,文件=字符串,
+ *   或 { $: 内容, mode: 'rw-------', owner: 'root' } 带属性文件
+ * commands: { 命令名: (args, session) => string[] }(谜题机关,优先于内建命令)
+ * 会话引擎(远端文件系统/常用命令/多会话/持久化)见 core/vssh.js
  */
 export function addServer(host, server) {
+  server.__key = server.ip || normHost(host);   // 活动树/覆盖层的规范键(域名/IP 连接归并)
   servers.set(normHost(host), server);
   if (server.ip) servers.set(server.ip, server);
 }
 
-/* ---- 极简虚拟文件系统 ---- */
+/* ---- 极简路径归一(旧公共工具,保留兼容) ---- */
 export function vpath(cwd, p) {
   const abs = String(p).startsWith('/') ? p : (cwd === '/' ? '' : cwd) + '/' + p;
   const out = [];
@@ -223,106 +230,31 @@ export function vpath(cwd, p) {
   }
   return '/' + out.join('/');
 }
-function fsGet(root, path) {
-  let n = root;
-  for (const s of path.split('/').filter(Boolean)) {
-    if (typeof n !== 'object' || n === null || !(s in n)) return null;
-    n = n[s];
-  }
-  return n;
-}
 
 /**
- * 建立 SSH 连接。
- * 返回 { ok:false, reason:'dns'|'auth' } 或 { ok:true, session, motd }
+ * 建立 SSH 连接(DNS 解析 + 口令检查在本层,会话引擎在 vssh)。
+ * opts.localFs:本机文件系统接口(put/get 传输用;缺省用核心 fs)
+ * 返回 { ok:false, reason:'dns'|'auth' } 或 { ok:true, session, motd, banner }
  * session.exec(cmdLine) → { lines: [{text, cls}], ended? }
  */
-export function sshConnect(hostInput, user, password) {
+export function sshConnect(hostInput, user, password, opts = {}) {
   publish('vnet:ssh', { from: 'vnet', type: 'ssh-auth', payload: { host: normHost(hostInput), user } });
   const rec = dnsResolve(hostInput);
   if (!rec) return { ok: false, reason: 'dns', host: normHost(hostInput) };
   const server = servers.get(normHost(hostInput)) || servers.get(rec.ip);
-  if (!server || !server.users?.[user]) return { ok: false, reason: 'auth' };
+  if (!server || !server.users?.[user] || server.users[user].password !== password) {
+    publish('vnet:ssh', { from: 'vnet', type: 'ssh-deny', payload: { host: normHost(hostInput), user } });
+    return { ok: false, reason: 'auth' };
+  }
   const u = server.users[user];
-  if (u.password !== password) return { ok: false, reason: 'auth' };
-
-  const session = {
-    user, host: rec.host, ip: rec.ip, server,
-    cwd: u.home || '/home/' + user,
-    fsRoot: u.fs || {},
-    ended: false,
-    short() { return isIP(this.host) ? this.host : this.host.split('.')[0]; },
-    exec(cmdLine) {
-      const parts = String(cmdLine).trim().split(/\s+/).filter(Boolean);
-      const cmd = parts.shift();
-      const out = [];
-      const say = (text = '', cls = '') => out.push({ text, cls });
-      if (!cmd) return { lines: out };
-      if (cmd === 'exit' || cmd === 'logout') { this.ended = true; return { lines: out }; }
-      if (cmd === 'clear') return { lines: [{ text: '', cls: 'clear' }] };
-
-      // 服务器自定义命令优先(游戏作者注入谜题逻辑)
-      const custom = u.commands?.[cmd];
-      if (custom) {
-        try { for (const line of (custom(parts, this) || [])) say(line); }
-        catch (e) { say(String(e.message || e), 't-err'); }
-        return { lines: out };
-      }
-
-      const path = (p) => vpath(this.cwd, p || '.');
-      switch (cmd) {
-        case 'help': {
-          const customs = Object.keys(u.commands || {});
-          say(`可用命令:ls  cat <文件>  cd <目录>  pwd  whoami  echo  get <文件>(下载到本机)  exit` +
-            (customs.length ? `\n本机扩展命令:${customs.join('  ')}` : ''), 't-dim');
-          break;
-        }
-        case 'ls': {
-          const target = path(parts[0]);
-          const node = fsGet(this.fsRoot, target);
-          if (node == null) { say(`ls: 无法访问 ${target}: 没有那个文件或目录`, 't-err'); break; }
-          if (typeof node === 'string') { say(target.split('/').pop()); break; }
-          const names = Object.entries(node)
-            .sort((a, b) => (typeof a[1] === 'object') - (typeof b[1] === 'object') || a[0].localeCompare(b[0]))
-            .map(([n, v]) => typeof v === 'object' ? n + '/' : n);
-          if (names.length) say(names.join('  '));
-          break;
-        }
-        case 'cat': {
-          if (!parts[0]) { say('用法: cat <文件>', 't-err'); break; }
-          const node = fsGet(this.fsRoot, path(parts[0]));
-          if (node == null) say(`cat: ${parts[0]}: 没有那个文件或目录`, 't-err');
-          else if (typeof node !== 'string') say(`cat: ${parts[0]}: 是一个目录`, 't-err');
-          else say(node);
-          break;
-        }
-        case 'cd': {
-          const target = path(parts[0] || ('/home/' + this.user));
-          const node = fsGet(this.fsRoot, target);
-          if (node == null || typeof node !== 'object') say(`cd: ${parts[0]}: 没有那个目录`, 't-err');
-          else this.cwd = target;
-          break;
-        }
-        case 'pwd': say(this.cwd); break;
-        case 'whoami': say(this.user); break;
-        case 'echo': say(parts.join(' ')); break;
-        case 'get': case 'download': {
-          // 把远程文件下载到本机虚拟文件系统(IPC 联动:写入后文件管家实时可见)
-          if (!parts[0]) { say('用法: get <远程文件> [本地名]', 't-err'); break; }
-          const node = fsGet(this.fsRoot, path(parts[0]));
-          if (node == null || typeof node !== 'string') { say(`get: ${parts[0]}: 不可下载的文件`, 't-err'); break; }
-          // 落到当前登录用户的 ~/downloads(/home 对普通用户不可写,不能写死共享路径)
-          const local = (fs.homePath() || '/home') + '/downloads/' + (parts[1] || String(parts[0]).split('/').pop());
-          if (!fs.write(local, node)) { say(`get: 下载失败(无写入权限)`, 't-err'); break; }
-          say(`已下载 → ${local}`, 't-ok');
-          break;
-        }
-        default:
-          say(`${cmd}: 未找到命令。输入 help 查看可用命令`, 't-err');
-      }
-      return { lines: out };
-    },
-  };
+  const session = openSession(server, {
+    host: rec.host, ip: rec.ip, user,
+    dnsList,
+    /* 覆盖层:远端写操作随游戏进度落盘(与 flags 同库) */
+    overlay: { data: mutable.sshFs, persist },
+    localFs: opts.localFs || fs,
+  });
+  publish('vnet:ssh', { from: 'vnet', type: 'ssh-open', payload: { host: rec.host, ip: rec.ip, user } });
   return { ok: true, session, motd: u.motd || '', banner: server.banner || '' };
 }
 
@@ -337,9 +269,10 @@ export function setFlag(key, value = true) {
 export const getFlag = (key) => !!mutable.flags[key];
 export const allFlags = () => ({ ...mutable.flags });
 
-/** 清空游戏进度(标志位 + 运行时 DNS),站点/服务器定义保留 */
+/** 清空游戏进度(标志位 + 运行时 DNS + 远端文件系统覆盖层),站点/服务器定义保留 */
 export function resetState() {
-  mutable = { flags: {}, dnsExtra: [] };
+  mutable = { flags: {}, dnsExtra: [], sshFs: {} };
+  resetLiveTrees();   // 活动树一并丢弃:下次连接从作者声明树重建
   persist();
   publish('vnet:flag-changed', { from: 'vnet', type: 'reset', payload: {} });
 }

@@ -31,6 +31,7 @@ addDNS({ host: 'search.nexus', ip: '10.0.0.8', note: 'Aether 内网搜索引擎'
 addDNS({ host: 'router.nexus', ip: '10.0.0.1', note: '网关(仅响应 ping)', listed: true, latency: 1 });
 addDNS({ host: 'vault.nexus', ip: '10.0.0.23', note: '研究服务器(未公开)', latency: 14 });
 addDNS({ host: 'blackout.nexus', ip: '10.0.0.66', note: '???', latency: 21 });
+addDNS({ host: 'lab.nexus', ip: '10.0.0.30', note: 'NEXUS 网络实训靶机(SSH)', listed: true, latency: 11 });
 
 /* ================= AetherJS 站点(sites/ 目录) ================= */
 // 「路径转换」目标(真实外网地址)在 sites.js 的 proxies 表声明,
@@ -75,6 +76,64 @@ addServer('vault.nexus', {
           ];
         },
       },
+    },
+  },
+});
+
+/* ================= SSH 服务器:lab.nexus(网络实训靶机) =================
+ * 模拟远程终端的演示靶机(会话引擎 core/vssh.js):
+ *  · 全机共享文件系统(fs 定义在服务器级,多用户同看一棵树);
+ *  · 权限机关:/etc/shadow 为 root 私有(rw-------),guest/admin cat 均被拒;
+ *  · guest 可写自己家目录与 /tmp,改动随游戏进度持久化,跨窗口/跨跳板共享;
+ *  · 跳板:在 guest 会话里 ssh researcher@vault.nexus 可继续深入(口令在图书馆)。
+ */
+addServer('lab.nexus', {
+  ip: '10.0.0.30',
+  banner: 'NEXUS Cyber Range lab-node 2.4 (lab) — training use only',
+  os: { hostname: 'lab-node', kernel: '5.15.0-nexus', uptime: '6 天' },
+  fs: {
+    etc: {
+      'hosts': '127.0.0.1 localhost\n10.0.0.1 router.nexus\n10.0.0.8 search.nexus\n10.0.0.10 portal.nexus\n10.0.0.11 library.nexus\n10.0.0.23 vault.nexus\n10.0.0.30 lab.nexus',
+      'passwd': 'root:x:0:0:root:/root:/bin/bash\nguest:x:1001:1001:Guest:/home/guest:/bin/bash\nadmin:x:1002:1002:Lab Admin:/home/admin:/bin/bash',
+      'motd': '== NEXUS 网络实训靶机 ==\n在这里练习远程终端操作:ls -l / cat / put / get / 跳板 ssh。',
+      'shadow': {
+        $: 'root:$6$rounds=4096$salt$hash:19855:0:99999:7:::\nguest:$6$rounds=4096$salt$hash:19855:0:99999:7:::\nadmin:$6$rounds=4096$salt$hash:19855:0:99999:7:::',
+        mode: 'rw-------', owner: 'root',
+      },
+    },
+    home: {
+      guest: {
+        'welcome.txt': `欢迎,guest / guest。
+
+这台靶机用来练习模拟远程终端:
+ · ls -l /etc 看权限 —— cat /etc/shadow 会被拒(root 才能读)
+ · echo 试写 > 文件、mkdir / rm / mv / cp、grep / find / tree 都可用
+ · put ~/desktop/文件 上传本机文件;get <远端文件> 下载回本机
+ · 远程会话里输 ssh researcher@vault.nexus 可以继续跳板(口令去图书馆找)
+ · exit 断开;你的改动会保留在靶机上(整机重置:WebOS.vnet.resetState())`,
+        '.bashrc': '# NEXUS lab 默认配置\nexport PS1="[\\u@lab \\W]\\$ "\n',
+      },
+      admin: { mode: 'rwx------', owner: 'admin', 'readme.txt': { $: '管理员备忘:靶机快照每周一重建;root 口令别写在纸上。\n', mode: 'rw-------', owner: 'admin' } },
+    },
+    var: {
+      log: {
+        'auth.log': 'Oct 1 09:12:07 lab-node sshd[412]: Accepted password for guest from 10.0.0.2\nOct 1 09:12:31 lab-node su: FAILED su for root by guest\nOct 2 14:40:02 lab-node sshd[519]: Accepted password for admin from 10.0.0.9\nOct 3 22:05:44 lab-node sshd[604]: Failed password for root from 10.0.0.66',
+      },
+    },
+    tmp: { mode: 'rwxrwxrwt' },   // 人人可写(sticky 位仅装饰)
+  },
+  users: {
+    guest: {
+      password: 'guest', home: '/home/guest',
+      motd: '上次登录:刚才,自 10.0.0.2\n靶机说明:cat welcome.txt 一下?',
+    },
+    admin: {
+      password: 'lab-adm-2026', home: '/home/admin',
+      motd: '管理员会话已建立。/var/log/auth.log 里有不少有趣的记录。',
+    },
+    root: {
+      password: 'lab-root-2026', home: '/root',
+      motd: 'root 会话:全机文件系统任你处置(实训靶机,放心练)。',
     },
   },
 });

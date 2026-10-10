@@ -128,14 +128,36 @@ siteDefs.forEach((s) => vnet.registerAetherSite(s.host, s));
 // 3) 地址栏搜索引擎(可选)
 setSearchHost('search.nexus');
 
-// 4) SSH 服务器:口令 + 独立虚拟文件系统 + 自定义命令(谜题机关)
+// 4) SSH 服务器:口令 + 虚拟文件系统 + 自定义命令(谜题机关)
+//    两种文件系统声明:
+//      · server.fs —— 全机共享树(多用户同一棵树,配权限机关)
+//      · users.<名>.fs —— 每用户私有树(旧式,单机单用户够用)
 addServer('vault.nexus', {
   ip: '10.0.0.23',
+  banner: 'NEXUS Research Node 3.1 (vault)',
+  os: { hostname: 'vault-node', kernel: '5.15.0-nexus', uptime: '114 天' },   // 可选:uname/hostname/uptime 文案
   users: { researcher: {
     password: 'h3ll0w', home: '/home/researcher',
     fs: { home: { researcher: { 'notes.txt': '线索文本' } } },
     commands: { status: () => { setFlag('ssh_done'); return ['维护锁已释放']; } },
   } },
+});
+
+// 4b) 共享树 + 权限机关样例(内置实训靶机 lab.nexus 即此写法):
+addServer('lab.nexus', {
+  ip: '10.0.0.30',
+  fs: {                                    // 全机一棵树,所有用户共见
+    etc: {
+      'passwd': 'root:x:0:0:…',
+      'shadow': { $: 'root:$6$…', mode: 'rw-------', owner: 'root' },   // 带属性文件:仅 root 可读
+    },
+    home: { admin: { mode: 'rwx------', owner: 'admin' } },             // 目录也能带属性
+    tmp: {},                                                              // rwxr-xr-x:人人可写
+  },
+  users: {
+    guest: { password: 'guest' },
+    root:  { password: '…', home: '/root' },
+  },
 });
 
 // 5) 游戏标志位(持久化,通过 vnet:flag-changed 事件驱动剧情)
@@ -145,17 +167,43 @@ setFlag('quest_done');
 > 旧式 `addSite()`(HTML 字符串路由)仍可用,仅建议存量兼容;
 > 新站点一律走 AetherJS 目录。
 
+### 模拟远程终端(SSH 会话引擎)
+
+SSH 会话由 `core/vssh.js` 驱动,Hacknet 式玩法核心能力:
+
+- **常用命令**:内建 `ls(-l/-a) cat cd pwd echo(支持 > >> 重定向) mkdir rm
+  mv cp touch head tail grep wc find tree whoami id hostname uname date
+  uptime ps df history clear help`,以及传输 `get <远端> [本地名]` /
+  `put <本机> [远端名]` 和内网侦察 `scan`(列 DNS 可公开主机)。
+  作者 `commands` 定义的命令**优先于**内建命令;
+- **登录认证**:口令验证 3 次失败断开;同一 主机/用户 的口令定义在
+  `users.<名>.password`;`root` 用户绕过全部权限检查;
+- **权限机关**:节点带属主与 9 位模式(如 `rw-------`)。读文件/列目录
+  查 r 位,写/建/删查父目录 w 位;默认文件 `rw-r--r--`、目录 `rwxr-xr-x`,
+  root 不受限 —— 可以做「只有 root 能读的密件」「guest 写不进的系统目录」;
+- **多会话**:同一 主机+用户 的远端文件树全局唯一 —— 开两个终端窗口
+  同时连入,一端写另一端立刻可见;`get` 下载到本机 `~/downloads/`;
+- **跳板嵌套**:远程会话里再输 `ssh <用户>@<主机>` 即从当前主机跳板
+  深入(提示符随链路切换,`exit` 逐层退回),经典 Hacknet 代理链玩法;
+- **scp**:本机终端 `scp <本地> <用户>@<主机>:<远端>`(方向对调即下载),
+  口令验证一次、传输完即断,不进交互会话;
+- **持久化**:远端写操作(写/删/建目录)记录为覆盖层,随游戏进度落在
+  `webos.vnet.v1` 的 `sshFs` 字段,跨页面重载保留;`WebOS.vnet.resetState()`
+  一并清空(靶机重置);
+- 自定义命令拿到完整 session,除 `cwd/user/host` 外还有
+  `readFile / writeFile / listDir / resolveP` 文件辅助 API 可用。
+
 ### 运行时行为
 
 - 浏览器页面的 `<a>`/`<form>` 会被自动拦截转为虚拟导航(模板只有
   链接;起始页等宿主页可用表单);
 - 终端 `curl` 走同一条 HTTP 管线(`vnet.httpGetAsync`),AetherJS
   站点对终端同样可见;
-- SSH 会话内置 `ls cat cd pwd whoami echo get(下载到本机文件管家) exit`
-  命令,自定义命令优先;
+- SSH 会话内建常用命令与传输(见「模拟远程终端」一节),自定义命令优先;
 - 所有虚拟网络活动通过总线广播(`vnet:http` / `vnet:ssh` /
   `vnet:flag-changed`),在系统监视器的 IPC 页面可以实时观测玩家的探索轨迹;
-- `WebOS.vnet.resetState()` 可清空游戏进度。
+- `WebOS.vnet.resetState()` 可清空游戏进度(标志位 + 运行时 DNS +
+  远端文件系统改动)。
 
 ### 示例游戏《赛博档案》
 
