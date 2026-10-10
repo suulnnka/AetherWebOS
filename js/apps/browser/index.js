@@ -15,6 +15,10 @@
  *  - 收藏(Firefox 式书签):地址栏旁星标一键收藏当前页,已收藏时
  *    星标菜单改名 / 删除;收藏夹面板逐条管理;起始页出现收藏卡片;
  *    Ctrl+D 收藏。数据按用户落 ~/appdata/browser.awdb。
+ *  - 历史(最近访问):页面加载完成即记录(一条地址一条记录,重访
+ *    更新时间与次数并置顶,起始页/错误页不记);历史面板逐条管理
+ *    (跳转 / 删除 / 清空),起始页出现「最近访问」卡片;Ctrl+H
+ *    开关面板。与收藏同库同档存 ~/appdata/browser.awdb(容量 300)。
  *
  * 分流:域名能被虚拟 DNS 解析(或私网 IP)→ 内网(vnet 游戏世界,
  * 含作者的 proxy 路径转换);否则直达真实互联网(iframe,跨源页面
@@ -73,7 +77,7 @@ const WEB_LINKS = [
   { url: 'https://www.openstreetmap.org', name: 'OpenStreetMap', note: '开源世界地图' },
   { url: 'https://archive.org', name: 'Internet Archive', note: '互联网档案馆' },
 ];
-function startPage(marks = []) {
+function startPage({ marks = [], hist = [] } = {}) {
   const hosts = dnsList();
   const sh = getSearchHost();
   return `<div class="vp-hero">
@@ -90,6 +94,14 @@ function startPage(marks = []) {
         <div class="vp-row">
           <a href="${escapeHtml(m.url)}" class="vw-link">${escapeHtml(m.name)}</a>
           <span class="vp-mono vp-dim">${escapeHtml(m.url.replace(/^https?:\/\//, ''))}</span>
+        </div>`).join('')}
+    </div>` : ''}
+    ${hist.length ? `<div class="vp-card" style="margin-top:18px">
+      <div class="vp-card-title">最近访问</div>
+      ${hist.slice(0, 6).map(h => `
+        <div class="vp-row">
+          <a href="${escapeHtml(h.url)}" class="vw-link">${escapeHtml(h.name)}</a>
+          <span class="vp-mono vp-dim">${escapeHtml(h.url.replace(/^https?:\/\//, ''))}</span>
         </div>`).join('')}
     </div>` : ''}
     <div class="vp-card" style="margin-top:18px">
@@ -132,19 +144,28 @@ const ERRORS = {
 const isTypingTarget = (t) =>
   !t || !t.closest ? false : !!t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
 
-/* ---- 收藏(书签):{ seq, marks:[{ id, url, name, created }] } ----
- * 按用户存加密库 ~/appdata/browser.awdb;未登录仅会话内存态(同 memo/todo)。
- * 模块级状态:浏览器为单例应用,所有窗口共享。 */
-let bm = { seq: 1, marks: [] };
+/* ---- 收藏(书签)+ 历史(最近访问):{ seq, marks, hseq, hist } ----
+ * 同一状态档按用户存加密库 ~/appdata/browser.awdb;未登录仅会话内存态
+ * (同 memo/todo)。历史一条地址一条记录,重访更新时间与次数并置顶,
+ * 容量上限 300 条,超出丢最旧。模块级状态:浏览器为单例应用,所有窗口共享。 */
+const HIST_CAP = 300;
+let bm = { seq: 1, marks: [], hseq: 1, hist: [] };
 let bmDirty = false;   // 加载完成前用户已改动 → 丢弃盘上旧档,以内存为准
 
 function bmNormalize(raw) {
   if (!raw || !Array.isArray(raw.marks)) return null;
   let seq = +raw.seq || 1;
+  let hseq = +raw.hseq || 1;
   const marks = raw.marks
     .filter(m => m && typeof m.url === 'string' && /^(https?:|about:)/.test(m.url))
     .map(m => ({ id: m.id || `b${seq++}`, url: m.url, name: String(m.name || m.url), created: m.created || Date.now() }));
-  return { seq, marks };
+  const hist = Array.isArray(raw.hist)
+    ? raw.hist
+        .filter(h => h && typeof h.url === 'string' && /^https?:/.test(h.url))
+        .map(h => ({ id: h.id || `h${hseq++}`, url: h.url, name: String(h.name || h.url), date: h.date || Date.now(), count: Math.max(1, +h.count || 1) }))
+        .slice(0, HIST_CAP)
+    : [];
+  return { seq, marks, hseq, hist };
 }
 
 async function bmLoad() {
@@ -166,6 +187,20 @@ function bmPersist() {
     try { await saveState('browser', bm, user); }
     catch (e) { console.warn('[browser] 收藏保存失败', e); }
   }, 200);
+}
+
+/** 记一次访问:已有该地址则更新时间/次数并置顶,否则新建(超容量丢最旧) */
+function histUpsert(url, name) {
+  const h = bm.hist.find(x => x.url === url);
+  if (h) {
+    h.date = Date.now();
+    h.count = (h.count || 1) + 1;
+    if (name) h.name = name;
+    bm.hist = [h, ...bm.hist.filter(x => x !== h)];
+  } else {
+    bm.hist.unshift({ id: `h${bm.hseq++}`, url, name: name || url, date: Date.now(), count: 1 });
+    if (bm.hist.length > HIST_CAP) bm.hist.length = HIST_CAP;
+  }
 }
 
 register({
@@ -213,12 +248,13 @@ register({
       star.disabled = !u;
       star.title = on ? '编辑收藏 (Ctrl+D)' : '收藏此页 (Ctrl+D)';
       bmBtn.title = `收藏夹(${bm.marks.length})`;
+      histBtn.title = `历史(${bm.hist.length}) · Ctrl+H`;
     }
 
     /** 起始页收藏卡片与收藏夹面板随增删实时刷新 */
     function refreshStart(tb) {
       if (!tb || tb.history[tb.hIdx] !== 'about:start' || tb.page.hidden) return;
-      tb.page.innerHTML = startPage(bm.marks);
+      tb.page.innerHTML = startPage(bm);
       wirePage(tb);
     }
 
@@ -329,6 +365,103 @@ register({
       document.addEventListener('keydown', bmPopEsc, true);
     }
     const bmBtn = el('button', { class: 'btn icon vw-bm-btn', title: '收藏夹', onClick: toggleBmPop }, icon('bookmark', 14));
+
+    /* ---- 历史(最近访问)面板:与收藏夹同款下拉,互斥开合 ---- */
+
+    /** 面板里的访问时间:今天只显时分,昨天带前缀,更早只显月日 */
+    function fmtVisit(ts) {
+      const d = new Date(ts), n = new Date();
+      const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const sameDay = (a, b) => a.toDateString() === b.toDateString();
+      if (sameDay(d, n)) return hm;
+      const y = new Date(n); y.setDate(n.getDate() - 1);
+      if (sameDay(d, y)) return `昨天 ${hm}`;
+      return `${d.getMonth() + 1}月${d.getDate()}日`;
+    }
+
+    let histPop = null;
+    const closeHistPop = () => {
+      if (!histPop) return;
+      histPop.remove();
+      histPop = null;
+      document.removeEventListener('pointerdown', histPopOutside, true);
+      document.removeEventListener('keydown', histPopEsc, true);
+    };
+    function histPopOutside(e) {
+      if (histPop && !histPop.contains(e.target) && !histBtn.contains(e.target)) closeHistPop();
+    }
+    function histPopEsc(e) { if (e.key === 'Escape') closeHistPop(); }
+
+    function renderHistPop() {
+      if (!histPop) return;
+      histPop.innerHTML = '';
+      histPop.append(el('div', { class: 'vw-bm-head' }, '历史',
+        el('span', { class: 'dim' }, ` ${bm.hist.length}`)));
+      if (!bm.hist.length) {
+        histPop.append(el('div', { class: 'vw-bm-empty' }, '暂无历史:访问过的页面会出现在这里'));
+        return;
+      }
+      const list = el('div', { class: 'vw-bm-list' });
+      bm.hist.forEach(h => {
+        const net = routeNet(h.url) === 'out' ? 'net-out' : 'net-in';
+        list.append(el('div', {
+          class: 'vw-bm-row',
+          title: h.url,
+          onClick: () => { if (tabs[active]) nav(tabs[active], h.url, { push: true }); closeHistPop(); },
+        },
+          el('span', { class: `vw-tab-dot ${net}` }),
+          el('span', { class: 'vw-bm-main' },
+            el('span', { class: 'vw-bm-name' }, h.name),
+            el('span', { class: 'vw-bm-url mono' }, h.url.replace(/^https?:\/\//, ''))),
+          el('span', { class: 'vw-bm-time mono' }, fmtVisit(h.date) + (h.count > 1 ? ` · ${h.count} 次` : '')),
+          el('button', { class: 'vw-bm-act', title: '移除该记录', onClick: (e) => { e.stopPropagation(); removeHist(h.url); } }, icon('close', 12))));
+      });
+      histPop.append(list,
+        el('button', { class: 'btn vw-bm-add', onClick: clearHist }, '清空历史'));
+    }
+
+    function toggleHistPop() {
+      if (histPop) return closeHistPop();
+      closeBmPop();   // 两个下拉互斥
+      histPop = el('div', { class: 'vw-bm-pop' });
+      renderHistPop();
+      document.body.append(histPop);
+      // 右缘对齐按钮;下方放不下翻到上方,整体钳入视口(同收藏夹)
+      const r = histBtn.getBoundingClientRect();
+      const left = clamp(r.right - histPop.offsetWidth, 8, innerWidth - histPop.offsetWidth - 8);
+      let top = r.bottom + 6;
+      if (top + histPop.offsetHeight > innerHeight - 8) top = Math.max(8, r.top - histPop.offsetHeight - 6);
+      histPop.style.left = left + 'px';
+      histPop.style.top = top + 'px';
+      document.addEventListener('pointerdown', histPopOutside, true);
+      document.addEventListener('keydown', histPopEsc, true);
+    }
+    const histBtn = el('button', { class: 'btn icon vw-hist-btn', title: '历史 (Ctrl+H)', onClick: toggleHistPop }, icon('clock', 14));
+
+    function removeHist(url) {
+      bm.hist = bm.hist.filter(h => h.url !== url);
+      bmPersist();
+      renderHistPop();
+      refreshStart(tabs[active]);
+    }
+
+    function clearHist() {
+      bm.hist = [];
+      bmPersist();
+      renderHistPop();
+      refreshStart(tabs[active]);
+    }
+
+    /** 记一次成功访问(页面加载完成时调用;起始页/错误页/取消不算) */
+    function visit(url, title) {
+      if (!url || !/^https?:/.test(url)) return;
+      histUpsert(url, title);
+      bmPersist();
+      histBtn.title = `历史(${bm.hist.length})`;
+      if (histPop) renderHistPop();
+      refreshStart(tabs[active]);
+    }
+
     paintStar();
 
     /* ---- 标签栏:滚动区(标签)+ 固定的 + 与「列出所有标签页」 ---- */
@@ -681,7 +814,7 @@ register({
         if (seq !== tb.seq) return;
         setLoading(tb, false);
         tb.page.hidden = false;
-        tb.page.innerHTML = startPage(bm.marks);
+        tb.page.innerHTML = startPage(bm);
         wirePage(tb);
         applyMute(tb);
         setStatus(tb, '导航页', '');
@@ -724,12 +857,14 @@ register({
               tb.page.hidden = true;
               tb.frame.hidden = false;
               tb.frame.src = r.proxyUrl;
+              visit(url, r.title);
               bus.notify('代理资源已加载', `${r.url} → ${r.proxyUrl}`);
             } else {
               tb.page.hidden = false;
               tb.page.innerHTML = r.body || '<p class="dim">(空白页)</p>';
               wirePage(tb);
               applyMute(tb);
+              visit(url, r.title);
             }
           });
         });
@@ -781,6 +916,7 @@ register({
           settled = true;
           setLoading(tb, false);
           setStatus(tb, '完成(外网)', `${u.hostname} · 外网`);
+          visit(u.href, u.hostname);   // 跨源读不到标题,以主机名记
           showEmbedHint(tb);
         } else {
           setStatus(tb, '页内已跳转(地址栏未同步)');
@@ -837,6 +973,7 @@ register({
         e.preventDefault(); addr.focus(); addr.select(); return;
       }
       if (ctrl && (k === 'd' || k === 'D')) { e.preventDefault(); return onStarClick(); }
+      if (ctrl && (k === 'h' || k === 'H')) { e.preventDefault(); return toggleHistPop(); }
       if (e.altKey && k === 'ArrowLeft') { e.preventDefault(); return go(-1); }
       if (e.altKey && k === 'ArrowRight') { e.preventDefault(); return go(1); }
       if (k === 'Backspace' && !isTypingTarget(e.target)) { e.preventDefault(); return go(-1); }
@@ -849,7 +986,7 @@ register({
       el('div', { class: 'app-toolbar vw-toolbar' },
         back, fwd, reload, home,
         addr,
-        star, bmBtn, openExt),
+        star, bmBtn, histBtn, openExt),
       content,
       el('div', { class: 'app-status' }, statusL,
         el('span', { class: 'grow' }), statusR)));
@@ -874,6 +1011,7 @@ register({
     return {
       onClose() {
         closeBmPop();
+        closeHistPop();
         document.removeEventListener('keydown', onKey);
         window.removeEventListener('pointermove', onTabPointerMove);
         window.removeEventListener('pointerup', endTabDrag);

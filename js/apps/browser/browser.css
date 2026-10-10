@@ -148,6 +148,9 @@
   color: var(--text-2); font-size: 11.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 历史面板行内的访问时间与次数(悬停行时与操作按钮一起浮现) */
+.vw-bm-time { flex: none; color: var(--text-2); font-size: 11px; opacity: 0.85; }
+.vw-bm-row:hover .vw-bm-time { opacity: 1; }
 /* 行内操作:悬停行时浮现(Firefox 书签下拉的行内管理) */
 .vw-bm-act {
   flex: none; width: 22px; height: 22px; border-radius: 6px;

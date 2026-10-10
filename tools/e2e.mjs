@@ -5228,6 +5228,106 @@ group('T53', '快照与 COW(创建零拷贝 / 写时分叉 / 跨重载持久化 
   t('T53.9 全程无错误', errs53 === 0, `errs=${errs53}`);
 });
 
+group('T55', '浏览器历史(访问记录 / 面板管理 / 起始页卡片 / Ctrl+H / 持久化)', async () => {
+  /* ---- T55 历史:页面加载完成即记录(重访累计次数),面板删除/清空,跨重载持久化 ---- */
+  const u55 = await ev(`WebOS.accounts.current()`);
+  await wipeAppData(u55, 'browser');   // 收藏+历史同库同档:清档从零起测
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(700);
+
+  const nav = async (q) => {
+    await ev(`(() => {
+      const a = document.querySelector('.win[data-app=browser] .vw-addr');
+      a.value = ${JSON.stringify(q)};
+      a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    await sleep(1900);   // 模拟 DNS→连接→响应 ≈ 720ms + 渲染余量
+  };
+  const closePops = () => ev(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+  const histRows = () => ev(`(() => [...document.querySelectorAll('.vw-bm-pop .vw-bm-row')].map(r => ({
+    name: r.querySelector('.vw-bm-name').textContent,
+    url: r.querySelector('.vw-bm-url').textContent,
+    time: r.querySelector('.vw-bm-time')?.textContent || '',
+  })))()`);
+
+  await nav('portal.nexus');
+  await ev(`document.querySelector('.win[data-app=browser] .vw-hist-btn').click()`);
+  await sleep(200);
+  const rows1 = await histRows();
+  t('T55 访问即记录(门户一条,带今天时间)',
+    rows1.length === 1 && rows1[0].name === 'NEXUS 内网门户' && /^portal\.nexus\/?$/.test(rows1[0].url)
+      && /^\d{2}:\d{2}$/.test(rows1[0].time),
+    JSON.stringify(rows1));
+
+  // 重访同址:仍是一条,次数累计为 ×2
+  await closePops();
+  await nav('portal.nexus');
+  await ev(`document.querySelector('.win[data-app=browser] .vw-hist-btn').click()`);
+  await sleep(200);
+  const rows2 = await histRows();
+  t('T55.1 重访累计次数(一条记录 ×2)', rows2.length === 1 && /2 次$/.test(rows2[0].time), JSON.stringify(rows2));
+  await closePops();
+  await sleep(150);
+
+  // Ctrl+H 开面板(Esc 关闭)
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true, bubbles: true, cancelable: true }))`);
+  await sleep(150);
+  const byKey = await ev(`!!document.querySelector('.vw-bm-pop')`);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await sleep(150);
+  t('T55.2 Ctrl+H 开关历史面板(Esc 关闭)', byKey === true
+    && await ev(`!document.querySelector('.vw-bm-pop')`) === true);
+
+  // 起始页「最近访问」卡片(回起始页后可见)
+  await ev(`[...document.querySelectorAll('.win[data-app=browser] .vw-toolbar .btn.icon')].find(b => b.title === '起始页').click()`);
+  await sleep(400);
+  const card = await ev(`(() => {
+    const c = [...document.querySelectorAll('.win[data-app=browser] .vp-card')]
+      .find(x => x.querySelector('.vp-card-title')?.textContent === '最近访问');
+    return { has: !!c, links: c ? [...c.querySelectorAll('a')].map(a => a.textContent) : [] };
+  })()`);
+  t('T55.3 起始页「最近访问」卡片', card.has === true && card.links.includes('NEXUS 内网门户'),
+    JSON.stringify(card));
+
+  // 面板移除单条 → 空态
+  await ev(`document.querySelector('.win[data-app=browser] .vw-hist-btn').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('.vw-bm-pop .vw-bm-act[title="移除该记录"]').click()`);
+  await sleep(200);
+  const empty1 = await ev(`(() => ({
+    empty: !!document.querySelector('.vw-bm-pop .vw-bm-empty'),
+    rows: document.querySelectorAll('.vw-bm-pop .vw-bm-row').length,
+  }))()`);
+  t('T55.4 面板移除单条(空态)', empty1.empty === true && empty1.rows === 0, JSON.stringify(empty1));
+  await closePops();
+
+  // 持久化:再访图书馆 → 刷新 → 重开浏览器 → 记录仍在、库已落盘
+  await nav('library.nexus');
+  await sleep(300);
+  await ev(`(async () => { await WebOS.fs.flush(); return true; })()`);
+  await fresh();
+  await ev(`WebOS.wm.open('browser')`);
+  await sleep(900);   // 等历史水合(同收藏)
+  await ev(`document.querySelector('.win[data-app=browser] .vw-hist-btn').click()`);
+  await sleep(200);
+  const rows3 = await histRows();
+  t('T55.5 跨重载持久化(重开后仍在/库已落盘)',
+    rows3.length === 1 && rows3[0].name === 'NEXUS 数字图书馆'
+      && await ev(`WebOS.fs.exists('/home/' + WebOS.accounts.current() + '/appdata/browser.awdb')`) === true,
+    JSON.stringify(rows3));
+
+  // 清空历史
+  await ev(`document.querySelector('.vw-bm-pop .vw-bm-add').click()`);
+  await sleep(200);
+  t('T55.6 清空历史', await ev(`!!document.querySelector('.vw-bm-pop .vw-bm-empty')`) === true);
+  await closePops();
+  await sleep(150);
+
+  const errs55 = await ev(`window.__errs.length`);
+  t('T55.7 全程无运行错误', errs55 === 0, `errs=${errs55}`);
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=browser]').dataset.id)`);
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);
