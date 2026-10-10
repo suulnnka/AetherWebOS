@@ -189,7 +189,9 @@
 .vw-page {
   flex: 1 1 auto;
   min-height: 0; min-width: 0;   /* Firefox:滚动型 flex 条目须显式可收缩,否则内容被裁掉不出滚动条 */
-  overflow-y: auto; padding: 26px 34px; max-width: 860px;
+  overflow-y: auto; padding: 26px 34px;
+  /* 不设 max-width:内网页面随窗口宽度伸缩(列向 flex 默认 stretch 撑满),
+   * 与外网 iframe 行为一致;错误页/起始页等自带居中与列宽的构件不受影响 */
   user-select: text; -webkit-user-select: text;
 }
 .vw-page h1 { font-size: 21px; margin-bottom: 6px; }
