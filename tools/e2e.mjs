@@ -500,8 +500,10 @@ group('T11', '计算器', async () => {
 
 });
 
-group('T12', '音乐播放器', async () => {
+group('T12', '音乐播放器(播放 / 上次曲目落盘与恢复)', async () => {
   /* ---- T12 音乐播放器 ---- */
+  const u12 = await ev(`WebOS.accounts.current()`);
+  await wipeAppData(u12, 'music');   // 上次曲目存 ~/appdata/music.awdb:清档,从默认曲目起测
   await needApps('music');
   await ev(`WebOS.wm.open('music')`);
   await sleep(500);
@@ -516,6 +518,43 @@ group('T12', '音乐播放器', async () => {
   await c.shot('t12-music');
   await ev(`document.querySelector('.play-btn').click()`); // 暂停
   await sleep(200);
+
+  /* ---- T12.1 上次曲目:点最后一曲 → ~/appdata/music.awdb 落盘 ---- */
+  await ev(`[...document.querySelectorAll('.music-item')].pop().click()`);
+  await sleep(500);   // rememberTrack 200ms 防抖 + 库写入
+  const saved = await ev(`(() => ({
+    sel: [...document.querySelectorAll('.music-item')].findIndex(b => b.classList.contains('playing')),
+    n: document.querySelectorAll('.music-item').length,
+    db: WebOS.fs.exists('/home/' + WebOS.accounts.current() + '/appdata/music.awdb'),
+  }))()`);
+  t('T12.1 点选最后一曲(曲目记忆落盘)', saved.sel === saved.n - 1 && saved.db === true,
+    JSON.stringify(saved));
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=music]').dataset.id)`);   // 关窗即停
+  await sleep(300);
+  await ev(`(async () => { await WebOS.fs.flush(); return true; })()`);   // 落盘元数据在刷新前写进 OPFS
+
+  /* ---- T12.2 重载后恢复上次曲目(选中高亮,但不自动播放) ---- */
+  await fresh();
+  await ev(`WebOS.wm.open('music')`);
+  await sleep(800);   // 等恢复水合(开库读 state)
+  const restored = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=music]');
+    return {
+      sel: [...w.querySelectorAll('.music-item')].findIndex(b => b.classList.contains('playing')),
+      n: w.querySelectorAll('.music-item').length,
+      title: w.querySelector('.app-toolbar span').textContent,
+      pauseRects: w.querySelectorAll('.play-btn svg rect').length,   // 0 = 播放三角图标(未自动播放)
+    };
+  })()`);
+  t('T12.2 重载后恢复上次曲目(不自动播放)',
+    restored.sel === restored.n - 1 && restored.title === '天空练习曲' && restored.pauseRects === 0,
+    JSON.stringify(restored));
+  await c.shot('t12-music-restore');
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=music]').dataset.id)`);
+  await sleep(200);
+
+  const errs12 = await ev(`window.__errs.length`);
+  t('T12.3 全程无运行错误', errs12 === 0, `errs=${errs12}`);
 
 });
 

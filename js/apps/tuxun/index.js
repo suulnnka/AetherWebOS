@@ -7,6 +7,8 @@
  *  - 底图:自研内核 js/lib/minimap.js + tile.openstreetmap.de(OSM 数据,境内可直连)
  *  - 照片池:本地 ./photos/(坐标 WGS-84,见 photos/index.js 的扩充说明)
  *  - 反查城市名:Photon(Nominatim 同源数据的境内可达服务)
+ *
+ * 历史最佳按用户存 ~/appdata/tuxun.awdb(页加密库);未登录仅会话态。
  * ============================================================ */
 import L from '../../lib/minimap.js';
 import { el } from '../../core/utils.js';
@@ -15,12 +17,13 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import { PHOTOS } from './photos/index.js';
 import './tuxun.css';
+import { accounts } from '../../core/accounts.js';
+import { loadState, saveState } from '../../core/appdata.js';
 
 const OSM_URL = 'https://tile.openstreetmap.de/{z}/{x}/{y}.png';
 const OSM_OPTS = { maxZoom: 18, attribution: '© OpenStreetMap 贡献者' };
 const ROUNDS = 5;
 const SCORE_SCALE = 20000;        // 计分尺度(米):1km≈4755,5km≈3894,20km≈1839,50km≈771
-const BEST_KEY = 'webos.tuxun.best';
 
 /* Haversine 球面距离(米) */
 function haversine(a, b) {
@@ -33,6 +36,33 @@ function haversine(a, b) {
 
 const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} 米` : `${(m / 1000).toFixed(1)} 公里`);
 const calcScore = (m) => Math.round(5000 * Math.exp(-m / SCORE_SCALE));
+
+/* ---- 历史最佳:按用户存 ~/appdata/tuxun.awdb;未登录仅会话态 ---- */
+let best = 0;
+let restoring = null;   // 进行中的恢复(并发去重)
+
+function restoreBest() {
+  if (restoring) return restoring;
+  restoring = (async () => {
+    if (!accounts.current()) return;
+    try {
+      const v = (await loadState('tuxun'))?.best;
+      if (Number.isFinite(v) && v >= 0) best = Math.max(best, v);
+    } catch { /* 未登录/读失败:会话态 */ }
+  })();
+  return restoring;
+}
+
+let saveT;
+function rememberBest(v) {
+  best = v;
+  clearTimeout(saveT);
+  saveT = setTimeout(async () => {
+    if (!accounts.current()) return;   // 未登录:不落盘
+    try { await saveState('tuxun', { best }); }
+    catch (e) { console.warn('[tuxun] 持久化失败', e); }
+  }, 200);
+}
 
 /* 本局照片序列:池子够大时不重复,不足时循环补齐 */
 function newDeck() {
@@ -76,7 +106,6 @@ register({
     /* ---------------- 骨架 ---------------- */
     const photoBox = el('div', { class: 'tx-photo' });
     const statusL = el('span', {}, '来一局,测试一下你的地理直觉');
-    const best = Number(localStorage.getItem(BEST_KEY) || 0);
     const statusR = el('span', { class: 'mono' }, best ? `最佳 ${best}` : '');
 
     const startBtn = el('button', { class: 'btn primary', onClick: () => startGame() },
@@ -141,9 +170,9 @@ register({
     function showFinal() {
       roundOverlay.hidden = true;
       reopenChip.hidden = true;
-      const prevBest = Number(localStorage.getItem(BEST_KEY) || 0);
+      const prevBest = best;
       const isRecord = total > prevBest;
-      if (isRecord) localStorage.setItem(BEST_KEY, String(total));
+      if (isRecord) rememberBest(total);
       statusR.textContent = `最佳 ${Math.max(prevBest, total)}`;
 
       finalOverlay.innerHTML = '';
@@ -267,6 +296,8 @@ register({
     setTimeout(() => { if (!disposed && guessMap) guessMap.invalidateSize(); }, 300);
 
     renderStartOverlay();
+    /* 水合历史最佳后补显状态栏(对局已在进行则以内存较大者为准) */
+    restoreBest().then(() => { if (!disposed && best) statusR.textContent = `最佳 ${best}`; });
 
     return {
       onResize: () => {

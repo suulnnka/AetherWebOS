@@ -23,5 +23,5 @@
 - [x] **COW 与快照** —— 虚拟文件系统支持写时复制快照:创建零拷贝(元数据克隆 + 内容引用 ref/gen),活跃树首次覆盖/删除前把旧内容遮蔽进 fsshadow 私有域;跨重载持久化、整棵恢复(快照不被消费)、属主/root 权限隔离;终端 `snap` 命令(create/ls/cat/restore/rm);e2e T53
 - [x] **权限控制** —— 类 Unix 权限位落地:6 位 rwxrwx(属主 + 其他,本系统无用户组,ls 补显 9 位),r = 读/列目录、w = 写/建条目、x = 管理位(移动/删除/改名/chmod 须有,缺位即冻结,解冻须 root);目录穿越免费(祖先不查 r);新文件默认 70、家目录 rw------、/bin r--r--、/app 与 appdata 库冻结;老树装载一次性迁移(x 语义翻转);终端 ls -l / chmod,e2e T38 —— 6de8d22 引入,c2dbfd0…02a089e 收敛语义
 - [x] **目录结构优化** —— 系统/应用/用户数据三分层:/bin(系统目录 r--r--)、/app/<id>(商店应用包,root 私有,真实资源下载落盘、末位卸载回收)、/home/<user>/{desktop,documents,appdata}(用户数据,另设 /home/shared 共享区)—— 6de8d22、9d2ffdd
-- [ ] **应用数据落盘** —— 应用数据统一落虚拟文件系统 ~/appdata/<app>.awdb(按用户页加密库);已迁 browser/clues/dbviewer/diary/memo/qq/todo;设置经确认保留 localStorage 不迁;**待迁:mail、sms、music**
+- [x] **应用数据落盘** —— 应用数据统一落虚拟文件系统 ~/appdata/*.awdb(页加密库):memo/todo/diary/browser/clues/dbviewer/music/tuxun 按用户存(music 上次曲目、tuxun 历史最佳为收尾补齐);短信为设备级库(/home/shared/appdata/sms.awdb),邮件/QQ 按应用内身份独立成库(mail#<邮箱>.awdb 等,648d0be);经确认保留 localStorage 的:设置与账号、桌面布局等系统态,以及 vnet 剧情标志位
 - [x] **用户主目录** —— 每用户绑定 /home/<用户名> 家目录(rw------ 私有),登录/注册幂等创建,账号改名自动迁移;desktop/documents 与 ~/appdata 应用数据各归其位 —— 6de8d22

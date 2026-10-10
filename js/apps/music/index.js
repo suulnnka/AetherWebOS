@@ -1,11 +1,14 @@
-/* ============ 应用:音乐播放(WebAudio 合成,音量跟随系统) ============ */
+/* ============ 应用:音乐播放(WebAudio 合成,音量跟随系统) ============
+ * 上次选听曲目按用户存 ~/appdata/music.awdb(页加密库);未登录仅会话态。
+ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './music.css';
 import { ensureCtx, masterGain } from '../../core/audio.js';
-import { settings } from '../../core/store.js';
+import { accounts } from '../../core/accounts.js';
+import { loadState, saveState } from '../../core/appdata.js';
 
 /* 音符频率表(Hz) */
 const N = {
@@ -49,11 +52,39 @@ const TRACKS = [
 
 const trackDuration = (t) => t.notes.reduce((s, [, b]) => s + b, 0) * 60 / t.bpm;
 
+/* ---- 上次曲目:按用户落 ~/appdata/music.awdb;未登录仅会话态 ---- */
+let lastTrack = 0;
+let restoring = null;   // 进行中的恢复(并发去重)
+
+function restoreLastTrack() {
+  if (restoring) return restoring;
+  restoring = (async () => {
+    if (!accounts.current()) return;
+    try {
+      const t = (await loadState('music'))?.track;
+      if (Number.isInteger(t) && t >= 0 && t < TRACKS.length) lastTrack = t;
+    } catch { /* 未登录/读失败:会话态 */ }
+  })();
+  return restoring;
+}
+
+let saveT;
+function rememberTrack(i) {
+  lastTrack = i;
+  clearTimeout(saveT);
+  saveT = setTimeout(async () => {
+    if (!accounts.current()) return;   // 未登录:不落盘
+    try { await saveState('music', { track: lastTrack }); }
+    catch (e) { console.warn('[music] 持久化失败', e); }
+  }, 200);
+}
+
 register({
   ...manifest,
   mount({ root, bus, setTitle }) {
     let idx = 0;
     let playing = false;
+    let touched = false;      // 用户已操作:不再套用盘上恢复的曲目
     let timer = null;       // 音符调度器
     let stopTimer = null;   // 结束检测
     let startedAt = 0;      // 音频时钟基准
@@ -142,25 +173,29 @@ register({
       renderList();
     }
 
-    /** 切换曲目;auto=true 时无论是否在播放都接着播 */
-    function switchTrack(delta, auto = false) {
-      const keep = auto || playing;
+    /** 选曲(i 为曲目下标;keep=true 接着播);记入上次曲目 */
+    function selectTrack(i, keep = false) {
       stopPlayback();
       elapsed = 0;
-      idx = (idx + delta + TRACKS.length) % TRACKS.length;
+      idx = i;
+      rememberTrack(i);
       renderList();
       updateMeta();
       if (keep) startPlayback();
     }
 
-    const toggle = () => (playing ? stopPlayback() : startPlayback());
+    /** 上一首/下一首;auto=true 时无论是否在播放都接着播 */
+    const switchTrack = (delta, auto = false) =>
+      selectTrack((idx + delta + TRACKS.length) % TRACKS.length, auto || playing);
+
+    const toggle = () => { touched = true; playing ? stopPlayback() : startPlayback(); };
 
     function renderList() {
       listBox.innerHTML = '';
       TRACKS.forEach((t, i) => {
         listBox.append(el('button', {
           class: 'music-item' + (i === idx ? ' playing' : ''),
-          onClick: () => { if (i === idx) { toggle(); return; } stopPlayback(); idx = i; elapsed = 0; renderList(); updateMeta(); startPlayback(); },
+          onClick: () => { touched = true; if (i === idx) { toggle(); return; } selectTrack(i, true); },
         },
           icon(i === idx && playing ? 'pause' : 'play', 14),
           t.name,
@@ -183,6 +218,7 @@ register({
 
     // 点击进度条跳转
     const progBar = el('div', { class: 'music-progress', onclick: (e) => {
+      touched = true;
       const r = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
       const wasPlaying = playing;
@@ -191,6 +227,8 @@ register({
       if (wasPlaying) startPlayback(); else tickUI();
     } }, prog);
 
+    /* 盘上有上次曲目且用户尚未操作 → 套用(不自动播放) */
+    restoreLastTrack().then(() => { if (!touched && lastTrack !== idx) selectTrack(lastTrack); });
     renderList();
     updateMeta();
 
