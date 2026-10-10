@@ -108,6 +108,8 @@ addServer('lab.nexus', {
 这台靶机用来练习模拟远程终端:
  · ls -l /etc 看权限 —— cat /etc/shadow 会被拒(root 才能读)
  · echo 试写 > 文件、mkdir / rm / mv / cp、grep / find / tree 都可用
+ · node /opt/tools/netcheck.ajs 跑远端脚本;./hardware.exe 直接运行密文程序
+   (自己的 AetherJS 在代码编辑器写,「打包 EXE」后 put 上来也能跑)
  · put ~/desktop/文件 上传本机文件;get <远端文件> 下载回本机
  · 远程会话里输 ssh researcher@vault.nexus 可以继续跳板(口令去图书馆找)
  · exit 断开;你的改动会保留在靶机上(整机重置:WebOS.vnet.resetState())`,
@@ -121,6 +123,26 @@ addServer('lab.nexus', {
       },
     },
     tmp: { mode: 'rwxrwxrwt' },   // 人人可写(sticky 位仅装饰)
+    opt: {
+      tools: {
+        // 演示:远端 node 跑明文 AetherJS(node /opt/tools/netcheck.ajs)
+        'netcheck.ajs': `// netcheck.ajs —— 靶机自检脚本(远程会话里:node /opt/tools/netcheck.ajs)
+const hosts = ["router.nexus", "portal.nexus", "library.nexus", "vault.nexus"];
+let online = 0;
+for (const h of hosts) {
+  if (h !== "vault.nexus") { online += 1; }
+}
+print("内网主机 " + str(hosts.length) + " 台," + str(online) + " 台在线(vault 不回应)");
+const pids = [412, 519, 604];
+let checksum = 0;
+for (const p of pids) { checksum += p; }
+print("auth.log 会话校验和:" + str(checksum));
+print("自检完成 —— 下一招:cd /opt/tools 再 ./hardware.exe");`,
+        // 演示:远端 exe 直击(AEXE 密文,源码是 hardware probe,经代码编辑器
+        // 「打包 EXE」生成后固化到种子;cat 只见密文,./hardware.exe 直接运行)
+        'hardware.exe': 'AEXE1:JFIWWF0QITlxWAgJA15NFlJRRVsNXEkIUkVYXA9PVCU=:WEOS1:YXqSfEDor0Wr6MUUxYRWCg==:bSE+3xJzpdq/4gqo:4FJCLEuzkk+TKLwqjZaDG9oCBcOiyhCjzEZDcGIk7EM2R1LzrRpOChFwa8oCHgvx1WE9cwviCfq3XHyhh7JigvjnG1VY7lrewzUPdwsq+ZZIFAvKs721r4K7DtFEpDAVcDCYTMatg3Lis3CvuUR7CpHjTCWHmdaK6egZsWsWO3KkzOPupkH/6NkixWNMOe6G1kWNRqhI5brK9INdTZ7HEe+81cSmcdRA2vyiSYvefkWdbquoOgdDYwosROnlgFwvvvgNl6MhJ5Dyo5CrEQaWeujwG0D51FYh7Wwtpzh6cAhHuBWQg+jLTHFbJXBhC/R1dk9WgDWgUDTDizuDWzCO1FTTRrgNdK3Us2+gFxOxPcv8x6VfYufz5gdvwB6QQLGrHt8v6B7pwhnUKNqWjXTnAQmfwyQICPrHk33VBOO6r3MTk03MeQvSbs60uy/O/LTh/MaaMcf+b3Jxl3nVfTRVOiHCT5+oj+JmvB14/5yalo2+kn265md4fWj1xO4=',
+      },
+    },
   },
   users: {
     guest: {

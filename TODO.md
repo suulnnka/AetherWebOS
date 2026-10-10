@@ -15,7 +15,7 @@
 - [ ] **应用编辑器** —— 在 WebOS 内编写/注册新应用:清单 + mount 代码编辑、热注册、模板脚手架(搭配 app-dev-guide)
 - [ ] **网页编辑器** —— HTML/CSS/JS 所见即所得编辑 + 内置浏览器预览,产物可存入虚拟文件系统
 - [ ] **DNS 编辑器** —— 可视化管理虚拟网络(vnet)的域名解析记录:增删改查区域/记录,供浏览器/终端 curl/ssh 使用
-- [x] **模拟远程终端** —— 基于现有 ssh/vnet 模拟扩展:虚拟远端主机、多会话、登录认证、远端文件系统与常用命令 —— 会话引擎独立成 `core/vssh.js`(vnet 保留注册表与 DNS/口令检查):远端 FS 节点树(目录/文件/带属性文件,轻量属主+9 位权限,root 绕过,可做权限谜题)、内建 30+ 常用命令(ls -l/-a、echo > >> 重定向、mkdir/rm/mv/cp、grep/find/tree、ps/df/scan…)、get/put 传输与 scp 双向一次性传输、同主机同用户多窗口共享活动树、远程会话内 ssh 跳板嵌套(exit 逐层退)、远端写操作覆盖层随 vnet 进度持久化(resetState 一并清空);内置实训靶机 lab.nexus(共享树 + /etc/shadow root-only 机关);e2e T56 十一项全绿,T18 回归通过
+- [x] **模拟远程终端** —— 基于现有 ssh/vnet 模拟扩展:虚拟远端主机、多会话、登录认证、远端文件系统与常用命令 —— 会话引擎独立成 `core/vssh.js`(vnet 保留注册表与 DNS/口令检查):远端 FS 节点树(目录/文件/带属性文件,轻量属主+9 位权限,root 绕过,可做权限谜题)、内建 30+ 常用命令(ls -l/-a、echo > >> 重定向、mkdir/rm/mv/cp、grep/find/tree、ps/df/scan…)、get/put 传输与 scp 双向一次性传输、同主机同用户多窗口共享活动树、远程会话内 ssh 跳板嵌套(exit 逐层退)、远端写操作覆盖层随 vnet 进度持久化(resetState 一并清空);内置实训靶机 lab.nexus(共享树 + /etc/shadow root-only 机关);**远端脚本执行**(exec 异步化):`node <文件.ajs>` / `node -e`(读远端文件按 r 鉴权,跑与本地同款 AetherJS 沙盒 Worker),内建未命中回落远端 exe 直击(内容魔数识别,./x.exe / 裸名 / 改名均可,自动解密);靶机 /opt/tools 自带 netcheck.ajs 明文演示与密文 hardware.exe;e2e T56 十一项 + T59 六项全绿,T18/T57/T58 回归通过
 - [x] **本地执行程序** —— 代码编辑器应用 + AetherJS 运行时:自研编辑组件(js/lib/cedit.js,透明 textarea × 高亮层双层,原生 IME/撤销,Tab 缩进/自动配对/Ctrl+/ 注释)与自研四语言高亮(js/lib/chl.js,AetherJS/CSS/HTML/JSON,禁用总表标红带理由,HTML 支持模板插值与指令);执行走平台级 Worker(js/core/ascript.js,5s 超时强杀死循环,页面永不卡死),编辑器运行按钮出 print/程序值/错误(编译错误带行列可点击跳转、行号标红、停顿后实时语法检查),终端 `node <文件.ajs>` / `node -e` / `man` 命令同源;另支持 **EXE 打包**(js/core/aexe.js,`AEXE1:` 魔数 + 随机密钥 AES-GCM 加密、密钥混淆随文件携带 —— 混淆级防直读,cat 看得见看不懂):编辑器「打包 EXE」一键生成,终端未知名回落按内容魔数直击(`./x.exe`/裸名/绝对路径,改名也能跑,篡改报解密失败);e2e T57/T58
 
 ## 文件系统

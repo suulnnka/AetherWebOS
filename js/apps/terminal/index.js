@@ -138,8 +138,9 @@ register({
       dialogs,
     });
 
-    /* 远程会话的命令行处理:跳板拦截 → 执行 → ended 弹栈 */
-    function runRemote(line) {
+    /* 远程会话的命令行处理:跳板拦截 → 执行(async:node/exe 走沙盒
+     *  Worker 有往返延迟)→ ended 弹栈 */
+    async function runRemote(line) {
       const s = cur();
       const words = line.trim().split(/\s+/);
       // ssh 在远程会话里 = 从本机跳板发起嵌套连接(作者自定义 ssh 命令时除外)
@@ -150,7 +151,7 @@ register({
         return;
       }
       print(`${promptEl.textContent}${line}`, 't-cmd');
-      const r = s.exec(line);
+      const r = await s.exec(line);
       for (const l of r.lines) {
         if (l.cls === 'clear') { out.innerHTML = ''; continue; }
         print(l.text, l.cls);

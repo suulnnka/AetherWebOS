@@ -5841,6 +5841,102 @@ group('T58', 'EXE 打包与直接执行(自动加密 / 终端免 node / 密文�
   await c.shot('t58-exe');
 });
 
+group('T59', '远端 node 与远端 exe(SSH 会话跑 AetherJS / 密文直击 / put 上传执行)', async () => {
+  /* ---- T59:模拟远程终端里的脚本执行(与本地 node/exe 同一沙盒 Worker) ---- */
+  await fresh();
+  await ev(`WebOS.vnet.resetState()`);
+  const HOME = await ev(`WebOS.fs.homePath()`);
+
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(700);
+  const termExpr = () => `document.querySelector('.term-out').textContent || ''`;
+  const termRun = async (cmd) => {
+    await ev(`(() => {
+      const inp = document.querySelector('.term-in input');
+      inp.value = ${JSON.stringify(cmd)};
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+  };
+
+  // 登录靶机
+  await termRun('ssh guest@lab.nexus');
+  await sleep(400);
+  await termRun('guest');
+  await waitFor(`(${termExpr()}).includes('已连接')`, 5000);
+
+  // 1) 远端 node 跑靶机自带脚本(远端 FS 读取 + 沙盒执行)
+  await termRun('node /opt/tools/netcheck.ajs');
+  await waitFor(`(${termExpr()}).includes('台在线')`, 8000);
+  const s1 = await ev(termExpr());
+  t('T59 远端 node(自带脚本:主机扫描/校验和/完成)',
+    s1.includes('内网主机 4 台,3 台在线(vault 不回应)') && s1.includes('会话校验和:1535') && s1.includes('自检完成'),
+    s1.slice(-160));
+
+  // 2) 远端 node -e 内联 + 权限机关(shadow root-only)+ 缺文件
+  await termRun('node -e "print(40 + 2);"');
+  await waitFor(`(${termExpr()}).includes('42')`, 5000);
+  await termRun('node /etc/shadow');
+  await sleep(400);
+  await termRun('node /opt/tools/不存在.ajs');
+  await sleep(400);
+  const s2 = await ev(termExpr());
+  t('T59.1 远端 node(-e 内联 / shadow 权限拒绝 / 缺文件报错)',
+    s2.includes('42') && s2.includes('node: /etc/shadow: 权限不够')
+    && s2.includes('node: 无法加载 /opt/tools/不存在.ajs'), '');
+
+  // 3) 远端 exe 直击:cd /opt/tools → ./hardware.exe → 裸名再来一次
+  await termRun('cd /opt/tools');
+  await sleep(300);
+  await termRun('./hardware.exe');
+  await waitFor(`((${termExpr()}).match(/Nexus R7/g) || []).length >= 1`, 8000);
+  await termRun('hardware.exe');
+  await waitFor(`((${termExpr()}).match(/Nexus R7/g) || []).length >= 2`, 8000);
+  const s3 = await ev(termExpr());
+  t('T59.2 远端 exe 直击(./ 相对与裸名,自动解密)',
+    (s3.match(/Nexus R7/g) || []).length === 2 && s3.includes('UPTIME : 6 天'), '');
+
+  // 4) cat 密文可见不可读(只看最后一段 cat 输出,之前脚本的运行输出不算)
+  await termRun('cat hardware.exe');
+  await sleep(400);
+  const s4raw = await ev(termExpr());
+  const s4 = s4raw.slice(s4raw.lastIndexOf('AEXE1:'));
+  t('T59.3 远端 cat 密文(魔数可见,源码不可读)',
+    s4.startsWith('AEXE1:') && !s4.includes('Nexus R7'), s4.slice(0, 40));
+
+  // 5) put 上传本机脚本 → 远端 node 执行(本机→远端的工作流)
+  await termRun('cd ~');
+  await sleep(250);
+  await ev(`WebOS.fs.write(${JSON.stringify(HOME + '/documents/e2e-remote.ajs')}, 'print("远端执行:上传脚本 OK");')`);
+  await termRun('put ~/documents/e2e-remote.ajs');
+  await waitFor(`(${termExpr()}).includes('已上传')`, 5000);
+  await termRun('node e2e-remote.ajs');
+  await waitFor(`(${termExpr()}).includes('远端执行:上传脚本 OK')`, 8000);
+
+  // 6) cp 改名后照跑(内容魔数识别,与文件名无关)+ 非 exe 报错
+  await termRun('cp /opt/tools/hardware.exe /tmp/hw2.exe');
+  await sleep(300);
+  await termRun('cd /tmp');
+  await sleep(250);
+  await termRun('./hw2.exe');
+  await waitFor(`((${termExpr()}).match(/Nexus R7/g) || []).length >= 3`, 8000);
+  await termRun('/opt/tools/netcheck.ajs');   // 存在但不是 exe → 明确拒跑
+  await sleep(400);
+  const s6 = await ev(termExpr());
+  t('T59.4 上传执行 + 改名直击 + 非 exe 拒跑',
+    s6.includes('远端执行:上传脚本 OK') && (s6.match(/Nexus R7/g) || []).length >= 3
+    && s6.includes('不是可执行文件'), `R7×${(s6.match(/Nexus R7/g) || []).length}`);
+
+  // 7) exit 断开 + 无运行错误 + 清理(远端覆盖层与本地文件)
+  await termRun('exit');
+  await sleep(400);
+  const s7 = await ev(termExpr());
+  const errs59 = await ev(`JSON.stringify(window.__errs).slice(0, 300)`);
+  t('T59.5 exit 断开 + 全程无运行错误',
+    s7.includes('Connection closed') && errs59 === '[]', String(errs59));
+  await ev(`(() => { WebOS.fs.rm(${JSON.stringify(HOME + '/documents/e2e-remote.ajs')}); WebOS.vnet.resetState(); return true; })()`);
+  await c.shot('t59-remote-node');
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);

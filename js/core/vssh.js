@@ -12,14 +12,19 @@
  *   · 常用命令:ls(-l/-a)/cat/cd/pwd/echo(支持 > >>)/mkdir/rm/mv/cp/
  *     touch/head/tail/grep/wc/find/tree/whoami/id/hostname/uname/date/
  *     uptime/ps/df/history/clear/help + 传输 get/put + 内网侦察 scan;
+ *   · 脚本执行:node <文件.ajs>(读远端文件按 r 鉴权,跑本机同款
+ *     AetherJS 沙盒 Worker);内建未命中的命令按内容魔数回落远端
+ *     exe 直击(./x.exe / 裸名 / 绝对路径,自动解密,改名也能跑);
  *   · 权限(轻量):节点带属主与 9 位模式,root 绕过;读文件/列目录查 r,
- *     写/建/删查父目录 w(缺位报 Permission denied,可做谜题机关)。
+ *     写/建/删查父目录 w(缺位报 Permission denied,可做权限谜题)。
  *
  * 自定义命令(作者在 users.<名>.commands 定义)优先于内建命令,
  * 签名 (args, session) => string[] 与旧版一致;session 上另暴露
  * readFile/writeFile/listDir/resolveP 供作者写文件类谜题机关。
  * ============================================================ */
 import { fmtDate } from './utils.js';
+import { runAether } from './ascript.js';
+import { isExe, unpackExe } from './aexe.js';
 
 /* ---------- 词法:与 bash.js 同规则的引号/注释(应用层不 import core 之外,这里独立实现) ---------- */
 function tokenize(line) {
@@ -268,7 +273,9 @@ export function openSession(server, opts = {}) {
       return { ok: true, abs, content: n.d ?? '' };
     },
 
-    exec(cmdLine) {
+    /** 执行一行命令(async:node/exe 走本机同款 AetherJS 沙盒 Worker,
+     *  print 输出经 say 收集,回车到回显之间有 Worker 往返延迟) */
+    async exec(cmdLine) {
       const { cmd, file: redirFile, append } = extractRedir(cmdLine);
       const parts = tokenize(cmd);
       const c = parts.shift();
@@ -285,8 +292,35 @@ export function openSession(server, opts = {}) {
       if (custom) {
         try { for (const line of (custom(parts, this) || [])) say(line); }
         catch (e) { say(String(e.message || e), 't-err'); }
-      } else {
-        this.builtin(c, parts, say);
+      } else if (await this.builtin(c, parts, say) === false) {
+        // 内建未命中 → 远端 exe 直击(与本地终端同款:内容魔数识别,与名字无关)
+        const node = getNode(root, this.resolveP(c));
+        const looksPath = c.includes('/') || /\.exe$/i.test(c);
+        if (node?.t === 'f' && canBit(this.user, node, 'r')) {
+          if (isExe(node.d ?? '')) {
+            let src = null;
+            try { src = await unpackExe(node.d ?? ''); }   // 自动解密(密钥混淆携带在文件内)
+            catch (e) { say(`bash: ${c}: ${e.message}`, 't-err'); }
+            if (src != null) {
+              const r = await runAether(src, { print: (t) => say(t) });
+              if (!r.ok) {
+                const pos = r.error.line != null
+                  ? `(${c}:${r.error.line}${r.error.col != null ? ':' + r.error.col : ''})` : '';
+                say(`exe: 脚本执行失败 —— ${r.error.kind}: ${r.error.message} ${pos}`.trim(), 't-err');
+              }
+            }
+          } else if (looksPath) {
+            say(`bash: ${c}: 不是可执行文件(AEXE 打包的 exe 才能直接运行)`, 't-err');
+          } else {
+            say(`${c}: 未找到命令。输入 help 查看可用命令`, 't-err');
+          }
+        } else if (node?.t === 'f') {
+          say(`bash: ${c}: 权限不够`, 't-err');
+        } else if (looksPath) {
+          say(`bash: ${c}: 没有那个文件或目录`, 't-err');
+        } else {
+          say(`${c}: 未找到命令。输入 help 查看可用命令`, 't-err');
+        }
       }
 
       // 重定向:输出落远端文件(不回显)
@@ -301,8 +335,9 @@ export function openSession(server, opts = {}) {
       return { lines: out };
     },
 
-    /** 内建命令实现(say 输出一行;say(text, cls) 带样式) */
-    builtin(c, args, say) {
+    /** 内建命令实现(say 输出一行;say(text, cls) 带样式)。
+     *  未命中返回 false(exec 据此回落远端 exe 直击),其余返回 undefined。 */
+    async builtin(c, args, say) {
       const P = (p) => this.resolveP(p);
       const N = (p) => getNode(root, P(p));
       const err = (msg) => say(msg, 't-err');
@@ -310,8 +345,9 @@ export function openSession(server, opts = {}) {
       switch (c) {
         case 'help': {
           const customs = Object.keys(u.commands || {});
-          say(`可用命令:ls [-l|-a]  cat  cd  pwd  echo [> >>]  mkdir  rm [-r]  mv  cp  touch  head  tail  grep  wc  find  tree`, 't-dim');
+          say(`可用命令:ls [-l|-a]  cat  cd  pwd  echo [> >>]  mkdir  rm  mv  cp  touch  head  tail  grep  wc  find  tree`, 't-dim');
           say(`          whoami  id  hostname  uname  date  uptime  ps  df  history  clear  scan`, 't-dim');
+          say(`脚本    node <文件.ajs> | node -e <代码>(AetherJS 沙盒);./程序.exe 直接执行(AEXE 密文可执行文件)`, 't-dim');
           say(`传输:get <远端> [本地名]   put <本机> [远端名];跳板:ssh <用户>@<主机>;断开:exit`, 't-dim');
           if (customs.length) say(`本机扩展命令:${customs.join('  ')}`, 't-dim');
           break;
@@ -575,8 +611,36 @@ export function openSession(server, opts = {}) {
         case 'ssh':
           err('ssh 请直接输入:ssh <用户名>@<主机>(在远程会话里输入即从本机跳板)', 't-dim');
           break;
+        /* 远端 node:读远端文件(按 r 鉴权)跑本机同款沙盒 Worker;
+         * 输出语义与本地 node 一致:print 直写,程序值不回显 */
+        case 'node': {
+          if (args[0] === '-v' || args[0] === '--version') {
+            say('AetherJS v0.2(JS 安全子集,AetherWebFramework 运行时;help node 查看用法)');
+            break;
+          }
+          let source, name;
+          if (args[0] === '-e') {
+            source = args.slice(1).join(' ');
+            name = '<inline>';
+            if (!source) return err('用法: node -e <代码>');
+          } else {
+            if (!args[0]) return err('用法: node <文件.ajs> | node -e <代码> | node -v');
+            const n = N(args[0]);
+            if (!n || n.t !== 'f') return err(`node: 无法加载 ${args[0]}:没有那个文件或目录`);
+            if (!canBit(this.user, n, 'r')) return err(`node: ${args[0]}: 权限不够`);
+            source = String(n.d ?? '');
+            name = args[0];
+          }
+          const r = await runAether(source, { print: (t) => say(t) });
+          if (!r.ok) {
+            const pos = r.error.line != null
+              ? `(${name}:${r.error.line}${r.error.col != null ? ':' + r.error.col : ''})` : '';
+            err(`node: 脚本执行失败 —— ${r.error.kind}: ${r.error.message} ${pos}`.trim());
+          }
+          break;
+        }
         default:
-          err(`${c}: 未找到命令。输入 help 查看可用命令`);
+          return false;   // 未命中:交回 exec 回落远端 exe 直击
       }
     },
 
@@ -586,7 +650,7 @@ export function openSession(server, opts = {}) {
       const last = parts[parts.length - 1] || '';
       if (parts.length <= 1 && !line.endsWith(' ')) {
         const pool = ['cat', 'cd', 'clear', 'cp', 'date', 'df', 'download', 'echo', 'exit', 'find', 'get',
-          'grep', 'head', 'help', 'history', 'hostname', 'id', 'logout', 'ls', 'mkdir', 'mv', 'ps', 'pwd', 'put',
+          'grep', 'head', 'help', 'history', 'hostname', 'id', 'logout', 'ls', 'mkdir', 'mv', 'node', 'ps', 'pwd', 'put',
           'rm', 'scan', 'tail', 'touch', 'tree', 'uname', 'uptime', 'upload', 'wc', 'whoami',
           ...Object.keys(u.commands || {})];
         return pool.filter(n => n.startsWith(last)).sort();
