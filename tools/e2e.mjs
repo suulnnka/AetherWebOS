@@ -5484,6 +5484,363 @@ group('T56', '模拟远程终端(认证 / 远端文件系统 / 权限 / 传输 /
   await c.shot('t56-remote-terminal');
 });
 
+group('T57', '代码编辑器(自研高亮四语言 / AetherJS 运行输出 / 终端 node / 死循环强杀)', async () => {
+  /* ---- T57 代码编辑器:cedit 自研编辑组件 + chl 高亮 + ascript Worker 运行 ---- */
+  await fresh();
+  const HOME = await ev(`WebOS.fs.homePath()`);
+
+  /* 四语言样例文件(评分统计取自语言规格样张) */
+  const AJS_SRC = [
+    '// 评分统计',
+    'let scores = [72, 91, 55];',
+    'let total = 0;',
+    'for (const s of scores) { total += s; }',
+    'const mean = total / scores.length;',
+    '',
+    'class Grader {',
+    '  cutoff = 60;',
+    '  constructor(c) { this.cutoff = c; }',
+    '  grade(m) {',
+    '    if (m >= this.cutoff) { return "及格"; }',
+    '    return "不及格";',
+    '  }',
+    '}',
+    '',
+    'const g = new Grader(60);',
+    'print("平均 " + fixed(mean, 1) + " · " + g.grade(mean));',
+    'mean;',
+  ].join('\n');
+  const CSS_SRC = [
+    '/* 卡片 */',
+    '.card:hover {',
+    '  color: #ff8800;',
+    '  margin: 4px 2em;',
+    '}',
+    '@media (max-width: 600px) { .card { display: none; } }',
+  ].join('\n');
+  const HTML_SRC = [
+    '<div class="card" title="卡片">{{user.name + "!"}}</div>',
+    '{{#if ok}}可见{{else}}隐藏{{/if}}',
+    '<!-- 模板注释 -->',
+  ].join('\n');
+  const JSON_SRC = '{\n  "name": "aether",\n  "list": [1, 2.5, true, null]\n}\n';
+  const P = {
+    ajs: HOME + '/documents/e2e-评分.ajs',
+    css: HOME + '/documents/e2e-样式.css',
+    html: HOME + '/documents/e2e-页面.html',
+    json: HOME + '/documents/e2e-配置.json',
+  };
+  await ev(`(() => {
+    for (const p of ${JSON.stringify(Object.values(P))}) WebOS.fs.rm(p);
+    WebOS.fs.write(${JSON.stringify(P.ajs)}, ${JSON.stringify(AJS_SRC)});
+    WebOS.fs.write(${JSON.stringify(P.css)}, ${JSON.stringify(CSS_SRC)});
+    WebOS.fs.write(${JSON.stringify(P.html)}, ${JSON.stringify(HTML_SRC)});
+    WebOS.fs.write(${JSON.stringify(P.json)}, ${JSON.stringify(JSON_SRC)});
+    return true;
+  })()`);
+
+  /* 打开 .ajs:等 textarea 装载;标记主窗口便于多窗步骤定位 */
+  await ev(`WebOS.wm.open('codeedit', { params: { path: ${JSON.stringify(P.ajs)} } })`);
+  await waitFor(`!!document.querySelector('.win[data-app=codeedit] .cedit-ta')?.value.includes('Grader')`);
+  await sleep(250);   // 等 rAF 首帧渲染(高亮层/行号槽)
+  await ev(`document.querySelector('.win[data-app=codeedit]').__tag = 'main'`);
+  const W = () => `[...document.querySelectorAll('.win[data-app=codeedit]')].find(w => w.__tag === 'main')`;
+  const setBuf = async (src) => {
+    await ev(`(() => {
+      const ta = (${W()}).querySelector('.cedit-ta');
+      ta.value = ${JSON.stringify(src)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(150);   // rAF 重渲染高亮
+  };
+  const outExpr = () => `(${W()})?.querySelector('.ce-out-body')?.textContent || ''`;
+  const outText = () => ev(outExpr());
+
+  // 1) 打开与装载:内容入编辑器、语言识别 AetherJS、行号槽就位
+  const s1 = await ev(`(() => {
+    const w = ${W()};
+    return {
+      val: w.querySelector('.cedit-ta').value.includes('cutoff = 60'),
+      lang: w.querySelector('.select')?.value,
+      gutter: w.querySelectorAll('.cedit-gutter-in > div').length,
+      caret: w.querySelector('.app-status span').textContent,
+    };
+  })()`);
+  t('T57 打开 .ajs(内容/语言识别/行号/状态栏)',
+    s1.val && s1.lang === 'ajs' && s1.gutter === AJS_SRC.split('\n').length && /^行 1,列 1$/.test(s1.caret),
+    JSON.stringify(s1));
+
+  // 2) AetherJS 高亮:关键字/字符串/注释/数字/类字段/内建(字面量单独验,主样例没有)
+  const s2 = await ev(`(() => {
+    const hl = (${W()}).querySelector('.cedit-hl');
+    return {
+      kw: !!hl.querySelector('.tk-kw'),        // let/class/if…
+      str: !!hl.querySelector('.tk-str'),      // "及格"
+      com: !!hl.querySelector('.tk-com'),      // // 评分统计
+      num: !!hl.querySelector('.tk-num'),      // 72 / 60
+      prop: !!hl.querySelector('.tk-prop'),    // this.cutoff(.成员)
+      bi: !!hl.querySelector('.tk-bi'),        // fixed/print
+    };
+  })()`);
+  await setBuf('let pass = true;\nconst none = null;\n');
+  const s2lit = await ev(`!!(${W()}).querySelector('.cedit-hl .tk-lit')`);
+  t('T57.1 AetherJS 高亮(七类词法着色)', Object.values(s2).every(Boolean) && s2lit, JSON.stringify(s2));
+
+  // 3) 禁字标红:var/==/模板串反引号,title 提示禁用理由(AetherJS 特色)
+  await setBuf('let a = 1;\nvar b = a == 2;\nlet c = `x`;\n');
+  const s3 = await ev(`(() => {
+    const errs = [...(${W()}).querySelectorAll('.cedit-hl .tk-err')];
+    return {
+      n: errs.length,
+      varTip: errs.some(e => e.textContent === 'var' && e.title.includes('禁止 var')),
+      eqTip: errs.some(e => e.textContent === '==' && e.title.includes('宽松相等')),
+      tick: errs.some(e => e.textContent === '\\u0060' && e.title.includes('不支持该字符')),
+    };
+  })()`);
+  t('T57.2 禁用总表标红(var / == / 反引号 + 悬停理由)',
+    s3.n >= 3 && s3.varTip && s3.eqTip && s3.tick, JSON.stringify(s3));
+
+  // 4) 实时语法检查:输入停顿后状态栏报错、行号槽标红;改正后恢复
+  await setBuf('let x = ;\nlet y = 2;\n');
+  await waitFor(`!!(${W()})?.querySelector('.ce-syn-bad')`, 4000);
+  const s4 = await ev(`(() => {
+    const w = ${W()};
+    return {
+      syn: w.querySelector('.ce-syn-bad')?.textContent || '',
+      mark: !!w.querySelector('.cedit-gutter-in .cedit-err-line'),
+    };
+  })()`);
+  await setBuf('let x = 1;\n');
+  await sleep(700);
+  const s4b = await ev(`!!(${W()}).querySelector('.ce-syn-bad')`);
+  t('T57.3 实时语法检查(状态栏 + 行号标记,改正即恢复)',
+    s4.syn.includes('行 1') && s4.mark && !s4b, JSON.stringify(s4));
+
+  // 5) 运行:print 输出 + 程序值(→)+ 耗时;输出面板自动展开
+  await setBuf(AJS_SRC);
+  await ev(`(${W()}).querySelector('.ce-run').click()`);
+  await waitFor(`(${outExpr()}).includes('平均')`, 8000);
+  const s5 = await ev(`(() => {
+    const w = ${W()};
+    const lines = [...w.querySelectorAll('.ce-out-body .o-line')].map(l => l.textContent);
+    return {
+      out: lines.join('\\n'),
+      hasVal: lines.some(l => l.startsWith('→ 72.')),
+      done: lines.some(l => l.includes('完成 ·')),
+      visible: !w.querySelector('.ce-out').classList.contains('hidden'),
+      syn: w.querySelector('.ce-syn-bad') ? 'bad' : 'ok',
+    };
+  })()`);
+  t('T57.4 运行输出(print 行 / → 程序值 / 完成 / 语法状态复位)',
+    s5.out.includes('平均 72.7 · 及格') && s5.hasVal && s5.done && s5.visible && s5.syn === 'ok',
+    JSON.stringify(s5.out));
+
+  // 6) 运行期错误:严格类型检查的 type 错误进输出面板
+  await setBuf('let x = "a" + 1;\nprint(x);\n');
+  await ev(`(${W()}).querySelector('.ce-run').click()`);
+  await waitFor(`(${outExpr()}).includes('type')`, 5000);
+  const s6 = await outText();
+  t('T57.5 运行期错误(type: 运算符 + 要求同型)', s6.includes('type') && s6.includes('运算符'), s6.slice(-120));
+
+  // 7) 编译错误:行列号在输出里,点击错误行跳转光标
+  await setBuf('let x = ;\nlet y = 2;\n');
+  await ev(`(${W()}).querySelector('.ce-run').click()`);
+  await waitFor(`(${outExpr()}).includes('syntax')`, 5000);
+  await ev(`[...(${W()}).querySelectorAll('.ce-out-body .o-err')].pop().click()`);
+  await sleep(150);
+  const s7 = await ev(`(${W()}).querySelector('.app-status span').textContent`);
+  t('T57.6 编译错误定位(输出带行列,点击跳转光标)', /^行 1,列 9$/.test(s7), s7);
+
+  // 8) 保存:改内容 → 保存 → 文件落盘、标题去脏标记
+  await setBuf(AJS_SRC + '\n// 已保存的修改\n');
+  await ev(`(${W()}).querySelector('.ce-save').click()`);
+  await sleep(200);
+  const s8 = await ev(`({
+    disk: WebOS.fs.read(${JSON.stringify(P.ajs)}).includes('已保存的修改'),
+    dirty: (${W()}).querySelector('.win-title')?.textContent.includes('●'),
+  })`);
+  t('T57.7 保存落盘(内容写回 / 脏标记清除)', s8.disk && !s8.dirty, JSON.stringify(s8));
+
+  // 9) 三语言窗口:CSS/HTML/JSON 各自的词法类
+  const langs = [
+    ['css', P.css, CSS_SRC, ['.card', '.tk-cls'], ['color', '.tk-prop'], ['@media', '.tk-kw'], [':hover', '.tk-pseudo']],
+    ['html', P.html, HTML_SRC, ['div', '.tk-tag'], ['class', '.tk-attr'], ['{{', '.tk-tpl'], ['#if', '.tk-kw']],
+    ['json', P.json, JSON_SRC, ['"name"', '.tk-prop'], ['2.5', '.tk-num'], ['true', '.tk-lit'], ['"aether"', '.tk-str']],
+  ];
+  const langOk = {};
+  for (const [id, path, src, ...pairs] of langs) {
+    await ev(`WebOS.wm.open('codeedit', { params: { path: ${JSON.stringify(path)} } })`);
+    await waitFor(`[...document.querySelectorAll('.win[data-app=codeedit] .cedit-ta')].some(t => t.value === ${JSON.stringify(src)})`, 4000);
+    await ev(`(() => {
+      const ws = document.querySelectorAll('.win[data-app=codeedit]');
+      ws[ws.length - 1].__tag = ${JSON.stringify(id)};
+    })()`);
+    await sleep(250);   // 等 rAF 首帧渲染高亮层
+    langOk[id] = await ev(`(() => {
+      const w = [...document.querySelectorAll('.win[data-app=codeedit]')].find(x => x.__tag === ${JSON.stringify(id)});
+      const checks = ${JSON.stringify(pairs)}.map(([txt, sel]) =>
+        [...w.querySelectorAll('.cedit-hl ' + sel)].some(e => e.textContent === txt));
+      return { lang: w.querySelector('.select')?.value, checks };
+    })()`);
+  }
+  t('T57.8 CSS/HTML/JSON 高亮与语言识别',
+    langOk.css.lang === 'css' && langOk.css.checks.every(Boolean)
+    && langOk.html.lang === 'html' && langOk.html.checks.every(Boolean)
+    && langOk.json.lang === 'json' && langOk.json.checks.every(Boolean),
+    JSON.stringify(langOk));
+
+  // 10) 终端 node:执行脚本 / -e 内联 / -v / 不存在的文件
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(600);
+  await ev(`(() => {
+    const ws = document.querySelectorAll('.win[data-app=terminal]');
+    ws[ws.length - 1].__tag = 't57';
+  })()`);
+  const TW = () => `[...document.querySelectorAll('.win[data-app=terminal]')].find(w => w.__tag === 't57')`;
+  const termRun = async (cmd) => {
+    await ev(`(() => {
+      const inp = (${TW()}).querySelector('.term-in input');
+      inp.value = ${JSON.stringify(cmd)};
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+  };
+  const termExpr = () => `(${TW()})?.querySelector('.term-out')?.textContent || ''`;
+  const termText = () => ev(termExpr());
+  await termRun(`node ${P.ajs}`);
+  await waitFor(`(${termExpr()}).includes('平均 72.7')`, 8000);
+  await termRun(`node -e "print(40 + 2);"`);
+  await waitFor(`(${termExpr()}).includes('42')`, 5000);
+  await termRun(`node -v`);
+  await sleep(400);
+  await termRun(`node /tmp/不存在.ajs`);
+  await sleep(400);
+  const s10 = await termText();
+  t('T57.9 终端 node(执行脚本 / -e 内联 / -v / 缺文件报错)',
+    s10.includes('平均 72.7 · 及格') && s10.includes('AetherJS v0.2')
+    && s10.includes('没有那个文件或目录'), JSON.stringify(s10.match(/node[^\n]*/g)?.slice(-4)));
+
+  // 11) edit 命令分流:代码文件进代码编辑器
+  await termRun(`edit ${P.json}`);
+  await waitFor(`[...document.querySelectorAll('.win[data-app=codeedit] .select')].some(s => s.value === 'json'
+    && s.closest('.win').querySelector('.cedit-ta').value.includes('aether'))`, 4000);
+  t('T57.10 edit 命令分流(.json 进代码编辑器)', true, '');
+
+  // 12) 「在终端运行」:保存后推给新终端的 node 自动执行
+  await setBuf(AJS_SRC);
+  await ev(`(${W()}).querySelector('.ce-save').click()`);
+  await sleep(200);
+  await ev(`(${W()}).querySelector('.ce-term-run').click()`);
+  await waitFor(`(() => {
+    const ws = [...document.querySelectorAll('.win[data-app=terminal]')].filter(w => w.__tag !== 't57');
+    return ws.length === 1 && (ws[0].querySelector('.term-out')?.textContent || '').includes('平均 72.7');
+  })()`, 8000);
+  t('T57.11 在终端运行按钮(自动保存 + 终端执行)', true, '');
+
+  // 13) 死循环强杀:worker 超时终止,页面仍活着(语言不防死循环,宿主 Worker 兜底)
+  await setBuf('while (true) { }\n');
+  await ev(`(${W()}).querySelector('.ce-run').click()`);
+  const killed = await waitFor(`(${outExpr()}).includes('执行超时')`, 9000);
+  const alive = await ev(`WebOS.accounts.current() !== null`);
+  t('T57.12 死循环超时强杀(Worker terminate,页面不卡死)', killed && alive, `killed=${killed}`);
+
+  // 14) 收尾:无运行错误
+  const errs57 = await ev(`JSON.stringify(window.__errs).slice(0, 400)`);
+  t('T57.13 全程无运行错误', errs57 === '[]', String(errs57));
+
+  /* 收尾:清样例文件 */
+  await ev(`(() => {
+    for (const p of ${JSON.stringify(Object.values(P))}) WebOS.fs.rm(p);
+    return true;
+  })()`);
+  await c.shot('t57-codeedit');
+});
+
+group('T58', 'EXE 打包与直接执行(自动加密 / 终端免 node / 密文不可读)', async () => {
+  /* ---- T58 AEXE:编辑器打包 → 终端 ./x.exe 直跑 → 篡改报错 ---- */
+  await fresh();
+  const HOME = await ev(`WebOS.fs.homePath()`);
+  const SRC = 'const secret = "E2E-秘密-42";\nprint("hello from exe");\nprint(secret);\n';
+  const P_AJS = HOME + '/documents/e2e工具.ajs';
+  const P_EXE = HOME + '/documents/e2e工具.exe';
+
+  // 1) 编辑器一键打包:已保存的 .ajs 自动同名 .exe,内容为密文
+  await ev(`(() => {
+    WebOS.fs.rm(${JSON.stringify(P_AJS)}); WebOS.fs.rm(${JSON.stringify(P_EXE)});
+    WebOS.fs.write(${JSON.stringify(P_AJS)}, ${JSON.stringify(SRC)});
+    return true;
+  })()`);
+  await ev(`WebOS.wm.open('codeedit', { params: { path: ${JSON.stringify(P_AJS)} } })`);
+  await waitFor(`!!document.querySelector('.win[data-app=codeedit] .cedit-ta')?.value.includes('E2E')`);
+  await ev(`document.querySelector('.win[data-app=codeedit] .ce-exe').click()`);
+  const exe = await waitFor(`WebOS.fs.read(${JSON.stringify(P_EXE)}) || ''`, 5000);
+  t('T58 打包(密文落盘,魔数头,源码/秘密串不可见)',
+    exe.startsWith('AEXE1:') && exe.includes('WEOS1:')
+    && !exe.includes('print') && !exe.includes('E2E-秘密-42') && !exe.includes('hello'),
+    exe.slice(0, 48));
+
+  // 2) 终端直接执行:./ 相对路径、裸名、绝对路径,输出与源一致(自动解密)
+  await ev(`WebOS.wm.open('terminal')`);
+  await sleep(600);
+  const termRun = async (cmd) => {
+    await ev(`(() => {
+      const inp = document.querySelector('.term-in input');
+      inp.value = ${JSON.stringify(cmd)};
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+  };
+  const termExpr = () => `document.querySelector('.term-out').textContent || ''`;
+  const termText = () => ev(termExpr());
+  await termRun(`cd ${HOME}/documents`);
+  await sleep(300);
+  await termRun('./e2e工具.exe');
+  await waitFor(`(${termExpr()}).includes('E2E-秘密-42')`, 8000);
+  await termRun('e2e工具.exe');
+  await waitFor(`((${termExpr()}).match(/E2E-秘密-42/g) || []).length >= 2`, 8000);
+  await termRun(P_EXE);
+  await waitFor(`((${termExpr()}).match(/E2E-秘密-42/g) || []).length >= 3`, 8000);
+  const s2 = await termText();
+  t('T58.1 终端免 node 直跑(./ 相对 / 裸名 / 绝对路径)',
+    (s2.match(/hello from exe/g) || []).length === 3
+    && (s2.match(/E2E-秘密-42/g) || []).length === 3, `hello×${(s2.match(/hello from exe/g) || []).length}`);
+
+  // 3) cat 看得见但看不懂:密文原样输出,秘密串不出现
+  await termRun('cat e2e工具.exe');
+  await sleep(400);
+  const s3 = await termText();
+  const catPart = s3.slice(s3.lastIndexOf('AEXE1:'));
+  t('T58.2 cat 密文(可见魔数,源码不可读)', catPart.startsWith('AEXE1:') && !catPart.includes('E2E-秘密-42'),
+    catPart.slice(0, 40));
+
+  // 4) 篡改/伪造的 exe:解密失败有明确报错,不是 command not found
+  await termRun('cp e2e工具.exe e2e坏.exe');
+  await sleep(300);
+  await ev(`WebOS.fs.write(${JSON.stringify(HOME + '/documents/e2e坏.exe')}, 'AEXE1:YmFk:WEOS1:aa:bb:cc')`);
+  await termRun('./e2e坏.exe');
+  await waitFor(`(${termExpr()}).includes('解密失败')`, 5000);
+  const s4 = await termText();
+
+  // 5) 不存在 / 非 exe 的路径:按文件语义报错
+  await termRun('./不存在.exe');
+  await sleep(300);
+  await termRun('./e2e工具.ajs');
+  await sleep(300);
+  const s5 = await termText();
+  t('T58.3 错误路径明确(篡改报解密失败 / 缺文件 / 非 exe 不可直跑)',
+    s4.includes('解密失败') && s5.includes('没有那个文件或目录')
+    && /e2e工具\.ajs[^]*不是可执行文件/.test(s5), '');
+
+  // 6) 收尾:无运行错误 + 清理
+  const errs58 = await ev(`JSON.stringify(window.__errs).slice(0, 300)`);
+  t('T58.4 全程无运行错误', errs58 === '[]', String(errs58));
+  await ev(`(() => {
+    WebOS.fs.rm(${JSON.stringify(P_AJS)}); WebOS.fs.rm(${JSON.stringify(P_EXE)});
+    WebOS.fs.rm(${JSON.stringify(HOME + '/documents/e2e坏.exe')});
+    return true;
+  })()`);
+  await c.shot('t58-exe');
+});
+
 /* ---------- 用例筛选 ---------- */
 function resolveSelection() {
   if (!selectors.length) return GROUPS.map(g => g.id);

@@ -16,8 +16,9 @@ import { sshConnect, dnsResolve } from '../../core/vnet.js';
 
 register({
   ...manifest,
-  /* dialogs / fs / user 来自 ctx:对话框二级锁定;文件与身份按执行用户 */
-  mount({ root, close, dialogs, fs, user }) {
+  /* dialogs / fs / user 来自 ctx:对话框二级锁定;文件与身份按执行用户;
+   * params.startup:打开即执行的一条命令(代码编辑器「在终端运行」用) */
+  mount({ root, close, dialogs, fs, user, params }) {
     const history = [];
     let hIdx = 0;
     const sshStack = [];    // 远程会话栈:末位是当前层,exit 弹出回上一层
@@ -218,5 +219,15 @@ register({
     print(`虚拟网络 nslookup / ping / curl / ssh / scp,系统能力 notify / vol / crypt / open —— 输入 help 查看全部。`, 't-dim');
     setTimeout(() => input.focus(), 80);
 
+    /* 启动即执行一条命令(如代码编辑器「在终端运行」推送的 node <脚本>) */
+    if (params?.startup) {
+      setTimeout(() => {
+        print(`${shell.promptText()}${params.startup}`, 't-cmd');
+        shell.runLine(params.startup).then(() => {
+          if (shell.state.exit) { shell.state.exit = false; close(); return; }
+          prompt();
+        });
+      }, 120);
+    }
   },
 });

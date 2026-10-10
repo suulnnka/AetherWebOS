@@ -52,8 +52,14 @@ export default defineConfig({
          * 注意:应用只能 import js/core、js/lib、自身目录与 vendor 下各第一方
          * 子模块的 src(AetherChess3/Aether3DLib 等都跟随引用方 chunk,
          * 不进 core——否则开机就要下载所有应用的引擎与渲染库),
-         * 否则会重新引入级联 */
+         * 否则会重新引入级联
+         * 例外:ascript-worker.js 是 new URL(…, import.meta.url) 引用的
+         * Worker 入口,只存在于 Worker 子构建的图里 —— 若拦进 'core',
+         * Worker 入口会被内联成 data: URL(相对 import 解析不了)且
+         * 运行时错误耦合主 core chunk;放行让它按 worker.rollupOptions
+         * 落成独立的 assets/app-worker-*.js(与棋类引擎同款通道) */
         manualChunks(id) {
+          if (id.includes('ascript-worker')) return;
           if (/[\\/]js[\\/](core|lib)[\\/]/.test(id)) return 'core';
           if (/[\\/]apps[\\/]\w+[\\/]manifest\.js/.test(id)) return 'core';
           if (/[\\/]system[\\/]session\.js/.test(id)) return 'core';

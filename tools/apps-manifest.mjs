@@ -73,6 +73,20 @@ export function sourceCatalog(appsDir = APPS_DIR) {
 const TOKEN = /[A-Za-z0-9._-]+\.(?:js|css|aewn|wasm|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|otf|json|txt|html)\b/g;
 /** 平台公共块:属于操作系统本体,不入应用包 */
 const PLATFORM = /^(?:core|index)-[A-Za-z0-9_-]+\.(?:js|css)$/;
+/** 平台级 worker 标签:AetherJS 脚本运行时 worker 由 core 引用、终端
+ * node 与代码编辑器共用 —— 按内容标签归因为平台,不进任何单个应用包 */
+const PLATFORM_WORKER_TAG = 'ascript-worker-v1';
+const platformWorkerCache = new Map();
+function isPlatform(assetsDir, name) {
+  if (PLATFORM.test(name)) return true;
+  if (!name.startsWith('app-worker-') || !name.endsWith('.js')) return false;
+  if (!platformWorkerCache.has(name)) {
+    let hit = false;
+    try { hit = fs.readFileSync(path.join(assetsDir, name), 'utf8').includes(PLATFORM_WORKER_TAG); } catch { /* 缺文件按非平台处理,走全覆盖闸门报错 */ }
+    platformWorkerCache.set(name, hit);
+  }
+  return platformWorkerCache.get(name);
+}
 
 /** 应用源码里 import 的 css 基名前缀(id → Set,如 'files-'):
  *  被 ≥2 个应用 import 的 css 会被 rollup 抽成共享 css chunk,命名回落
@@ -111,7 +125,7 @@ export function distCatalog(distDir) {
   const refsOf = (src) => {
     const out = new Set();
     for (const m of src.matchAll(TOKEN)) {
-      if (assets.has(m[0]) && !PLATFORM.test(m[0])) out.add(m[0]);
+      if (assets.has(m[0]) && !isPlatform(assetsDir, m[0])) out.add(m[0]);
     }
     return out;
   };
@@ -149,7 +163,7 @@ export function distCatalog(distDir) {
   const cssPrefixes = cssPrefixesByApp();
   const packaged = new Set(Object.values(apps).flatMap((a) => a.files.map((f) => f.replace(/^assets\//, ''))));
   for (const f of assets) {
-    if (!f.endsWith('.css') || packaged.has(f) || PLATFORM.test(f)) continue;
+    if (!f.endsWith('.css') || packaged.has(f) || isPlatform(assetsDir, f)) continue;
     for (const [id, prefixes] of cssPrefixes) {
       if (![...prefixes].some((p) => f.startsWith(p))) continue;
       apps[id].files.push('assets/' + f);
@@ -193,7 +207,7 @@ export async function validate(distDir, catalog) {
   // 装出来的包会缺文件,直接让构建失败而不是静默缺资源
   const packaged = new Set(Object.values(catalog.apps).flatMap((a) => a.files.map((f) => f.replace(/^assets\//, ''))));
   for (const f of fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir) : []) {
-    if (PLATFORM.test(f) || packaged.has(f)) continue;
+    if (isPlatform(assetsDir, f) || packaged.has(f)) continue;
     problems.push(`产物文件未归属任何应用包也不属平台:${f}(检查 apps-manifest 的归因规则)`);
   }
   return problems;

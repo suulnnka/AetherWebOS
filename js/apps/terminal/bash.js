@@ -19,6 +19,9 @@ import { accounts } from '../../core/accounts.js';
 import { open } from '../../core/wm.js';
 import { publish, request } from '../../core/bus.js';
 import { httpGetAsync, dnsResolve } from '../../core/vnet.js';
+import { runAether } from '../../core/ascript.js';
+import { isExe, unpackExe } from '../../core/aexe.js';
+import { CODE_EXT_RE } from '../../lib/chl.js';
 
 /* 当前 shell 绑定的应用级 FS(createBash 注入;未注入时退回 core) */
 let FS = coreFs;
@@ -454,6 +457,47 @@ CMDS.crypt = {
   },
 };
 
+/* ---- AetherJS 脚本运行 ---- */
+CMDS.node = {
+  desc: '运行 AetherJS 脚本(node <文件.ajs> | node -e <代码> | node -v;沙盒 Worker 执行,死循环 5s 强杀)',
+  async run(args, { resolve, print }) {
+    if (args[0] === '-v' || args[0] === '--version') {
+      return 'AetherJS v0.2(JS 安全子集,AetherWebFramework 运行时;help node 查看用法)';
+    }
+    let source, name;
+    if (args[0] === '-e') {
+      source = args.slice(1).join(' ');
+      name = '<inline>';
+      if (!source) throw new Error('用法: node -e <代码>');
+    } else {
+      if (!args[0]) throw new Error('用法: node <文件.ajs> | node -e <代码> | node -v');
+      const p = resolve(args[0]);
+      const c = FS.read(p);
+      if (c == null) throw new Error(`node: 无法加载 ${args[0]}:没有那个文件或目录`);
+      if (isEncrypted(c)) throw new Error(`node: ${args[0]}: 是加密文件(在文件管家中解锁后运行)`);
+      source = c;
+      name = args[0];
+    }
+    const r = await runAether(source, { print: (t) => print(t) });
+    if (!r.ok) {
+      const pos = r.error.line != null
+        ? `(${name}:${r.error.line}${r.error.col != null ? ':' + r.error.col : ''})` : '';
+      throw new Error(`node: 脚本执行失败 —— ${r.error.kind}: ${r.error.message} ${pos}`.trim());
+    }
+    return '';   // 程序值不自动回显(与 node 一致),输出用 print
+  },
+};
+
+/* ---- shell 内建 ---- */
+CMDS.man = {
+  desc: '查看命令用法(man <命令>)',
+  run(args) {
+    const impl = CMDS[args[0]];
+    if (!impl) throw new Error(`man: 没有手册页:${args[0] || '(缺少命令名)'} —— help 列出全部命令`);
+    return `${args[0]} —— ${impl.desc}`;
+  },
+};
+
 /* ---- 应用与系统(IPC 演示) ---- */
 CMDS.apps = {
   desc: '列出已安装应用',
@@ -480,7 +524,7 @@ CMDS.open = {
   },
 };
 CMDS.edit = {
-  desc: '打开文件编辑(edit <文件>;.md 进 Markdown 编辑器)',
+  desc: '打开文件编辑(edit <文件>;.md 进 Markdown 编辑器,代码文件进代码编辑器)',
   run(args, { resolve }) {
     const p = resolve(args[0] || '');
     if (!args[0]) throw new Error('用法: edit <文件>');
@@ -488,6 +532,10 @@ CMDS.edit = {
     if (/\.md$/i.test(p)) {
       open('mdedit', { params: { path: p } });
       return `已在 Markdown 编辑器打开 ${p}`;
+    }
+    if (CODE_EXT_RE.test(p)) {
+      open('codeedit', { params: { path: p } });
+      return `已在代码编辑器打开 ${p}`;
     }
     open('notes', { params: { path: p } });
     return `已在记事本打开 ${p}`;
@@ -606,6 +654,7 @@ CMDS.help = {
   快照COW   snap create <路径> [名称] / snap [list] / snap ls|cat <id> / snap restore|rm <id>
   系统      ${['whoami', 'hostname', 'uname', 'date', 'uptime', 'history', 'clear', 'exit', 'reboot'].join(' ')}
   虚拟网络  ${['nslookup', 'ping', 'curl', 'ifconfig', 'ssh', 'scp'].join(' ')}
+  脚本运行  node <文件.ajs>(AetherJS v0.2 沙盒运行时)/ 直接执行 ./程序.exe(代码编辑器「打包 EXE」生成的加密可执行文件)
   应用与IPC ${['apps', 'open', 'edit', 'notify', 'vol', 'theme', 'wallpaper', 'sysinfo'].join(' ')}
   文件加密  crypt encrypt|decrypt|islocked <文件> [密码]
   对话框    ${['alert', 'ask', 'progress'].join(' ')}
@@ -651,6 +700,37 @@ export function createBash({ user, fs: appFs, history, print, hooks, dialogs }) 
   }
   const promptText = () => `${state.user}@aetherwebos:${shortCwd()}$ `;
 
+  /** 未知名回落:按内容魔数识别的 AEXE 可执行文件(./x.exe、裸名、绝对
+   *  路径均可;不看扩展名,改名也能跑)。命中返回 true(输出/错误已打),
+   *  未命中返回 false 交回 command not found。输出语义与 node 一致:
+   *  脚本经 print 直写终端,程序值不回显。 */
+  async function tryRunExe(name) {
+    if (!name) return false;
+    const looksPath = name.includes('/') || /\.exe$/i.test(name);
+    const content = FS.read(resolve(name));
+    if (isExe(content)) {
+      let src;
+      try {
+        src = await unpackExe(content);   // 自动解密(密钥混淆携带在文件内)
+      } catch (e) {
+        print(`bash: ${name}: ${e.message}`, 't-err');
+        return true;
+      }
+      const r = await runAether(src, { print: (t) => print(t) });
+      if (!r.ok) {
+        const pos = r.error.line != null
+          ? `(${name}:${r.error.line}${r.error.col != null ? ':' + r.error.col : ''})` : '';
+        print(`exe: 脚本执行失败 —— ${r.error.kind}: ${r.error.message} ${pos}`.trim(), 't-err');
+      }
+      return true;
+    }
+    if (!looksPath) return false;
+    print(content == null
+      ? `bash: ${name}: 没有那个文件或目录`
+      : `bash: ${name}: 不是可执行文件(AEXE 打包的 exe 才能直接运行,代码编辑器「打包 EXE」生成)`, 't-err');
+    return true;
+  }
+
   async function runLine(line) {
     const stages = splitPipe(line);
     let stdin = null;
@@ -661,7 +741,11 @@ export function createBash({ user, fs: appFs, history, print, hooks, dialogs }) 
       if (!tokens.length) continue;
       const name = tokens[0];
       const impl = CMDS[name];
-      if (!impl) { print(`bash: ${name}: command not found`, 't-err'); return; }
+      if (!impl) {
+        if (await tryRunExe(name)) return;
+        print(`bash: ${name}: command not found`, 't-err');
+        return;
+      }
       const piped = stages.length > 1 || !!file;   // 处于管道中或重定向到文件
       let result;
       try {

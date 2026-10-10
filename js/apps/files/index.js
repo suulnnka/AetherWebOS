@@ -10,6 +10,7 @@ import { isEncrypted, encryptText, decryptText } from '../../core/crypto.js';
 import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 import { isAppLink, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
 import { inplaceRename } from '../../core/rename.js';
+import { CODE_EXT_RE } from '../../lib/chl.js';
 
 /** 快捷入口:随执行用户家目录变化 */
 function quickPlaces(home) {
@@ -112,6 +113,8 @@ function openItem(item) {
         })();
       } else if (/\.md$/i.test(item.name)) {
         open('mdedit', { params: { path: item.path } });   // Markdown:所见即所得编辑器
+      } else if (CODE_EXT_RE.test(item.name)) {
+        open('codeedit', { params: { path: item.path } }); // 代码:自研编辑器(AetherJS/CSS/HTML/JSON)
       } else if (PREVIEW_EXT.test(item.name)) {
         open('viewer', { params: { path: item.path } });   // 图片/PDF/音视频 → 文件预览
       } else open('notes', { params: { path: item.path } }); // IPC:通过参数把文件交给记事本
@@ -291,7 +294,9 @@ function openItem(item) {
                   : []),
                 (/\.md$/i.test(item.name)
                   ? { label: '用 Markdown 编辑器打开', icon: 'pencil', fn: () => open('mdedit', { params: { path: item.path } }) }
-                  : { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) }),
+                  : CODE_EXT_RE.test(item.name)
+                    ? { label: '用代码编辑器打开', icon: 'code', fn: () => open('codeedit', { params: { path: item.path } }) }
+                    : { label: '用记事本打开', icon: 'fileText', fn: () => open('notes', { params: { path: item.path } }) }),
                 { label: encrypted ? '解密…' : '加密…', icon: 'lock', fn: () => toggleEncrypt(item) },
               ]),
               ...(item.dir ? [] : (/\.zip$/i.test(item.name)
