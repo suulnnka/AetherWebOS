@@ -66,6 +66,7 @@ const DEFAULTS = {
   brightness: 100,
   username: 'admin',
   effects: true,            // 界面动效
+  sortLocale: 'zh',         // 文本排序:zh 拼音 | zh-u-co-stroke 笔画 | en | ''(码点序);数据库 ORDER BY 等消费
 };
 
 function load() {

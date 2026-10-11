@@ -73,16 +73,20 @@ export function sourceCatalog(appsDir = APPS_DIR) {
 const TOKEN = /[A-Za-z0-9._-]+\.(?:js|css|aewn|wasm|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|otf|json|txt|html)\b/g;
 /** 平台公共块:属于操作系统本体,不入应用包 */
 const PLATFORM = /^(?:core|index)-[A-Za-z0-9_-]+\.(?:js|css)$/;
-/** 平台级 worker 标签:AetherJS 脚本运行时 worker 由 core 引用、终端
- * node 与代码编辑器共用 —— 按内容标签归因为平台,不进任何单个应用包 */
-const PLATFORM_WORKER_TAG = 'ascript-worker-v1';
+/** 平台级 worker 标签:由 core 引用、多应用共用的 Worker(ascript =
+ *  AetherJS 运行时,终端 node 与代码编辑器共用;dbsql = SQL 引擎,数据库
+ *  应用消费)—— 按内容标签归因为平台,不进任何单个应用包 */
+const PLATFORM_WORKER_TAGS = ['ascript-worker-v1', 'dbsql-worker-v1'];
 const platformWorkerCache = new Map();
 function isPlatform(assetsDir, name) {
   if (PLATFORM.test(name)) return true;
   if (!name.startsWith('app-worker-') || !name.endsWith('.js')) return false;
   if (!platformWorkerCache.has(name)) {
     let hit = false;
-    try { hit = fs.readFileSync(path.join(assetsDir, name), 'utf8').includes(PLATFORM_WORKER_TAG); } catch { /* 缺文件按非平台处理,走全覆盖闸门报错 */ }
+    try {
+      const src = fs.readFileSync(path.join(assetsDir, name), 'utf8');
+      hit = PLATFORM_WORKER_TAGS.some((tag) => src.includes(tag));
+    } catch { /* 缺文件按非平台处理,走全覆盖闸门报错 */ }
     platformWorkerCache.set(name, hit);
   }
   return platformWorkerCache.get(name);

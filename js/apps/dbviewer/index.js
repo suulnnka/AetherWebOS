@@ -3,10 +3,12 @@
  *
  * 只读查询任意 .awdb 分页文档库(AetherWebDatabase):
  *   · 打开前须选择数据库文件地址 + 密码(明文库密码留空);
+ *   · 引擎跑在平台 SQL Worker 里(core/dbsql.js):开库时宿主把
+ *     文件整读为字节快照传入,大查询物化执行不冻结桌面;
  *   · 仅支持 SELECT(SQL 引擎本身无 DML/DDL,写入语句直接解析报错);
  *   · 结果表格分页,每页 10 行;
  *   · 侧栏列出库内集合(表),点击填入查询模板。
- * 查询经集合物化:大库首查较慢(解密+解析),之后热查毫秒级。
+ * 查询经集合物化:大库首查较慢(解密+解析,在 Worker),之后热查毫秒级。
  * ============================================================ */
 import { el } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
@@ -16,19 +18,18 @@ import './dbviewer.css';
 import { requireLogin } from '../../core/loginpanel.js';
 import { reopen } from '../../core/wm.js';
 import fsCore, { fsReady, joinPath, parentPath, homePath } from '../../core/fs.js';
-import { open, createFileBackend } from '../../../vendor/AetherWebDatabase/src/index.js';
+import { settings } from '../../core/store.js';
+import { openSql, sqlQuery, sqlCollections, sqlCount, closeSql } from '../../core/dbsql.js';
 
 const PAGE_SIZE = 10;
 const AWDB_RE = /\.awdb$/i;
-
-let openSeq = 0;   // open() 库名后缀,避免与 appdata 常驻句柄撞名
 
 register({
   ...manifest,
   mount({ root, setTitle, bus, dialogs, fs, user }) {
     if (requireLogin(root, '数据库', () => { root.innerHTML = ''; reopen('dbviewer'); })) return;
 
-    let db = null;
+    let db = null;           // SQL Worker 门面(见 makeDbFacade)
     let dbPath = null;
     let rows = [];
     let page = 0;
@@ -48,6 +49,33 @@ register({
 
     /* ---------- 打开库 ---------- */
 
+    /** Worker 门面:保持 open()/sql()/count() 原调用形状 */
+    function makeDbFacade({ handle, encrypted }) {
+      const unwrap = (r) => {
+        if (!r.ok) throw new Error(r.message);
+        return r.value;
+      };
+      return {
+        handle,
+        encrypted,
+        listCollections: async () => unwrap(await sqlCollections(handle)),
+        count: async (name) => unwrap(await sqlCount(handle, name)),
+        /* 排序语言随系统设置走(每次查询现读,改设置即刻生效,无需换库) */
+        sql: async (text) => unwrap(await sqlQuery(handle, text, [], settings.get('sortLocale') ?? 'zh')),
+      };
+    }
+
+    /** 关库;明文库升级加密(唯一写路径)产生的脏字节写回原路径 */
+    async function closeDb() {
+      if (!db) return;
+      const facade = db;
+      db = null;
+      const r = await closeSql(facade.handle);
+      if (r?.ok && r.value?.dirty && dbPath) {
+        fsCore.write(dbPath, r.value.bytes, { as: user });
+      }
+    }
+
     async function doOpen(path, password) {
       path = String(path || '').trim();
       if (!path || busy) return;
@@ -59,13 +87,12 @@ register({
       statusL.textContent = '正在打开…';
       statusL.style.color = '';
       try {
-        if (db) { db.close(); db = null; }
-        /* 密码为空按明文打开;对明文库传入密码会触发"升级加密"写操作,故仅在
+        await closeDb();
+        /* 密码为空按明文打开;对明文库传入密码会触发「升级加密」写操作,故仅在
          * 用户明确输入时传递。 */
-        db = await open(`dbv-${++openSeq}`, {
-          storage: createFileBackend(fsCore, path, { as: user }),
-          password: password || undefined,
-        });
+        const r = await openSql(path, { password, as: user });
+        if (!r.ok) throw new Error(r.message);
+        db = makeDbFacade(r.value);
         dbPath = path;
         rows = [];
         page = 0;
@@ -220,7 +247,7 @@ register({
           onClick: () => { sqlArea.value = `SELECT * FROM ${name} LIMIT 100`; sqlArea.focus(); },
         }, el('span', { class: 'ni' }, icon('grid', 15)), name, cnt));
         /* count() 无条件时是目录键计数,O(1),大库也即时 */
-        db.collection(name).count().then((n) => { cnt.textContent = String(n); }).catch(() => { cnt.textContent = '?'; });
+        db.count(name).then((n) => { cnt.textContent = String(n); }).catch(() => { cnt.textContent = '?'; });
       }
       side.append(el('div', { class: 'card', style: { margin: '12px 10px', padding: '10px' } },
         el('div', { style: { fontSize: '12px', display: 'flex', gap: '6px', alignItems: 'center' } },
@@ -266,11 +293,11 @@ register({
 
     /* ---------- 查询生成器(纯 GUI 构建 SQL,Navicat 式) ---------- */
 
-    const OPS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'BETWEEN', 'IS NULL', 'IS NOT NULL'];
+    const OPS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'MATCH', 'IN', 'NOT IN', 'BETWEEN', 'IS NULL', 'IS NOT NULL'];
     const NO_VALUE = new Set(['IS NULL', 'IS NOT NULL']);
     const SQL_KW = new Set(['SELECT', 'FROM', 'WHERE', 'GROUP', 'BY', 'HAVING', 'ORDER', 'LIMIT', 'OFFSET',
       'AS', 'JOIN', 'INNER', 'LEFT', 'OUTER', 'ON', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS',
-      'NULL', 'TRUE', 'FALSE', 'ASC', 'DESC', 'EXISTS', 'DISTINCT']);
+      'NULL', 'TRUE', 'FALSE', 'ASC', 'DESC', 'EXISTS', 'DISTINCT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'MATCH']);
     const AGG_FNS = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];
 
     function newBuilder(table) {
@@ -288,11 +315,11 @@ register({
       };
     }
 
-    /** 采样前 20 行发现字段与类型(物化后,无额外 IO) */
+    /** 采样前 20 行发现字段与类型(LIMIT 短路,Worker 只回 20 行) */
     async function fieldsOf(table) {
       if (!table) return { order: [], types: {} };
       if (builder?.meta?.[table]) return builder.meta[table];
-      const docs = await db.collection(table).loadAll();
+      const docs = await db.sql(`SELECT * FROM ${qid(table)} LIMIT 20`);
       const order = [];
       const types = {};
       for (const d of docs.slice(0, 20)) {
@@ -489,6 +516,7 @@ register({
           ? el('span', { class: 'dim', style: { fontSize: '11px', alignSelf: 'center' } }, opS.value === 'IS NULL' ? '空值' : '非空')
           : (() => {
             const ph = c.op === 'LIKE' || c.op === 'NOT LIKE' ? '如 %abc'
+              : c.op === 'MATCH' ? '关键词 空格分隔(全命中)'
               : c.op === 'IN' || c.op === 'NOT IN' ? '逗号分隔: a, b'
                 : c.op === 'BETWEEN' ? '低值, 高值' : '值';
             const i = el('input', { class: 'input dbv-val', placeholder: ph, value: c.value ?? '' });
@@ -684,7 +712,7 @@ register({
         el('span', { class: 'grow' }),
         el('button', {
           class: 'btn', title: '关闭当前库,选择其他数据库',
-          onClick: () => { if (db) { db.close(); db = null; } renderConnect(); },
+          onClick: () => { void closeDb(); renderConnect(); },
         }, icon('refresh', 13), '换库')),
       el('div', { class: 'app-mid' }, side, body),
       el('div', { class: 'app-status' }, statusL, el('span', { class: 'grow' }), statusR)));
@@ -693,7 +721,7 @@ register({
 
     return {
       onClose() {
-        if (db) { db.close(); db = null; }
+        void closeDb();
         return true;
       },
     };

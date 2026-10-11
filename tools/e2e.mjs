@@ -4222,6 +4222,12 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
     await db.createCollection('entries');
     await db.collection('entries').insertMany(
       Array.from({ length: 35 }, (_, i) => ({ id: 'e' + i, cat: 'c' + (i % 3), v: i })));
+    await db.createCollection('people');
+    await db.collection('people').insertMany([
+      { id: 'z', name: '张伟', note: '负责浏览器 项目的收藏功能' },
+      { id: 'l', name: '李雷', note: '邮件应用的最近联系人' },
+      { id: 'c', name: '陈静', note: '浏览器 历史与 项目 数据' },
+    ]);
     db.close();
     await WebOS.fs.flush();
     return true;
@@ -4314,6 +4320,51 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
     return n;
   })()`);
   t('T49.9 拒绝写入后数据未变(仍 35 行)', rowsAfter === 35, `rows=${rowsAfter}`);
+
+  /* ---- 新特性经 Worker 全链路:MATCH 全文 / 拼音排序 / CASE ---- */
+  const runSql = (sql) => ev(`(() => {
+    const ta = document.querySelector('.win[data-app=dbviewer] .dbv-sql');
+    ta.value = ${JSON.stringify(sql)};
+    [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-editor .btn.primary')]
+      .find(b => b.textContent.includes('执行')).click();
+  })()`);
+  /* 系统设置「文本排序」切码点序:同一查询换序,设置即刻生效。
+   * 必须驱动真实设置 UI —— ev 里裸 import('./js/core/store.js') 是无
+   * ?t= 版本号的另一份模块实例(与页面模块图隔离),改了页面也看不见 */
+  const setSortLocale = async (name) => {
+    await ev(`WebOS.wm.open('settings')`);
+    await sleep(700);
+    const clicked = await ev(`(() => {
+      const r = [...document.querySelectorAll('.win[data-app=settings] .set-row')]
+        .find(x => x.textContent.includes('文本排序'));
+      const btn = r && [...r.querySelectorAll('.seg-btn')].find(b => b.textContent.trim() === ${JSON.stringify(name)});
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    await ev(`WebOS.wm.close('settings')`);
+    return clicked;
+  };
+
+  /* 连续查询防读到上一查询的旧表:轮询直到行内容精确等于期望 */
+  const waitRowsEq = (expected) => waitFor(`(() => {
+    const rows = [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-table tbody tr')].map(r => r.textContent);
+    return rows.join('|') === ${JSON.stringify(expected)};
+  })()`);
+
+  await runSql("SELECT id FROM people WHERE note MATCH '项目 数据'");
+  t('T49.9a MATCH 全文(空白分词全命中 → 仅陈静)', (await waitRowsEq('c')) === true);
+
+  await setSortLocale('拼音');   // 归位(上一轮若以码点序收尾,localStorage 会粘到本轮页面启动)
+  await runSql('SELECT id FROM people ORDER BY name');
+  t('T49.9b 拼音排序(陈→李→张,码点序会是张李陈)', (await waitRowsEq('c|l|z')) === true);
+
+  const swBin = await setSortLocale('码点序');
+  await runSql('SELECT id FROM people ORDER BY name');
+  t('T49.9b2 设置切码点序后同查询换序(张李陈)', swBin === true && (await waitRowsEq('z|l|c')) === true);
+  const swZh = await setSortLocale('拼音');   // 还原,防 '' 粘到下一轮
+  await runSql("SELECT id, CASE WHEN note MATCH '项目' THEN '相关' ELSE '无关' END AS tag FROM people ORDER BY id");
+  t('T49.9c CASE + MATCH 组合', (await waitRowsEq('c相关|l无关|z相关')) === true);
 
   /* ---- 生成器(纯 GUI 构建 SQL)---- */
   await ev(`[...document.querySelectorAll('.win[data-app=dbviewer] .seg-btn')]
