@@ -25,8 +25,8 @@ export default defineConfig({
   preview: { port: 8080 },
   /* 各棋类的引擎(国际象棋 ai-worker.js / 中国象棋 worker.js)走独立 Worker chunk:
    * - format:'es' 是因为应用里用 new Worker(url, { type: 'module' })
-   * - 命名与具体棋类解耦(check-size.mjs 是靠 chunk 里的 ENGINE_TAG 认引擎的,
-   *   不靠文件名)—— 棋类引擎现有四个,再写死某个应用名会误导 */
+   * - 命名与具体棋类解耦(不写死应用名)—— 引擎已定格不再更新,文件名保持
+   *   稳定只是为了让已发布产物的浏览器缓存不失效 */
   worker: {
     format: 'es',
     rollupOptions: {

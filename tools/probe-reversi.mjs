@@ -9,8 +9,8 @@
  *      对方(状态栏/turn 更新、弹系统通知、对方能继续落子 —— 卡死过)
  *   8. 无控制台报错
  *
- * 为什么这条必须跑真浏览器:check-size 只量字节,probe-wasm.mjs 在 Node 里
- * 直接读 zig-out 的文件 —— 而线上的路径是
+ * 为什么这条必须跑真浏览器:probe-wasm.mjs 在 Node 里直接读 zig-out 的文件 ——
+ * 而线上的路径是
  * 「Vite 把 wasm 发成 assets/othello-<hash>.wasm → Worker 里 new URL + fetch」,
  * 中间任何一环(资源没进产物、MIME、URL 重写)断掉,Node 侧那套全都不会报警。
  *
