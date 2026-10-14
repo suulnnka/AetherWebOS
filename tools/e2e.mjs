@@ -7,12 +7,12 @@
  *   node tools/e2e.mjs T1-T5 邮件 天气  # 区间 / 组号 / 标题关键词,可混写
  *   node tools/e2e.mjs --list           # 列出全部用例组
  *   node tools/e2e.mjs --parallel 3     # 3 个浏览器并行跑
- *   node tools/e2e.mjs --clean          # 运行前清空浏览器 profile(全新状态)
+ *   node tools/e2e.mjs --keep           # 复用上轮浏览器 profile(默认每轮全新,见下)
  * 输出 PASS/FAIL 清单 + .shots/ 截图
  * ============================================================ */
 import { launch } from './cdp.mjs';
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ---------- CLI ---------- */
 const argv = process.argv.slice(2);
-let parallel = 6, wantList = false, workerMode = false, clean = false;   // 默认 6 个浏览器并行
+/* 默认每轮全新 profile(原 --clean 内置为默认):浏览器内状态(localStorage +
+ * OPFS 文件树)跨运行累积,数轮全量后启动被拖过 waitReady 的 12s 就绪线,
+ * 表现为大批组"页面未就绪"雪崩失败;并行度实测与此无关(clean + parallel 6
+ * 反而最快)。轮内持久化不受影响 —— 组间 fresh() 仍保留 localStorage,
+ * "刷新后数据仍在"类用例照常工作。--keep 复用上轮 profile(调试持久化问题)。 */
+let parallel = 6, wantList = false, workerMode = false, clean = true;   // 默认 6 个浏览器并行
 const selectors = [];
 let workerIds = null, workerOut = null, workerProfile = '';
 for (let i = 0; i < argv.length; i++) {
@@ -33,7 +38,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--ids') workerIds = argv[++i].split(',');
   else if (a === '--out') workerOut = argv[++i];
   else if (a === '--profile') workerProfile = argv[++i];
-  else if (a === '--clean') clean = true;
+  else if (a === '--keep') clean = false;
+  else if (a === '--clean') clean = true;   // 兼容旧旗标:现已是默认行为
   else if (a === '--parallel' || a.startsWith('--parallel=')) {
     parallel = a.includes('=') ? Number(a.split('=')[1]) : Number(argv[++i]);
     if (!(parallel >= 1 && parallel <= 16)) { console.error('--parallel 需要 1-16 的数字'); process.exit(2); }
@@ -47,7 +53,7 @@ function printHelp() {
   选择器: 组号(T22 或 22)、区间(T1-T5)、标题关键词(邮件);逗号分隔可混写
   --list        列出全部用例组
   --parallel N  用 N 个浏览器实例并行跑(默认 6;调试可 --parallel 1 串行)
-  --clean       运行前清空测试用浏览器 profile(全新 localStorage 状态)`);
+  --keep        复用上轮浏览器 profile(默认每轮运行前清空,防跨运行累积拖慢启动)`);
 }
 
 /* ---------- 结果收集 ---------- */
@@ -4549,7 +4555,7 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   t('T50.6 卸载:关窗口/解固定/菜单与卡片回退', s15.win === false && s15.pinned === false && s15.installed === false && s15.installBtn && s15.sm === 0, JSON.stringify(s15));
 
   // f2. 末位卸载回收:包资源 /app/map 的存在性 ⟺ 仍有用户装着它
-  // (profile 跨运行共享,历史用户的安装状态也在内,故断言不变量而非具体状态)
+  // (同 worker 轮内各组共用 profile,别组的安装状态也在内,故断言不变量而非具体状态)
   const pkg2 = await ev(`(() => {
     const v2 = JSON.parse(localStorage.getItem('webos.installed.v2') || '{}');
     const anyone = Object.values(v2).some(a => a.includes('map'));
@@ -6071,14 +6077,19 @@ try {
 }
 
 const scope = ids.length === GROUPS.length ? '全部' : ids.join(', ');
-console.log(`====== AetherWebOS E2E:${scope}(${ids.length}/${GROUPS.length} 组,parallel=${parallel}${clean ? ',clean' : ''})======`);
+console.log(`====== AetherWebOS E2E:${scope}(${ids.length}/${GROUPS.length} 组,parallel=${parallel}${clean ? '' : ',keep'})======`);
 const T0 = Date.now();
 
 if (clean) {
-  const marks = parallel > 1 ? Array.from({ length: parallel }, (_, i) => 'w' + i) : ['main'];
-  for (const m of marks) {
-    try { rmSync(join(tmpdir(), 'webos-cdp-profile-' + m), { recursive: true, force: true }); } catch {}
-  }
+  // 清扫全部 webos-cdp-profile-*(含历史并行度遗留的 worker 目录),而非只清本轮要用的:
+  // 跨运行累积的 OPFS/localStorage 全在这些目录里,留着只会拖慢后续每一轮
+  try {
+    for (const name of readdirSync(tmpdir())) {
+      if (name.startsWith('webos-cdp-profile-')) {
+        try { rmSync(join(tmpdir(), name), { recursive: true, force: true }); } catch {}
+      }
+    }
+  } catch { /* tmpdir 不可读:跳过清理,本轮照跑 */ }
 }
 
 let all = [];
