@@ -6159,11 +6159,12 @@ group('T60', '回收站 / 文件剪贴板 / 打开方式 / 会话记录', async 
  * T61 电子表格:纯表格编辑器(无公式 / 行高固定)
  * 覆盖:网格骨架、单元格编辑(双击/打字即编/Esc)、四样式位 +
  * 文字色 + 单元格色(调色板真实 UI)、框选批量(锚点取反语义)、
- * 整行/整列选、列宽拖拽(缩放坐标反算)、真实缩放、.axl 存取与
- * 打开方式路由。经验:窗口开场动画 950ms,须等足再交互;
+ * 整行/整列选、列宽拖拽(缩放坐标反算)、真实缩放、列排序(数字<
+ * 文本<空垫底、整行连动、拼音序、指示器随编辑清除、sort 入档)、
+ * .axl 存取与打开方式路由。经验:窗口开场动画 950ms,须等足再交互;
  * 合成 PointerEvent 要带元素中心坐标(hitCell 走 elementFromPoint)。
  * ============================================================ */
-group('T61', '电子表格(编辑 / 样式 / 列宽 / 缩放 / .axl 存取)', async () => {
+group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存取)', async () => {
   await fresh();
   const HOME = await ev(`WebOS.fs.homePath()`);
   const FILE = HOME + '/documents/e2e-sheet.axl';
@@ -6187,8 +6188,8 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 缩放 / .axl 存取)', as
     };
   })()`);
   t('T61 骨架(50×20 / 表头 A·1 / 工具栏 / 状态栏 A1 / 100%)',
-    s0.win && s0.rows === 50 && s0.cols === 20 && s0.headA === 'A' && s0.rowh1 === '1'
-    && s0.btns >= 13 && s0.status.startsWith('A1') && s0.zoom === '100%' && s0.title.includes('未命名'),
+    s0.win && s0.rows === 50 && s0.cols === 20 && s0.headA.startsWith('A') && s0.rowh1 === '1'
+    && s0.btns >= 15 && s0.status.startsWith('A1') && s0.zoom === '100%' && s0.title.includes('未命名'),
     JSON.stringify(s0));
 
   // 编辑链:双击 B2 写字 → Enter 提交并下移;打字即编 → Esc 取消
@@ -6345,6 +6346,59 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 缩放 / .axl 存取)', as
     s6.title.includes('e2e-sheet.axl') && s6.text === '季度数据' && s6.bold && s6.colw === '176px',
     JSON.stringify(s6));
   t('T61.10 打开方式路由(.axl 内置默认 → 电子表格)', s6.route === 'sheet', String(s6.route));
+
+  // 排序:数字列升/降(空恒垫底、整行连动)+ 中文拼音序 + 指示器随编辑清除。
+  // 注意 sortCol 会整格重建表头,排序钮须每次重查,旧引用已脱离 DOM
+  const s7 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const col = (c) => [0, 1, 2, 3].map((r) => td(r, c).textContent);
+    const sbtn = (c) => w.querySelector('thead th[data-c="' + c + '"] .col-sort');
+    // A 列行标记 a1..a4;B 列 92/78/(空)/88;C 列 张三/李四/陈五/(空)
+    ['a1', 'a2', 'a3', 'a4'].forEach((t, i) => edit(i, 0, t));
+    edit(0, 1, '92'); edit(1, 1, '78'); edit(3, 1, '88');
+    edit(0, 2, '张三'); edit(1, 2, '李四'); edit(2, 2, '陈五');
+    sbtn(1).click();                                  // B 升:78 88 92 空
+    const asc = { A: col(0), B: col(1), mark: sbtn(1).textContent };
+    sbtn(1).click();                                  // B 降:92 88 78 空
+    const desc = { A: col(0), B: col(1), mark: sbtn(1).textContent };
+    sbtn(2).click();                                  // C 升(拼音:陈 chen < 李 li < 张 zhang)
+    const zhAsc = col(2);
+    // 任一格内容再编辑 → 排序状态不可信,指示器清除
+    edit(0, 3, 'x');
+    return { asc, desc, zhAsc, cleared: !w.querySelector('.col-sort.on') };
+  })()`);
+  t('T61.11 列排序(升/降:数字序、空恒垫底、整行连动、▲/▼ 指示)',
+    s7.asc.B.join(',') === '78,88,92,' && s7.asc.A.join(',') === 'a2,a4,a1,a3' && s7.asc.mark === '▲'
+    && s7.desc.B.join(',') === '92,88,78,' && s7.desc.A.join(',') === 'a1,a4,a2,a3' && s7.desc.mark === '▼',
+    JSON.stringify(s7));
+  t('T61.12 中文拼音序 + 编辑清指示(陈李张;码点序会是张李陈)',
+    s7.zhAsc.slice(0, 3).join(',') === '陈五,李四,张三' && s7.cleared,
+    JSON.stringify({ zhAsc: s7.zhAsc, cleared: s7.cleared }));
+
+  // 排序状态随 .axl 入档:再排一次 → 保存(已有路径不弹框)→ 读档断言 sort 字段
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    w.querySelector('thead th[data-c="1"] .col-sort').click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+  })()`);
+  await sleep(400);
+  const s8 = await ev(`(() => {
+    const d = JSON.parse(WebOS.fs.read(${JSON.stringify(FILE)}));
+    return { sort: d.sort, mark: document.querySelector('.win[data-app=sheet] thead th[data-c="1"] .col-sort')?.textContent };
+  })()`);
+  t('T61.13 排序状态入档(.axl sort 字段 + 列头 ▲)',
+    s8.sort && s8.sort.c === 1 && s8.sort.dir === 1 && s8.mark === '▲', JSON.stringify(s8));
   await c.shot('t61-sheet');
   await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
 });

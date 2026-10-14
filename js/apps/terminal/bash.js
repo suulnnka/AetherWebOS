@@ -524,7 +524,7 @@ CMDS.open = {
   },
 };
 CMDS.edit = {
-  desc: '打开文件编辑(edit <文件>;.md 进 Markdown 编辑器,代码文件进代码编辑器)',
+  desc: '打开文件编辑(edit <文件>;.md 进 Markdown 编辑器,.axl 进电子表格,代码文件进代码编辑器)',
   run(args, { resolve }) {
     const p = resolve(args[0] || '');
     if (!args[0]) throw new Error('用法: edit <文件>');
@@ -532,6 +532,10 @@ CMDS.edit = {
     if (/\.md$/i.test(p)) {
       open('mdedit', { params: { path: p } });
       return `已在 Markdown 编辑器打开 ${p}`;
+    }
+    if (/\.axl$/i.test(p)) {
+      open('sheet', { params: { path: p } });
+      return `已在电子表格打开 ${p}`;
     }
     if (CODE_EXT_RE.test(p)) {
       open('codeedit', { params: { path: p } });

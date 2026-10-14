@@ -1,0 +1,145 @@
+/* 电子表格应用专属样式 */
+.sheet-app { position: relative; }          /* 调色板弹层定位基准 */
+
+/* ---- 网格滚动区 ---- */
+.sheet-wrap {
+  flex: 1; min-height: 0; overflow: auto;
+  outline: none;
+  background: var(--panel-solid);
+}
+.sheet-table {
+  border-collapse: separate; border-spacing: 0;
+  table-layout: fixed;
+  font-size: 13px;                            /* 缩放时由 JS 按比例重设 */
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+.sheet-table th, .sheet-table td {
+  height: calc(var(--rowh, 28) * 1px);        /* 行高固定,随缩放变 */
+  padding: 0 6px; box-sizing: border-box;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: left;
+}
+
+/* 表头:冻结首行/首列 */
+.sheet-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel-2); color: var(--text-2);
+  font-weight: 600; font-size: .9em; text-align: center;
+  user-select: none; cursor: default;
+}
+.sheet-table tbody th.rowh {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--panel-2); color: var(--text-2);
+  font-weight: 600; font-size: .9em; text-align: center;
+  user-select: none;
+}
+.sheet-table thead th.corner { left: 0; z-index: 3; }
+
+/* 单元格样式位 */
+.sheet-table td.b { font-weight: 700; }
+.sheet-table td.i { font-style: italic; }
+.sheet-table td.u { text-decoration-line: underline; }
+.sheet-table td.k { text-decoration-line: line-through; }
+.sheet-table td.u.k { text-decoration-line: underline line-through; }
+
+/* 选区:叠加着色不盖掉单元格底色(box-shadow inset 铺满) */
+.sheet-table td.sel {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.sheet-table td.cur {
+  box-shadow: inset 0 0 0 2px var(--accent),
+              inset 0 0 0 999px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.sheet-table thead th.hd-sel, .sheet-table tbody th.hd-sel {
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
+  color: var(--accent);
+}
+
+/* 编辑中:单元格让位给输入框(此块置于选区样式之后,优先级同分后者胜) */
+.sheet-table td.editing {
+  overflow: visible;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--panel-solid);
+}
+.cell-in {
+  width: 100%; height: 100%; box-sizing: border-box;
+  border: 0; outline: none; padding: 0 5px;
+  background: transparent; color: inherit; font: inherit;
+}
+
+/* 列宽手柄:列头右缘竖条,悬停高亮 */
+.col-resize {
+  position: absolute; top: 0; right: -3px;
+  width: 7px; height: 100%;
+  cursor: col-resize; z-index: 4;
+}
+.col-resize:hover, .col-resize:active {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* 列排序钮:列头内右侧小箭头,悬停浮现;激活(▲/▼)常显 */
+.col-sort {
+  position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+  font-size: 9px; line-height: 1; padding: 4px 2px;
+  color: var(--text-2); cursor: pointer; user-select: none;
+  opacity: 0;
+}
+.sheet-table thead th:hover .col-sort { opacity: 0.75; }
+.sheet-table thead th .col-sort:hover,
+.sheet-table thead th .col-sort.on { opacity: 1; color: var(--accent); }
+
+/* ---- 工具栏 ---- */
+.sheet-sep {
+  width: 1px; align-self: stretch;
+  margin: 3px 3px; background: var(--border);
+}
+.sheet-fmt { min-width: 32px; justify-content: center; padding: 0 8px; font-size: 14px; }
+.sheet-fmt.b span { font-weight: 800; }
+.sheet-fmt.i span { font-style: italic; font-family: Georgia, 'Times New Roman', serif; }
+.sheet-fmt.u span { text-decoration: underline; }
+.sheet-fmt.k span { text-decoration: line-through; }
+.sheet-fmt.on {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.sheet-color { flex-direction: column; gap: 1px; padding: 2px 10px; }
+.sheet-color .a { font-weight: 800; font-size: 14px; line-height: 1; }
+.sheet-color .bar { width: 16px; height: 3px; border-radius: 2px; background: var(--accent); }
+.sheet-color .fill {
+  width: 16px; height: 16px; border-radius: 3px;
+  border: 1px solid var(--border); background: transparent;
+}
+.sheet-color .fill.none {   /* 无底色:红色斜杠 */
+  background: linear-gradient(135deg, transparent 44%, #e04848 44%, #e04848 56%, transparent 56%);
+}
+.sheet-zoom-label {
+  min-width: 44px; text-align: center; cursor: pointer;
+  color: var(--text-2); font-size: 12.5px;
+  user-select: none;
+}
+.sheet-zoom-label:hover { color: var(--accent); }
+.sheet-grow { height: 20px; padding: 0 8px; font-size: 11.5px; }
+
+/* ---- 调色板弹层 ---- */
+.sheet-palette {
+  position: absolute; z-index: 60;
+  width: 216px; padding: 10px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border); border-radius: var(--radius-s);
+  box-shadow: var(--shadow);
+}
+.sheet-palette .pal-title { font-size: 12px; color: var(--text-2); margin: 0 0 8px; }
+.sheet-palette .pal-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.sheet-palette .pal-sw {
+  height: 24px; border-radius: 5px; cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  transition: transform 0.08s;
+}
+.sheet-palette .pal-sw:hover { transform: scale(1.14); outline: 2px solid var(--accent); }
+.sheet-palette .pal-none {
+  grid-column: span 6; width: 100%; height: 26px;
+  font-size: 12px; justify-content: center;
+}

@@ -23,6 +23,7 @@ import todo from './todo/manifest.js';
 import sms from './sms/manifest.js';
 import notes from './notes/manifest.js';
 import mdedit from './mdedit/manifest.js';
+import sheet from './sheet/manifest.js';
 import codeedit from './codeedit/manifest.js';
 import settings from './settings/manifest.js';
 import appstore from './appstore/manifest.js';
@@ -59,6 +60,7 @@ const APPS = [
   [sms, () => import('./sms/index.js')],
   [notes, () => import('./notes/index.js')],
   [mdedit, () => import('./mdedit/index.js')],
+  [sheet, () => import('./sheet/index.js')],
   [codeedit, () => import('./codeedit/index.js')],
   [settings, () => import('./settings/index.js')],
   [appstore, () => import('./appstore/index.js')],
