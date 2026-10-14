@@ -547,9 +547,13 @@ export function toggleMax(id) {
 function applyRect(w, r, animate) {
   const mn = minSizeOf(w);
   const a = area();
-  const rect = { x: r.x, y: r.y, w: Math.max(r.w, mn.w), h: Math.max(r.h, mn.h) };
-  rect.x = clamp(rect.x, 0, Math.max(0, a.width - rect.w));
-  rect.y = clamp(rect.y, 0, Math.max(0, a.height - rect.h));
+  // 几何取整:小数 left/top/width/height 会让阴影模糊光栅逐帧对不齐(闪烁),整数也更利内容渲染
+  const rect = {
+    x: r.x, y: r.y,
+    w: Math.max(Math.round(r.w), mn.w), h: Math.max(Math.round(r.h), mn.h),
+  };
+  rect.x = Math.round(clamp(rect.x, 0, Math.max(0, a.width - rect.w)));
+  rect.y = Math.round(clamp(rect.y, 0, Math.max(0, a.height - rect.h)));
   if (animate) {
     w.el.classList.add('anim');
     setTimeout(() => w.el.classList.remove('anim'), 200);
@@ -579,6 +583,11 @@ function unmaximize(w) {
 }
 
 /* ---------------- 拖动 ---------------- */
+/* 拖动位移走 transform 而非逐帧改 left/top:配合 .dragging 的 will-change,
+ * 窗口(连同阴影)提升为合成层后由合成器整体挪动、零重绘 —— 逐帧改
+ * left/top 则窗口与模糊阴影每帧重画,且指针坐标带小数(Windows 125%/
+ * 150% 缩放)会让阴影光栅逐帧对不齐,表现为活动窗口阴影闪烁。
+ * 松手时把位移固化回取整的 left/top,同一帧清掉 transform,无肉眼跳动。 */
 function makeDraggable(w) {
   const head = w.el.querySelector('.win-head');
   head.addEventListener('pointerdown', (e) => {
@@ -590,6 +599,8 @@ function makeDraggable(w) {
     let offX = e.clientX - w.el.offsetLeft;
     let offY = e.clientY - w.el.offsetTop;
     let started = false;
+    let baseX = 0, baseY = 0;   // 位移基准(从最大化还原后现取)
+    let lastX = 0, lastY = 0;   // 最近一次目标位置,松手时固化
     const wasMax = w.state === 'max';
 
     const move = (ev) => {
@@ -604,19 +615,28 @@ function makeDraggable(w) {
           offX = rect.w * rx;
           offY = 16;
         }
+        baseX = w.el.offsetLeft;
+        baseY = w.el.offsetTop;
         w.el.classList.add('dragging');
+        // 拖动打断出场动画:winIn 的 transform 关键帧会盖住拖动位移
+        w.el.classList.remove('opening');
       }
-      const nx = clamp(ev.clientX - a.left - offX, -rect.w + 90, a.width - 90);
-      const ny = clamp(ev.clientY - a.top - offY, 0, a.height - 36);
-      w.el.style.left = nx + 'px';
-      w.el.style.top = ny + 'px';
+      lastX = clamp(ev.clientX - a.left - offX, -rect.w + 90, a.width - 90);
+      lastY = clamp(ev.clientY - a.top - offY, 0, a.height - 36);
+      w.el.style.transform =
+        `translate(${Math.round(lastX - baseX)}px, ${Math.round(lastY - baseY)}px)`;
     };
     const up = (ev) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       w.el.classList.remove('dragging');
+      if (!started) return;
+      // 位移固化回取整的 left/top 并清掉 transform(同一帧,无跳动)
+      w.el.style.left = Math.round(lastX) + 'px';
+      w.el.style.top = Math.round(lastY) + 'px';
+      w.el.style.transform = '';
       // 贴边分屏:拖到左/右边缘 → 半屏,拖到顶部 → 最大化
-      if (started && !wasMax) {
+      if (!wasMax) {
         if (ev.clientY <= a.top + 6) {
           toggleMax(w.id);
         } else if (ev.clientX <= a.left + 12) {
@@ -656,7 +676,11 @@ function makeResizable(w) {
         if (dir.includes('s')) hh = clamp(r.h + dy, minH, a.height - r.y);
         if (dir.includes('w')) { ww = clamp(r.w - dx, minW, r.x + r.w); x = r.x + r.w - ww; }
         if (dir.includes('n')) { hh = clamp(r.h - dy, minH, r.y + r.h); y = r.y + r.h - hh; }
-        Object.assign(w.el.style, { left: x + 'px', top: y + 'px', width: ww + 'px', height: hh + 'px' });
+        // 取整:小数几何会让阴影光栅逐帧抖动(同拖动的闪烁问题)
+        Object.assign(w.el.style, {
+          left: Math.round(x) + 'px', top: Math.round(y) + 'px',
+          width: Math.round(ww) + 'px', height: Math.round(hh) + 'px',
+        });
       };
       const up = () => {
         window.removeEventListener('pointermove', move);
@@ -699,8 +723,9 @@ export function relayout() {
   const a = area();
   for (const w of wins.values()) {
     if (w.state === 'max') {
-      Object.assign(w.el.style, { left: '0px', top: '0px', width: a.width + 'px', height: a.height + 'px' });
-      w.hooks.onResize?.(a.width, a.height);
+      const aw = Math.round(a.width), ah = Math.round(a.height);
+      Object.assign(w.el.style, { left: '0px', top: '0px', width: aw + 'px', height: ah + 'px' });
+      w.hooks.onResize?.(aw, ah);
     } else if (w.state === 'normal') {
       const mn = minSizeOf(w);
       const ww = Math.min(Math.max(w.el.offsetWidth, mn.w), a.width);

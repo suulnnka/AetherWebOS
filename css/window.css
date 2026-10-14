@@ -21,7 +21,10 @@
 .win.closing { transition: all 0.16s ease-in; transform: scale(0.94); opacity: 0; }
 .win.minimizing { transition: all 0.18s ease-in; transform: scale(0.7) translateY(60px); opacity: 0; }
 .win.anim { transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease; }
-.win.dragging { transition: none; will-change: left, top; }
+/* 拖动期由 wm 写 transform 位移:will-change:transform 把窗口提升为合成层,
+   纹理(含阴影)整体挪动不重绘 —— will-change:left,top 对非合成属性无效,
+   阴影逐帧重画会在小数缩放(DPR 1.25/1.5)下闪烁 */
+.win.dragging { transition: none; will-change: transform; }
 
 /* 顶部窗头 */
 .win-head {
