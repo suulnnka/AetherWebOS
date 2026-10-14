@@ -15,6 +15,7 @@ import { registerLazy, prefetchApps } from '../core/registry.js';
 
 import browser from './browser/manifest.js';
 import files from './files/manifest.js';
+import trash from './trash/manifest.js';
 import localfiles from './localfiles/manifest.js';
 import viewer from './viewer/manifest.js';
 import mail from './mail/manifest.js';
@@ -50,6 +51,7 @@ import clues from './clues/manifest.js';
 const APPS = [
   [browser, () => import('./browser/index.js')],
   [files, () => import('./files/index.js')],
+  [trash, () => import('./trash/index.js')],
   [localfiles, () => import('./localfiles/index.js')],
   [viewer, () => import('./viewer/index.js')],
   [mail, () => import('./mail/index.js')],

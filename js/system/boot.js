@@ -19,6 +19,9 @@ import * as wm from '../core/wm.js';
 import { dialogs } from '../core/dialogs.js';
 import weatherSvc from '../core/weather.js';
 import * as appdata from '../core/appdata.js';
+import * as trashSvc from '../core/trash.js';
+import * as clipSvc from '../core/clipboard.js';
+import * as openwithSvc from '../core/openwith.js';
 import { WebOS as SYS } from '../core/exports.js';
 import { opfsAvailable } from '../core/opfs.js';
 import { renderStartMenu, renderStartUser } from './startmenu.js';
@@ -26,6 +29,7 @@ import { renderPinned, renderTasks } from './taskbar.js';
 import { renderDesktopIcons, applyWallpaper } from './desktop.js';
 import { paintVolIcon, paintBell, tickClock } from './tray.js';
 import { setupLayoutButton } from './shortcuts.js';
+import { restoreIfSaved } from './sessionsave.js';
 
 function boot() {
   // OPFS 硬门禁:文件系统以 OPFS 为唯一存储、无降级路径,
@@ -89,6 +93,10 @@ function boot() {
       q.delete('open');
       if (appId) setTimeout(() => wm.open(appId, { params: Object.fromEntries(q) }), 300);
     }
+
+    // 会话恢复:刷新/重开浏览器后把上次打开的窗口开回来(注销不恢复;
+    // 锁屏态等登录成功由 sessionsave 的登录接力补上)
+    if (!location.hash.startsWith('#open=')) restoreIfSaved();
   };
   start();
 
@@ -98,6 +106,7 @@ function boot() {
   Object.assign(SYS, {
     bus: { subscribe, publish, send: (from, to, type, payload) => publish(`app:${to}`, { from, to, type, payload }) },
     wm, settings, accounts, fs, vnet, dialogs, mail: mailSvc, sms: smsSvc, weather: weatherSvc, appdata,
+    trash: trashSvc, clipboard: clipSvc, openwith: openwithSvc,
     __weatherDaily: weatherSvc.daily,
     apps: { list: listApps, install: installApp, uninstall: uninstallApp, isInstalled },
     ensureDesktopShortcuts,

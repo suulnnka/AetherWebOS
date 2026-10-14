@@ -18,6 +18,8 @@
 }
 .fitem:hover { background: var(--hover); }
 .fitem.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.fitem.cut { opacity: 0.5; }
+.fitem.cut .f-name { text-decoration: line-through; text-decoration-thickness: 1px; }
 .fitem .f-ico { display: grid; place-items: center; }
 .fitem .f-name {
   font-size: 12px; text-align: center; line-height: 1.3;

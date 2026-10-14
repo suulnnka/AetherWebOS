@@ -11,6 +11,9 @@ import { unzip, listEntries, extract, zip } from '../../core/zip.js';
 import { isAppLink, appLinkApp, createAppLink, appLinkMenuItems, flatColor, hoverPrefetch } from '../../core/applink.js';
 import { inplaceRename } from '../../core/rename.js';
 import { CODE_EXT_RE } from '../../lib/chl.js';
+import { moveToTrash } from '../../core/trash.js';
+import * as clip from '../../core/clipboard.js';
+import { openFs, askOpenWith, PREVIEW_EXT } from '../../core/openwith.js';
 
 /** 快捷入口:随执行用户家目录变化 */
 function quickPlaces(home) {
@@ -36,6 +39,7 @@ function fileIcon(item, encrypted = false) {
   if (/\.zip$/i.test(item.name)) return { name: 'download', color: '#eab308', size: 30 };
   const ext = item.name.split('.').pop().toLowerCase();
   if (['txt', 'md', 'log', 'json', 'js', 'css', 'html'].includes(ext)) return { name: 'fileText', color: '#8a94a8', size: 30 };
+  if (ext === 'axl') return { name: 'grid', color: '#12a150', size: 30 };
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return { name: 'image', color: '#a78bfa', size: 30 };
   if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) return { name: 'music', color: '#34d399', size: 30 };
   return { name: 'file', color: '#8a94a8', size: 30 };
@@ -51,11 +55,9 @@ register({
   ...manifest,
   /* dialogs / fs 来自 ctx:应用绑定弹框与执行用户鉴权的文件 API */
   mount({ root, bus, params, setTitle, dialogs, fs, user }) {
-    /** 对话框封装:输入(返回 string|null)与危险确认(返回 boolean) */
+    /** 对话框封装:输入(返回 string|null) */
     const modalPrompt = (title, placeholder, value) =>
       dialogs.prompt({ title, message: '输入名称:', placeholder, value });
-    const modalConfirm = (title, body, danger) =>
-      dialogs.confirm({ title, message: body, danger, okText: '删除' });
 
     const home = fs.homePath() || '/home';
     let cwd = params.path && fs.isDir(params.path)
@@ -84,10 +86,7 @@ register({
       render();
     }
 
-    /** 双击即预览的扩展名(交给文件预览应用;与 desktop.js / viewer MIME 保持一致) */
-const PREVIEW_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|mp3|wav|ogg|flac|m4a|mp4|webm|mkv|mov|avi|pdf)$/i;
-
-function openItem(item) {
+    function openItem(item) {
       if (item.dir) nav(item.path);
       else if (isAppLink(item.name)) {
         // 应用快捷方式:启动目标应用(单实例应用复用已有窗口)
@@ -111,13 +110,10 @@ function openItem(item) {
             dialogs.error({ title: '解锁失败', message: String(e.message) });
           }
         })();
-      } else if (/\.md$/i.test(item.name)) {
-        open('mdedit', { params: { path: item.path } });   // Markdown:所见即所得编辑器
-      } else if (CODE_EXT_RE.test(item.name)) {
-        open('codeedit', { params: { path: item.path } }); // 代码:自研编辑器(AetherJS/CSS/HTML/JSON)
-      } else if (PREVIEW_EXT.test(item.name)) {
-        open('viewer', { params: { path: item.path } });   // 图片/PDF/音视频 → 文件预览
-      } else open('notes', { params: { path: item.path } }); // IPC:通过参数把文件交给记事本
+      } else {
+        // 打开方式路由:用户默认关联 > 内置默认(md / 代码 / 预览 / 记事本)
+        openFs(item.path);
+      }
     }
 
     /** 加密 / 解密文件(密码经系统对话框输入) */
@@ -237,13 +233,26 @@ function openItem(item) {
       });
     }
 
-    async function deleteItem(item) {
-      const ok = await modalConfirm(`删除 ${item.dir ? '文件夹' : '文件'}`, `确定删除「${item.name}」吗?${item.dir ? '其中所有内容都会被删除。' : ''}`, true);
-      if (!ok) return;
-      fs.rm(item.path);
+    /** 删除 = 移入回收站(可逆,免确认;彻底删除去回收站窗口) */
+    function deleteItem(item) {
+      if (!moveToTrash([item.path])) {
+        dialogs.error({ title: '无法删除', message: `「${item.name}」可能已被移动,或你没有删除它的权限。` });
+        return;
+      }
       selected = null;
       render();
-      bus.notify('已删除', item.name);
+      bus.notify('已移入回收站', `${item.name}(可在回收站还原)`);
+    }
+
+    /** 粘贴剪贴板内容到当前目录 */
+    async function pasteHere() {
+      const r = await clip.pasteInto(cwd, user);
+      if (r.copied + r.moved === 0) {
+        bus.notify('粘贴', '剪贴板为空,或其中的项目已被移动/删除');
+        return;
+      }
+      render();
+      bus.notify('已粘贴', `${r.copied ? r.copied + ' 个复制' : ''}${r.copied && r.moved ? ' · ' : ''}${r.moved ? r.moved + ' 个移动' : ''}`);
     }
 
     function renderCrumbs() {
@@ -277,7 +286,7 @@ function openItem(item) {
         const encrypted = !item.dir && isEncrypted(fs.read(item.path) || '');
         const fi = fileIcon(item, encrypted);
         const node = el('button', {
-          class: 'fitem' + (selected === item.path ? ' selected' : ''),
+          class: 'fitem' + (selected === item.path ? ' selected' : '') + (clip.isCut(item.path) ? ' cut' : ''),
           dataset: { path: item.path },
           title: encrypted ? '🔒 已加密' : '',
           onClick: () => { selected = selected === item.path ? null : item.path; renderStatus(); grid.querySelectorAll('.fitem').forEach(x => x.classList.toggle('selected', x.dataset.path === selected)); },
@@ -288,6 +297,7 @@ function openItem(item) {
             renderStatus();
             showMenu(e.clientX, e.clientY, [
               { label: '打开', icon: 'folderOpen', fn: () => openItem(item) },
+              ...(!item.dir && !isAppLink(item.name) ? [{ label: '打开方式…', icon: 'external', fn: () => askOpenWith(item.path) }] : []),
               ...(item.dir ? [] : [
                 ...(PREVIEW_EXT.test(item.name)
                   ? [{ label: '预览', icon: 'image', fn: () => open('viewer', { params: { path: item.path } }) }]
@@ -303,8 +313,11 @@ function openItem(item) {
                 ? [{ label: '解压到当前文件夹', icon: 'download', fn: () => extractZip(item, item.name.replace(/\.zip$/i, '')) }]
                 : [{ label: '压缩为 ZIP', icon: 'download', fn: () => compressItems([item.path], item.name.replace(/\.[^.]+$/, '') + '.zip') }])),
               { sep: true },
+              { label: '复制', icon: 'copy', fn: () => { clip.setFiles('copy', [item.path]); renderGrid(); } },
+              { label: '剪切', icon: 'scissors', fn: () => { clip.setFiles('cut', [item.path]); renderGrid(); } },
+              { sep: true },
               { label: '重命名', icon: 'pencil', fn: () => renameItem(item) },
-              { label: '删除', icon: 'trash', danger: true, fn: () => deleteItem(item) },
+              { label: '删除(移入回收站)', icon: 'trash', danger: true, fn: () => deleteItem(item) },
             ]);
           },
         },
@@ -334,8 +347,23 @@ function openItem(item) {
 
     // IPC:监听文件系统变化实时刷新;响应其他应用的刷新请求
     const offFs = bus.onSys('fs-changed', () => render());
+    const offClip = bus.onSys('clipboard-changed', () => render());
     const offReq = bus.on('refresh', (p, msg) => { render(); msg.reply?.({ ok: true }); });
     const offParams = bus.on('params', (p) => { if (p?.path && fs.isDir(p.path)) { cwd = fs.normPath(p.path); render(); } });
+
+    // 键盘:Ctrl+C/X 复制剪切选中项,Ctrl+V 粘贴到当前目录
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'c' && k !== 'x' && k !== 'v') return;
+      if (e.target?.closest?.('input, textarea, select, [contenteditable=""]')) return;   // 输入框里的复制粘贴归输入框
+      e.preventDefault();
+      if (k === 'v') { pasteHere(); return; }
+      if (!selected) return;
+      clip.setFiles(k === 'c' ? 'copy' : 'cut', [selected]);
+      renderGrid();
+    };
+    root.addEventListener('keydown', onKey);
 
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
@@ -344,6 +372,9 @@ function openItem(item) {
         crumbs,
         el('button', { class: 'btn icon', title: '新建文件夹', onClick: () => newItem('dir') }, icon('folderPlus', 15)),
         el('button', { class: 'btn icon', title: '新建文件', onClick: () => newItem('file') }, icon('filePlus', 15)),
+        el('button', {
+          class: 'btn icon', title: '粘贴剪贴板内容(Ctrl+V)', onClick: () => pasteHere(),
+        }, icon('clipboard', 14)),
         el('button', {
           class: 'btn icon', title: '把选中项压缩为 ZIP', onClick: () => {
             const targets = selected
@@ -365,6 +396,7 @@ function openItem(item) {
             }, el('span', { class: 'li-ico' }, icon(q.icon, 15)), q.name))),
           el('div', { class: 'dim', style: { fontSize: '11.5px', padding: '12px 10px 8px' } }, '存储'),
           el('div', { class: 'list' },
+            el('button', { class: 'list-item', onClick: () => open('trash') }, el('span', { class: 'li-ico' }, icon('trash', 15)), '回收站'),
             el('button', { class: 'list-item', onClick: () => nav('/') }, el('span', { class: 'li-ico' }, icon('hardDrive', 15)), '文件系统'))),
         el('div', { class: 'app-body', onClick: (e) => {
           if (e.target === grid || e.target === e.currentTarget) { selected = null; renderStatus(); renderGrid(); }
@@ -379,6 +411,7 @@ function openItem(item) {
               fn: () => showMenu(cx, cy, appLinkMenuItems((a) => {
                 if (createAppLink(cwd, a.id)) bus.notify('已创建快捷方式', a.name);
               })) },
+            ...(clip.hasFiles() ? [{ label: '粘贴', icon: 'clipboard', fn: () => pasteHere() }] : []),
             { sep: true },
             { label: '刷新', icon: 'refresh', fn: () => render() },
           ]);
@@ -388,6 +421,12 @@ function openItem(item) {
         el('span', { class: 'mono' }, cwd))));
 
     render();
-    return { onClose() { offFs(); offReq(); offParams(); return true; } };
+    return {
+      onClose() {
+        offFs(); offClip(); offReq(); offParams();
+        root.removeEventListener('keydown', onKey);
+        return true;
+      },
+    };
   },
 });

@@ -1419,7 +1419,7 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   const renamed = await ev(`WebOS.fs.exists(WebOS.fs.desktopPath()+'/改名后.txt')`);
   t('T24.3 F2 重命名(就地输入框)', renamed === true);
 
-  // e. Delete 删除(确认对话框)
+  // e. Delete 删除(直接入回收站,免确认;可还原)
   await ev(`(() => {
     document.activeElement && document.activeElement.blur();
     const n = [...document.querySelectorAll('.dicon')].find(x => x.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/改名后.txt');
@@ -1427,11 +1427,15 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   })()`);
   await sleep(200);
   await ev(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))`);
-  await sleep(450);
-  await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].find(b => b.textContent === '删除').click()`);
   await sleep(600);
-  const deleted = await ev(`!WebOS.fs.exists(WebOS.fs.desktopPath()+'/改名后.txt') && ![...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+WebOS.fs.desktopPath()+'/改名后.txt')`);
-  t('T24.4 Delete 删除(确认→文件系统→图标移除)', deleted === true);
+  const deleted = await ev(`(() => {
+    const p = WebOS.fs.desktopPath()+'/改名后.txt';
+    const inTrash = WebOS.trash.listTrash().some(i => i.orig === p);
+    return !WebOS.fs.exists(p) && inTrash
+      && ![...document.querySelectorAll('.dicon')].some(n => n.dataset.key === 'fs:'+p);
+  })()`);
+  t('T24.4 Delete 删除(入回收站→文件系统→图标移除,原路径记录在案)', deleted === true);
+  await ev(`WebOS.trash.emptyTrash()`);   // 还原现场:清掉本轮入筒条目
 
   // f. 橡皮筋框选
   await ev(`(async () => {
@@ -5992,6 +5996,357 @@ group('T59', '远端 node 与远端 exe(SSH 会话跑 AetherJS / 密文直击 / 
     s7.includes('Connection closed') && errs59 === '[]', String(errs59));
   await ev(`(() => { WebOS.fs.rm(${JSON.stringify(HOME + '/documents/e2e-remote.ajs')}); WebOS.vnet.resetState(); return true; })()`);
   await c.shot('t59-remote-node');
+});
+
+group('T60', '回收站 / 文件剪贴板 / 打开方式 / 会话记录', async () => {
+  /* ---- T60:桌面 OS 四件套(全部驱动真实 UI,WebOS.* 仅造数据与断言) ---- */
+  await fresh();
+  const HOME = await ev(`WebOS.fs.homePath()`);
+  const USER = await ev(`WebOS.accounts.current()`);
+  await ev(`WebOS.trash.emptyTrash()`);   // 清掉前轮遗留,保证计数确定
+
+  /* ---- 1) 桌面 Delete 入筒 + 角标 ---- */
+  await ev(`WebOS.fs.write(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}, 'trash-me')`);
+  const iconSel = JSON.stringify(`.dicon[data-key="fs:${HOME}/desktop/e2e-trash.txt"]`);
+  await waitFor(`!!document.querySelector(${iconSel})`, 5000);
+  // 选中该图标(真实选择态),按 Delete(desktop 捕获相监听)
+  await ev(`(() => {
+    document.querySelectorAll('.dicon').forEach(d => d.classList.remove('selected'));
+    document.querySelector(${iconSel}).classList.add('selected');
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+  })()`);
+  await waitFor(`(() => {
+    const l = WebOS.trash.listTrash();
+    return !WebOS.fs.exists(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')})
+      && l.length === 1 && l[0].orig === ${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}
+      && !document.querySelector(${iconSel})
+      && (document.querySelector('.dicon[data-trash="1"] .trash-badge')?.textContent || '') === '1';
+  })()`, 5000);
+  const t1 = await ev(`(() => ({
+    gone: !WebOS.fs.exists(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}),
+    list: WebOS.trash.listTrash().map(i => i.orig),
+    icon: !document.querySelector(${iconSel}),
+    badge: document.querySelector('.dicon[data-trash="1"] .trash-badge')?.textContent || '',
+  }))()`);
+  t('T60 桌面 Delete 入筒(文件进回收站 + 图标消失 + 角标 1)',
+    t1.gone && t1.list.length === 1 && t1.list[0] === HOME + '/desktop/e2e-trash.txt' && t1.icon && t1.badge === '1',
+    JSON.stringify(t1));
+
+  /* ---- 2) 回收站窗口:列表 / 原位置 / 双击还原(真实 UI) ---- */
+  await ev(`WebOS.wm.open('trash')`);
+  await waitFor(`document.querySelectorAll('.win[data-app=trash] .tr-item').length === 1`, 5000);
+  const row = await ev(`(() => {
+    const r = document.querySelector('.win[data-app=trash] .tr-item');
+    return { name: r.querySelector('.tr-name').textContent, meta: r.querySelector('.tr-meta').textContent,
+             status: document.querySelector('.win[data-app=trash] .app-status').textContent };
+  })()`);
+  await ev(`document.querySelector('.win[data-app=trash] .tr-item').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  await waitFor(`WebOS.fs.exists(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}) && !!document.querySelector('.win[data-app=trash] .tr-empty')`, 5000);
+  const t2 = await ev(`(() => ({
+    restored: WebOS.fs.exists(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}) && WebOS.fs.read(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')}),
+    empty: !!document.querySelector('.win[data-app=trash] .tr-empty'),
+  }))()`);
+  t('T60.1 回收站窗口(原位置展示 + 双击还原 + 内容完好)',
+    row.name === 'e2e-trash.txt' && row.meta.includes('desktop/e2e-trash.txt') && row.status.includes('1 个项目')
+    && t2.restored === 'trash-me' && t2.empty,
+    JSON.stringify({ row, t2 }));
+
+  /* ---- 3) 彻底删除走危险确认(sysdialog 真实弹窗) ---- */
+  await ev(`WebOS.fs.write(${JSON.stringify(HOME + '/desktop/e2e-trash2.txt')}, 'x')`);
+  await ev(`WebOS.trash.moveToTrash([${JSON.stringify(HOME + '/desktop/e2e-trash2.txt')}])`);
+  await waitFor(`document.querySelectorAll('.win[data-app=trash] .tr-item').length === 1`, 5000);
+  await ev(`(() => {   // 工具栏第三个按钮 = 清空回收站
+    const btns = document.querySelectorAll('.win[data-app=trash] .app-toolbar .btn');
+    btns[btns.length - 1].click();
+  })()`);
+  await waitFor(`!!document.querySelector('.win[data-app=sysdialog]')`, 5000);
+  await ev(`document.querySelector('.win[data-app=sysdialog] .dlg-btns .btn.danger').click()`);
+  await waitFor(`WebOS.trash.listTrash().length === 0 && !!document.querySelector('.win[data-app=trash] .tr-empty') && !document.querySelector('.dicon[data-trash="1"] .trash-badge')`, 5000);
+  const t3 = await ev(`(() => ({ n: WebOS.trash.listTrash().length, empty: !!document.querySelector('.win[data-app=trash] .tr-empty'), badge: !document.querySelector('.dicon[data-trash="1"] .trash-badge') }))()`);
+  t('T60.2 清空回收站(危险确认弹窗 + 空态 + 桌面角标消失)',
+    t3.n === 0 && t3.empty && t3.badge, JSON.stringify(t3));
+  await ev(`(() => { WebOS.wm.close(WebOS.wm.taskList().find(w => w.appId === 'trash').id); return true; })()`);
+
+  /* ---- 4) 文件剪贴板:文件管家 Ctrl+C / Ctrl+X / Ctrl+V(真实键序) ---- */
+  await ev(`WebOS.fs.write(${JSON.stringify(HOME + '/documents/e2e-clip.txt')}, 'clip-me')`);
+  await ev(`WebOS.wm.open('files')`);
+  await waitFor(`!!document.querySelector('.win[data-app=files] .fgrid')`, 6000);
+  const clickSide = async (label) => {
+    await ev(`(() => {
+      const b = [...document.querySelectorAll('.win[data-app=files] .list-item')].find(n => n.textContent.trim() === ${JSON.stringify(label)});
+      b.click();
+    })()`);
+    await sleep(250);
+  };
+  const keyOn = (sel, key, opts = {}) => ev(`document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, ctrlKey: true, bubbles: true, cancelable: true, ...${JSON.stringify(opts)} }))`);
+  await clickSide('文档');
+  await waitFor(`!!document.querySelector('.win[data-app=files] .fitem[data-path="${HOME}/documents/e2e-clip.txt"]')`, 5000);
+  const clipSel = JSON.stringify(`.win[data-app=files] .fitem[data-path="${HOME}/documents/e2e-clip.txt"]`);
+  // Ctrl+C 复制 → 主目录 Ctrl+V → 落一份副本
+  await ev(`document.querySelector(${clipSel}).click()`);
+  await keyOn(`.win[data-app=files] .fitem[data-path="${HOME}/documents/e2e-clip.txt"]`, 'c');
+  await clickSide('主目录');
+  await keyOn('.win[data-app=files] .fgrid', 'v');
+  await waitFor(`WebOS.fs.exists(${JSON.stringify(HOME + '/e2e-clip.txt')}) && WebOS.fs.exists(${JSON.stringify(HOME + '/documents/e2e-clip.txt')})`, 5000);
+  const t4a = await ev(`(() => ({ copied: WebOS.fs.read(${JSON.stringify(HOME + '/e2e-clip.txt')}), src: WebOS.fs.exists(${JSON.stringify(HOME + '/documents/e2e-clip.txt')}) }))()`);
+  // 剪切态淡显:剪切 documents 里那份 → 下载 Ctrl+V → 源消失
+  await clickSide('文档');
+  await waitFor(`!!document.querySelector(${clipSel})`, 5000);
+  await ev(`document.querySelector(${clipSel}).click()`);
+  await keyOn(`.win[data-app=files] .fitem[data-path="${HOME}/documents/e2e-clip.txt"]`, 'x');
+  const cutCls = await ev(`document.querySelector(${clipSel})?.classList.contains('cut') === true`);
+  await clickSide('下载');
+  await keyOn('.win[data-app=files] .fgrid', 'v');
+  await waitFor(`WebOS.fs.exists(${JSON.stringify(HOME + '/downloads/e2e-clip.txt')}) && !WebOS.fs.exists(${JSON.stringify(HOME + '/documents/e2e-clip.txt')}) && !WebOS.clipboard.hasFiles()`, 5000);
+  const t4b = await ev(`(() => ({ moved: WebOS.fs.read(${JSON.stringify(HOME + '/downloads/e2e-clip.txt')}), srcGone: !WebOS.fs.exists(${JSON.stringify(HOME + '/documents/e2e-clip.txt')}), clipCleared: !WebOS.clipboard.hasFiles() }))()`);
+  t('T60.3 文件剪贴板(Ctrl+C 复制 / Ctrl+X 剪切淡显 / Ctrl+V 粘贴 / 剪切一次性)',
+    t4a.copied === 'clip-me' && t4a.src === true && cutCls === true
+    && t4b.moved === 'clip-me' && t4b.srcGone && t4b.clipCleared,
+    JSON.stringify({ t4a, cutCls, t4b }));
+
+  /* ---- 5) 打开方式:右键菜单 → 选择器 → 记住默认(真实 UI) ---- */
+  await clickSide('文档');
+  await waitFor(`!!document.querySelector('.win[data-app=files] .fitem[data-path="${HOME}/documents/应用开发指南.md"]')`, 5000);
+  const mdSel = `.win[data-app=files] .fitem[data-path="${HOME}/documents/应用开发指南.md"]`;
+  await ev(`document.querySelector(${JSON.stringify(mdSel)}).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 500, clientY: 300 }))`);
+  await waitFor(`!!document.querySelector('#ctx .ctx-item')`, 4000);
+  await ev(`(() => { [...document.querySelectorAll('#ctx .ctx-item')].find(n => n.textContent.includes('打开方式')).click(); })()`);
+  await waitFor(`document.querySelectorAll('.ow-item').length >= 2`, 5000);
+  const owDefault = await ev(`WebOS.openwith.defaultFor('应用开发指南.md')`);
+  await ev(`(() => { document.querySelector('.ow-always input').click(); })()`);   // 勾选「始终」
+  await ev(`(() => { [...document.querySelectorAll('.ow-item')].find(n => n.querySelector('b').textContent.includes('记事本')).click(); })()`);
+  await waitFor(`!!document.querySelector('.win[data-app=notes]') && !document.querySelector('.ow-item')
+    && (JSON.parse(localStorage.getItem('webos.openwith.v1') || '{}').md || null) === 'notes'`, 6000);
+  const t5 = await ev(`(() => ({
+    notes: !!document.querySelector('.win[data-app=notes]'),
+    assoc: (JSON.parse(localStorage.getItem('webos.openwith.v1') || '{}').md) || null,
+    dlgClosed: !document.querySelector('.ow-item'),
+  }))()`);
+  t('T60.4 打开方式(右键入口 + 选择器 + 记住默认 .md=记事本 + 直开)',
+    owDefault === 'mdedit' && t5.notes && t5.assoc === 'notes' && t5.dlgClosed,
+    JSON.stringify({ owDefault, t5 }));
+  // 还原关联并收尾
+  await ev(`(() => {
+    WebOS.openwith.setDefault('md', null);
+    const w = WebOS.wm.taskList().find(x => x.appId === 'notes'); if (w) WebOS.wm.close(w.id);
+    const f = WebOS.wm.taskList().find(x => x.appId === 'files'); if (f) WebOS.wm.close(f.id);
+    WebOS.fs.rm(${JSON.stringify(HOME + '/e2e-clip.txt')});
+    WebOS.fs.rm(${JSON.stringify(HOME + '/downloads/e2e-clip.txt')});
+    WebOS.fs.rm(${JSON.stringify(HOME + '/desktop/e2e-trash.txt')});
+    return true;
+  })()`);
+
+  /* ---- 6) 会话记录:开窗即记 / e2e 刷新不恢复 / 注销丢弃 ---- */
+  await ev(`WebOS.wm.open('calc')`);
+  await sleep(900);   // 快照防抖 400ms
+  const s6a = await ev(`JSON.parse(localStorage.getItem('webos.session.windows.v1') || '{}')[${JSON.stringify(USER)}] || null`);
+  await fresh();      // 刷新:?e2e=1 模式明确不恢复(测试要干净桌面)
+  await sleep(1200);
+  const s6b = await ev(`(() => ({ wins: document.querySelectorAll('.win').length, saved: JSON.parse(localStorage.getItem('webos.session.windows.v1') || '{}')[${JSON.stringify(USER)}] || null }))()`);
+  await ev(`WebOS.accounts.logout()`);
+  await sleep(500);
+  const s6c = await ev(`JSON.parse(localStorage.getItem('webos.session.windows.v1') || '{}')[${JSON.stringify(USER)}] || null`);
+  t('T60.5 会话记录(开窗即记 / e2e 不恢复 / 注销丢弃)',
+    Array.isArray(s6a) && s6a.some(w => w.app === 'calc')
+    && s6b.wins === 0 && Array.isArray(s6b.saved) && s6b.saved.some(w => w.app === 'calc')
+    && s6c === null,
+    JSON.stringify({ s6a, s6b, s6c }));
+  await c.shot('t60-desktop-suite');
+  await fresh();   // 注销后回到锁屏,登录回会话供后续组使用
+});
+
+/* ============================================================
+ * T61 电子表格:纯表格编辑器(无公式 / 行高固定)
+ * 覆盖:网格骨架、单元格编辑(双击/打字即编/Esc)、四样式位 +
+ * 文字色 + 单元格色(调色板真实 UI)、框选批量(锚点取反语义)、
+ * 整行/整列选、列宽拖拽(缩放坐标反算)、真实缩放、.axl 存取与
+ * 打开方式路由。经验:窗口开场动画 950ms,须等足再交互;
+ * 合成 PointerEvent 要带元素中心坐标(hitCell 走 elementFromPoint)。
+ * ============================================================ */
+group('T61', '电子表格(编辑 / 样式 / 列宽 / 缩放 / .axl 存取)', async () => {
+  await fresh();
+  const HOME = await ev(`WebOS.fs.homePath()`);
+  const FILE = HOME + '/documents/e2e-sheet.axl';
+  await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
+  await ev(`WebOS.wm.open('sheet')`);
+  await sleep(1200);   // 开场动画 950ms + 应用 chunk 按需加载
+
+  // 骨架:50×20 网格、表头 A/1、工具栏齐全、状态栏定位 A1、100% 缩放
+  const s0 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    return {
+      win: !!w,
+      rows: w.querySelectorAll('.sheet-table tbody tr').length,
+      cols: w.querySelectorAll('.sheet-table thead th').length - 1,
+      headA: w.querySelector('.sheet-table thead th:nth-child(2)')?.textContent,
+      rowh1: w.querySelector('.sheet-table tbody th.rowh')?.textContent,
+      btns: w.querySelectorAll('.app-toolbar .btn').length,
+      status: w.querySelector('.app-status span')?.textContent,
+      zoom: w.querySelector('.sheet-zoom-label')?.textContent,
+      title: w.querySelector('.win-title')?.textContent,
+    };
+  })()`);
+  t('T61 骨架(50×20 / 表头 A·1 / 工具栏 / 状态栏 A1 / 100%)',
+    s0.win && s0.rows === 50 && s0.cols === 20 && s0.headA === 'A' && s0.rowh1 === '1'
+    && s0.btns >= 13 && s0.status.startsWith('A1') && s0.zoom === '100%' && s0.title.includes('未命名'),
+    JSON.stringify(s0));
+
+  // 编辑链:双击 B2 写字 → Enter 提交并下移;打字即编 → Esc 取消
+  const s1 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const cell = td(1, 1);
+    pd(cell);
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = cell.querySelector('input.cell-in');
+    if (!input) return { edit: false };
+    input.value = '季度数据';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const committed = cell.textContent;
+    const moved = w.querySelector('.app-status span').textContent;
+    // 打字即编 + Esc:选 A1,派发可打印字符键
+    const wrap = w.querySelector('.sheet-wrap');
+    pd(td(0, 0));
+    wrap.focus();
+    wrap.dispatchEvent(new KeyboardEvent('keydown', { key: '首', bubbles: true }));
+    const inp2 = td(0, 0).querySelector('input.cell-in');
+    const typed = inp2 && inp2.value;
+    inp2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return { edit: true, committed, moved, typed, esc: td(0, 0).textContent === '' };
+  })()`);
+  t('T61.1 编辑(双击写入 → Enter 提交下移 B3)', s1.edit && s1.committed === '季度数据' && s1.moved.startsWith('B3'), JSON.stringify(s1));
+  t('T61.2 打字即编与 Esc 取消', s1.typed === '首' && s1.esc, JSON.stringify({ typed: s1.typed, esc: s1.esc }));
+
+  // 样式:四开关 + 调色板真实 UI(文字红 / 底黄)
+  const s2 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const btn = (t) => [...w.querySelectorAll('.app-toolbar .btn')]
+      .find(b => ((b.title || '') + '|' + b.textContent.trim()).includes(t));
+    const cell = td(1, 1);
+    pd(cell);
+    btn('加粗').click(); btn('斜体').click(); btn('下划线').click(); btn('删除线').click();
+    const fmt = ['b','i','u','k'].every(f => cell.classList.contains(f));
+    btn('文字颜色').click();
+    w.querySelector('.sheet-palette .pal-sw[title="#e11d48"]').click();
+    btn('单元格颜色').click();
+    w.querySelector('.sheet-palette .pal-sw[title="#facc15"]').click();
+    return {
+      fmt,
+      fg: cell.style.color, bg: cell.style.backgroundColor,
+      palClosed: !w.querySelector('.sheet-palette'),
+      boldBtnOn: btn('加粗').classList.contains('on'),
+    };
+  })()`);
+  t('T61.3 单元格样式(粗/斜/下划/删除线 + 文字色 + 底色)',
+    s2.fmt && s2.fg === 'rgb(225, 29, 72)' && s2.bg === 'rgb(250, 204, 21)' && s2.palClosed && s2.boldBtnOn,
+    JSON.stringify(s2));
+
+  // 框选批量:选 B2(锚点已粗体)→ shift 扩到 D4 → 点加粗 = 按锚点取反 → 取消 9 格粗
+  // 再点(锚点已无粗体)= 9 格全粗;整列/整行头选择
+  const s3 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const btn = (t) => [...w.querySelectorAll('.app-toolbar .btn')]
+      .find(b => ((b.title || '') + '|' + b.textContent.trim()).includes(t));
+    const nBold = () => { let n = 0; for (let r = 1; r <= 3; r++) for (let c = 1; c <= 3; c++) if (td(r, c).classList.contains('b')) n++; return n; };
+    pd(td(1, 1));
+    pd(td(3, 3), { shiftKey: true });
+    const selInfo = w.querySelector('.app-status span').textContent;
+    const sel9 = w.querySelectorAll('td.sel').length;
+    btn('加粗').click();
+    const afterOff = nBold();
+    btn('加粗').click();
+    const afterOn = nBold();
+    pd(w.querySelector('thead th[data-c="2"]'));
+    const colSel = w.querySelectorAll('td.sel').length;
+    pd(w.querySelector('tbody th.rowh[data-r="0"]'));
+    const rowSel = w.querySelectorAll('td.sel').length;
+    return { selInfo, sel9, afterOff, afterOn, colSel, rowSel };
+  })()`);
+  t('T61.4 框选批量样式(锚点取反:先取消 0/9,再加满 9/9)',
+    s3.selInfo.startsWith('B2:D4 · 9 格') && s3.sel9 === 9 && s3.afterOff === 0 && s3.afterOn === 9,
+    JSON.stringify(s3));
+  t('T61.5 整列/整行选择(列头 50 格 / 行头 20 格)',
+    s3.colSel === 50 && s3.rowSel === 20, JSON.stringify({ colSel: s3.colSel, rowSel: s3.rowSel }));
+
+  // 列宽拖拽(+80px)+ 缩放(120% 行高 34px → 标签点击复位)
+  const s4 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    td(0, 0).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+    const handle = w.querySelector('thead th[data-c="1"] .col-resize');
+    const col = w.querySelectorAll('colgroup col')[2];
+    const w0 = parseInt(col.style.width);
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 200, clientY: 10 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 280, clientY: 10 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    const w1 = parseInt(col.style.width);
+    const zoomBtn = [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').includes('放大'));
+    zoomBtn.click(); zoomBtn.click();
+    const zoom = w.querySelector('.sheet-zoom-label').textContent;
+    const rowH = getComputedStyle(w.querySelector('.sheet-table tbody td')).height;
+    w.querySelector('.sheet-zoom-label').click();
+    return { w0, w1, zoom, rowH, back: w.querySelector('.sheet-zoom-label').textContent };
+  })()`);
+  t('T61.6 列宽拖拽(+80px)', s4.w1 - s4.w0 === 80, JSON.stringify(s4));
+  t('T61.7 缩放(120% 行高 34px,标签复位 100%)', s4.zoom === '120%' && s4.rowH === '34px' && s4.back === '100%', JSON.stringify(s4));
+
+  // 保存 .axl(真实保存对话框)→ 落盘内容与格式断言
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+  })()`);
+  await sleep(300);
+  await ev(`(() => {
+    const input = document.querySelector('.modal-mask .modal-box input');
+    input.value = ${JSON.stringify(FILE)};
+    [...document.querySelectorAll('.modal-mask .modal-actions .btn')].find(b => b.textContent === '保存').click();
+  })()`);
+  await sleep(400);
+  const s5 = await ev(`(() => {
+    const raw = WebOS.fs.read(${JSON.stringify(FILE)});
+    let d = null; try { d = JSON.parse(raw); } catch {}
+    const c = d && d.cells && d.cells['1,1'];
+    const title = document.querySelector('.win[data-app=sheet] .win-title').textContent;
+    return { raw: !!raw, axl: d && d.axl, cell: c && { t: c.t, b: c.b, i: c.i, u: c.u, k: c.k, fg: c.fg, bg: c.bg },
+             colw: d && d.colw && d.colw[1], title };
+  })()`);
+  t('T61.8 保存 .axl(版本标记/文本/样式位/两色/列宽/标题去脏点)',
+    s5.raw && s5.axl === 1 && s5.cell.t === '季度数据' && s5.cell.b === 1 && s5.cell.i === 1
+    && s5.cell.u === 1 && s5.cell.k === 1 && s5.cell.fg === '#e11d48' && s5.cell.bg === '#facc15'
+    && s5.colw === 176 && !s5.title.includes('●'),
+    JSON.stringify(s5));
+
+  // 重开同一文件(params.path)→ 内容/样式/列宽全恢复;打开方式路由 .axl→sheet
+  await ev(`WebOS.wm.open('sheet', { params: { path: ${JSON.stringify(FILE)} } })`);
+  await sleep(1200);
+  const s6 = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=sheet]')];
+    const w2 = wins[wins.length - 1];
+    const c = w2.querySelector('td[data-r="1"][data-c="1"]');
+    return {
+      title: w2.querySelector('.win-title').textContent,
+      text: c.textContent, bold: c.classList.contains('b'),
+      colw: w2.querySelectorAll('colgroup col')[2].style.width,
+      route: WebOS.openwith ? WebOS.openwith.defaultFor('报表.axl') : null,
+    };
+  })()`);
+  t('T61.9 重开载入(文本/粗体/列宽 176px/标题含文件名)',
+    s6.title.includes('e2e-sheet.axl') && s6.text === '季度数据' && s6.bold && s6.colw === '176px',
+    JSON.stringify(s6));
+  t('T61.10 打开方式路由(.axl 内置默认 → 电子表格)', s6.route === 'sheet', String(s6.route));
+  await c.shot('t61-sheet');
+  await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
 });
 
 /* ---------- 用例筛选 ---------- */

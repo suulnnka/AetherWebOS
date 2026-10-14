@@ -128,11 +128,8 @@ html[data-style="neon"] .wbtn.close:hover {
   box-shadow: 0 0 12px rgba(255, 42, 212, 0.55);
 }
 
-/* 任务栏 / 开始菜单(全部程序)不做霓虹定制,直接用现代默认(shell.css),
-   只保留霓虹色的活动指示条,与窗框灯条呼应 */
-html[data-style="neon"] .tbtn.active::after {
-  background: linear-gradient(90deg, var(--neon-a, #00f0ff), var(--neon-b, #ff2ad4));
-}
+/* 任务栏 / 开始菜单(全部程序)不做霓虹定制,直接用现代默认(shell.css):
+   激活态同样只走两种背景色,无指示色条 */
 
 /* 弹层:与开始菜单同一套玻璃语言 */
 html[data-style="neon"] .popover,

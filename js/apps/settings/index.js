@@ -13,6 +13,8 @@ import { modal } from '../../core/ui.js';
 import { forApp } from '../../core/dialogs.js';
 import { openConfigPopup, openGamePopup } from './popup-demo.js';
 import coreFs from '../../core/fs.js';
+import { associations, setDefault } from '../../core/openwith.js';
+import { get as getApp } from '../../core/registry.js';
 
 /* 应用内弹框走应用绑定实例(与 mount ctx 的 ctx.dialogs 完全同语义):
  * 默认二级 · 应用模态,owner=settings,只锁设置自己的窗口;
@@ -24,6 +26,7 @@ const SECTIONS = [
   { id: 'appearance', name: '外观', icon: 'palette' },
   { id: 'wallpaper', name: '壁纸', icon: 'image' },
   { id: 'desktop', name: '桌面与任务栏', icon: 'monitor' },
+  { id: 'apps', name: '应用', icon: 'grid' },
   { id: 'sound', name: '声音', icon: 'volume2' },
   { id: 'display', name: '显示', icon: 'sun' },
   { id: 'user', name: '用户', icon: 'user' },
@@ -204,6 +207,44 @@ function renderSection(root, sec, bus) {
     root.append(el('div', { class: 'set-body' }, title,
       row('桌面图标大小', '调整桌面与开始菜单中应用磁贴的尺寸', seg),
       row('时钟显示秒', '任务栏右侧时间显示到秒', switchBox(() => s.clockSeconds, v => settings.set({ clockSeconds: v }))),
+    ));
+  }
+
+  else if (sec === 'apps') {
+    /* ---- 默认打开方式(文件关联) ---- */
+    const assocWrap = el('div', { class: 'card' });
+    const redrawAssoc = () => {
+      assocWrap.innerHTML = '';
+      assocWrap.append(el('div', { class: 'card-title' }, icon('external', 15), '默认打开方式'));
+      const map = associations();
+      const exts = Object.keys(map).sort((a, b) => a.localeCompare(b));
+      if (!exts.length) {
+        assocWrap.append(el('div', { class: 'dim', style: { fontSize: '12px', padding: '2px 0' } },
+          '尚未设置自定义关联。右键任意文件 →「打开方式…」并勾选「始终」,即可在此管理。'));
+        return;
+      }
+      for (const ext of exts) {
+        const app = getApp(map[ext]);
+        const clearBtn = el('button', { class: 'btn', style: { flex: 'none' } }, icon('close', 12), '清除');
+        clearBtn.addEventListener('click', () => { setDefault(ext, null); redrawAssoc(); });
+        assocWrap.append(el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } },
+          el('span', { class: 'mono' }, '.' + ext),
+          el('span', { class: 'dim' }, app ? `${app.name}(内置应用)` : `#${map[ext]}(已不存在)`),
+          clearBtn));
+      }
+      const resetBtn = el('button', { class: 'btn', style: { marginTop: '8px' } }, icon('refresh', 12), '全部重置');
+      resetBtn.addEventListener('click', () => {
+        for (const ext of Object.keys(associations())) setDefault(ext, null);
+        redrawAssoc();
+      });
+      assocWrap.append(resetBtn);
+    };
+    redrawAssoc();
+
+    root.append(el('div', { class: 'set-body' }, title,
+      row('会话恢复', '刷新或重开浏览器后,自动把上次打开的窗口开回来(显式注销不恢复,下次登录从干净桌面开始)',
+        switchBox(() => s.sessionRestore ?? true, v => settings.set({ sessionRestore: v }))),
+      row('文件关联', '双击文件时按「你的默认 > 内置默认(代码 / 文档 / 媒体 / 记事本)」选择应用', assocWrap),
     ));
   }
 
