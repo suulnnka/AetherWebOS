@@ -4,15 +4,29 @@
  * 用法见 tools/e2e.mjs
  * ============================================================ */
 import { spawn, execSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 
-export const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+/* 浏览器可执行文件:E2E_BROWSER 覆盖,否则按平台取常见安装位置(找不到时报错退出) */
+function pickChrome() {
+  if (process.env.E2E_BROWSER) return process.env.E2E_BROWSER;
+  const cands = process.platform === 'win32'
+    ? ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe']
+    : process.platform === 'darwin'
+      ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
+      : ['/Applications/google-chrome/chrome', '/Applications/chromium/chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'];
+  for (const c of cands) if (existsSync(c)) return c;
+  console.error(`找不到 Chrome/Chromium,请用 E2E_BROWSER 指定路径(尝试过:${cands.join(' ; ')})`);
+  process.exit(2);
+}
+export const CHROME = pickChrome();
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export async function launch(url = 'http://localhost:8080/', { profile = '' } = {}) {
   // profile 用于并行时隔离实例:独立调试端口 + 独立 localStorage
-  const dataDir = process.env.TEMP + '/webos-cdp-profile' + (profile ? '-' + profile : '');
+  const tmp = process.env.TEMP || os.tmpdir();   // Windows 有 TEMP,mac/linux 走 os.tmpdir()
+  const dataDir = tmp + '/webos-cdp-profile' + (profile ? '-' + profile : '');
   const proc = spawn(CHROME, [
     '--headless=new',
     '--remote-debugging-port=0',   // 系统分配空闲端口,并行互不冲突

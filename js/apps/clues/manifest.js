@@ -11,5 +11,5 @@ export default {
   order: 2.65,
   store: true,          // 商店应用:需经软件商店安装
   category: '效率',
-  desc: '节点式笔记:便签节点连成线索图,双击聚焦',
+  desc: '节点式笔记:便签节点连成线索图,双击编辑',
 };

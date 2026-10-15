@@ -7,11 +7,12 @@
  *
  * 交互:
  *  - 单击便签:选中(工具栏出现 编辑/连出/删除)
- *  - 双击便签:聚焦 —— 只显示它和直接相邻的便签(再双击邻居切换,
- *    双击空白 / Esc / 工具栏按钮退回全图)
+ *  - 双击便签:打开编辑器修改内容
+ *  - 聚焦(右键便签 → 聚焦):只显示它和直接相邻的便签
+ *    (双击空白 / Esc / 工具栏按钮退回全图)
  *  - 双击空白:在落点新建便签并打开编辑器
  *  - 拖动便签:移动位置;拖动便签右下角锚点:拉出一条单链
- *  - 空白拖动:平移画布;滚轮:缩放(以指针为中心)
+ *  - 空白拖动:平移画布;滚轮或工具栏 ±:缩放(以指针/视口为中心)
  *  - 右键便签/连线/空白:编辑、连出、反转、删除、就地新建
  *  - Enter 编辑选中便签;Delete 删除选中的便签/连线;Esc 逐级退出
  *
@@ -125,6 +126,7 @@ register({
     let selLinkId = null;      // 选中的连线
     let linkingFrom = null;    // 正在连线(起点便签 id)
     let dragMovedAt = 0;       // 刚拖动过:吞掉随后的 click/dblclick
+    let editorClose = null;    // 打开中的编辑器关闭函数(键盘由此让路 / Esc 关闭)
 
     const nodeById = (id) => state.nodes.find(n => n.id === id);
     const linkById = (id) => state.links.find(l => l.id === id);
@@ -171,13 +173,16 @@ register({
     const btnLink = el('button', { class: 'btn', title: '从选中便签拉出一条单链', onClick: () => { if (selId) startLink(selId); } }, icon('arrowUp', 13), '连出');
     const btnDel = el('button', { class: 'btn danger', title: '删除选中便签(Delete)', onClick: () => { const n = nodeById(selId); if (n) removeNode(n); } }, icon('trash', 13), '删除');
     const focusChip = el('span', { class: 'clue-focus-chip', style: { display: 'none' } });
-    const zoomLabel = el('span', { class: 'dim clue-zoom' }, '100%');
+    const zoomLabel = el('button', { class: 'clue-zoom-btn', title: '点击复位 100%', onClick: () => zoomReset() }, '100%');
     root.append(el('div', { class: 'app' },
       el('div', { class: 'app-toolbar' },
         el('button', { class: 'btn primary', onClick: () => openEditor(null) }, icon('plus', 13), '新建便签'),
         btnEdit, btnLink, btnDel,
         el('span', { class: 'grow' }),
         focusChip,
+        el('button', { class: 'btn icon', title: '缩小', onClick: () => zoomCentered(1 / 1.2) }, icon('minus', 14)),
+        zoomLabel,
+        el('button', { class: 'btn icon', title: '放大', onClick: () => zoomCentered(1.2) }, icon('plus', 14)),
         el('button', { class: 'btn icon', title: '适配视图(全图居中)', onClick: () => fitView() }, icon('max', 14))),
       canvas,
       (() => {
@@ -208,6 +213,24 @@ register({
       zoomLabel.textContent = Math.round(view.scale * 100) + '%';
     }
     const toWorld = (cx, cy) => ({ x: (cx - view.x) / view.scale, y: (cy - view.y) / view.scale });
+    /* 以画布内 (cx,cy) 为锚点缩放:缩放前后的该点保持在原位 */
+    function zoomAt(factor, cx, cy) {
+      const before = toWorld(cx, cy);
+      view.scale = clamp(view.scale * factor, 0.35, 2.5);
+      view.x = cx - before.x * view.scale;
+      view.y = cy - before.y * view.scale;
+      applyView();
+    }
+    const zoomCentered = (factor) => {   // 工具栏按钮:以视口中心为锚
+      const r = canvas.getBoundingClientRect();
+      zoomAt(factor, r.width / 2, r.height / 2);
+      persist(view);
+    };
+    const zoomReset = () => {            // 百分比标签:回 100%,视口中心不动
+      const r = canvas.getBoundingClientRect();
+      zoomAt(1 / view.scale, r.width / 2, r.height / 2);
+      persist(view);
+    };
     function fitView() {
       const vis = state.nodes.filter(n => visibleSet().has(n.id));
       if (!vis.length) return;
@@ -362,7 +385,7 @@ register({
       note.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         if (linkingFrom || Date.now() - dragMovedAt < 250) return;
-        setFocus(n.id);
+        openEditor(n);
       });
 
       /* 锚点:按住拖出一条单链,落到目标便签上松手 */
@@ -492,71 +515,113 @@ register({
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-      const before = toWorld(sx, sy);
-      view.scale = clamp(view.scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12), 0.35, 2.5);
-      view.x = sx - before.x * view.scale;
-      view.y = sy - before.y * view.scale;
-      applyView();
+      zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - rect.left, e.clientY - rect.top);
+      persist(view);
     }, { passive: false });
 
-    /* ---------- 编辑器 ---------- */
+    /* ---------- 编辑器(左右分栏:左侧融合大编辑纸,右侧预览 / 颜色 / 信息) ---------- */
     function openEditor(node, pos) {
-      const titleIn = el('input', { class: 'input', value: node?.title ?? '', placeholder: '标题(便签上只显示标题)', style: { width: '100%' } });
-      const bodyIn = el('textarea', {
-        class: 'input clue-body-in', rows: 8, placeholder: '内容…(点击便签可先看摘要,悬停有预览)',
-      }, node?.body ?? '');
+      const titleIn = el('input', { class: 'clue-ed-title', value: node?.title ?? '', placeholder: '标题' });
+      const bodyIn = el('textarea', { class: 'clue-ed-body-in', placeholder: '内容…(便签上只显示标题,悬停可看正文)' }, node?.body ?? '');
       let color = node?.color ?? COLORS[state.seq % COLORS.length];
-      const swatches = el('div', { class: 'row', style: { flexWrap: 'wrap' } },
+
+      /* 左侧:标题 + 正文融合成一张大纸,纸面即便签颜色,选色实时换纸 */
+      const sheet = el('div', { class: 'clue-ed-sheet', style: { background: color } },
+        titleIn,
+        el('div', { class: 'clue-ed-divider' }),
+        bodyIn);
+
+      /* 右侧:便签实时预览(与画布同款卡片)+ 颜色 + 时间 */
+      const prevTitle = el('div', { class: 'clue-title' }, node?.title ?? '无标题');
+      const prevCard = el('div', { class: 'clue-card' }, el('span', { class: 'clue-tape' }), prevTitle);
+      prevCard.style.background = color;
+      const prevNote = el('div', {
+        class: 'clue-note' + (node?.body ? ' has-body' : ''),
+        style: { width: NOTE_W + 'px', height: NOTE_H + 'px', '--tilt': '-0.7deg', background: 'transparent' },
+      }, prevCard);
+      const prevBody = el('div', { class: 'clue-prev-body' }, node?.body || '无内容');
+      const fmt = (ms) => new Date(ms).toLocaleString('zh-CN', { hour12: false });
+
+      const swatches = el('div', { class: 'clue-swatch-row' },
         ...COLORS.map(c => el('button', {
           class: 'clue-swatch' + (c === color ? ' on' : ''),
           style: { background: c },
           onClick: (e) => {
             color = c;
+            sheet.style.background = c;
+            prevCard.style.background = c;
             e.currentTarget.parentElement.querySelectorAll('.clue-swatch').forEach(s => s.classList.remove('on'));
             e.currentTarget.classList.add('on');
           },
         })));
 
-      const box = el('div', { class: 'modal-box clue-editor', style: { width: 'min(480px, 92%)' } },
-        el('h3', {}, node ? '编辑便签' : '新建便签'),
-        el('div', { class: 'field' }, el('span', { class: 'f-label' }, '标题'), titleIn),
-        el('div', { class: 'field' }, el('span', { class: 'f-label' }, '内容'), bodyIn),
-        el('div', { class: 'row', style: { alignItems: 'center', gap: '10px' } },
-          el('span', { class: 'dim', style: { fontSize: '12px' } }, '便签颜色'), swatches),
-        el('div', { class: 'modal-actions', style: { marginTop: '14px' } },
-          el('button', { class: 'btn', onClick: () => box.remove() }, '取消'),
-          el('button', {
-            class: 'btn primary',
-            onClick: () => {
-              const title = titleIn.value.trim() || '无标题';
-              const body = bodyIn.value.replace(/\s+$/, '');
-              if (node) {
-                node.title = title; node.body = body; node.color = color; node.updated = Date.now();
-              } else {
-                const n = {
-                  id: 'n' + (state.seq++), title, body, color,
-                  x: pos?.x ?? 0, y: pos?.y ?? 0,
-                  created: Date.now(), updated: Date.now(),
-                };
-                if (pos == null) {   // 工具栏新建:落在当前视口中心
-                  const rect = canvas.getBoundingClientRect();
-                  const c = toWorld(rect.width / 2, rect.height / 2);
-                  n.x = Math.round(c.x - NOTE_W / 2 + (Math.random() * 40 - 20));
-                  n.y = Math.round(c.y - NOTE_H / 2 + (Math.random() * 40 - 20));
-                }
-                state.nodes.push(n);
-                selId = n.id;
-                if (focusId && !visibleSet().has(n.id)) focusId = null;   // 聚焦挡住了新便签就退回全图
-              }
-              persist(view);
-              box.remove();
-              render();
-              bus.notify(node ? '便签已更新' : '已新建便签', title);
-            },
-          }, '保存')));
+      titleIn.addEventListener('input', () => { prevTitle.textContent = titleIn.value.trim() || '无标题'; });
+      bodyIn.addEventListener('input', () => {
+        const v = bodyIn.value.trim();
+        prevNote.classList.toggle('has-body', !!v);
+        prevBody.textContent = v || '无内容';
+      });
+
+      /* 关闭必须摘掉整个 mask —— 只删 box 会留下灰色遮罩罩死全屏 */
+      const close = () => { editorClose = null; mask.remove(); };
+      const save = () => {
+        const title = titleIn.value.trim() || '无标题';
+        const body = bodyIn.value.replace(/\s+$/, '');
+        if (node) {
+          node.title = title; node.body = body; node.color = color; node.updated = Date.now();
+        } else {
+          const n = {
+            id: 'n' + (state.seq++), title, body, color,
+            x: pos?.x ?? 0, y: pos?.y ?? 0,
+            created: Date.now(), updated: Date.now(),
+          };
+          if (pos == null) {   // 工具栏新建:落在当前视口中心
+            const rect = canvas.getBoundingClientRect();
+            const c = toWorld(rect.width / 2, rect.height / 2);
+            n.x = Math.round(c.x - NOTE_W / 2 + (Math.random() * 40 - 20));
+            n.y = Math.round(c.y - NOTE_H / 2 + (Math.random() * 40 - 20));
+          }
+          state.nodes.push(n);
+          selId = n.id;
+          if (focusId && !visibleSet().has(n.id)) focusId = null;   // 聚焦挡住了新便签就退回全图
+        }
+        persist(view);
+        close();
+        render();
+        bus.notify(node ? '便签已更新' : '已新建便签', title);
+      };
+
+      const box = el('div', { class: 'modal-box clue-editor' },
+        el('div', { class: 'clue-ed-head' },
+          el('h3', {}, node ? '编辑便签' : '新建便签'),
+          el('button', { class: 'clue-ed-x', title: '关闭(Esc)', onClick: close }, icon('close', 14))),
+        el('div', { class: 'clue-ed-main' },
+          sheet,
+          el('div', { class: 'clue-ed-side' },
+            el('div', { class: 'clue-ed-sec' },
+              el('div', { class: 'clue-ed-cap' }, '预览'),
+              el('div', { class: 'clue-ed-preview' }, prevNote),
+              prevBody),
+            el('div', { class: 'clue-ed-sec' },
+              el('div', { class: 'clue-ed-cap' }, '颜色'),
+              swatches),
+            node ? el('div', { class: 'clue-ed-sec' },
+              el('div', { class: 'clue-ed-cap' }, '信息'),
+              el('div', { class: 'clue-ed-kv' }, el('span', { class: 'dim' }, '创建'), el('span', {}, fmt(node.created))),
+              el('div', { class: 'clue-ed-kv' }, el('span', { class: 'dim' }, '更新'), el('span', {}, fmt(node.updated)))) : null)),
+        el('div', { class: 'clue-ed-foot' },
+          el('span', { class: 'dim', style: { fontSize: '12px' } }, 'Esc 关闭 · Ctrl+Enter 保存'),
+          el('span', { class: 'grow' }),
+          el('button', { class: 'btn', onClick: close }, '取消'),
+          el('button', { class: 'btn primary', onClick: save }, '保存')));
+      /* box 内键盘:Esc 关闭、Ctrl+Enter 保存(含焦点落在色块等非输入元素上时) */
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); save(); }
+      });
       const mask = el('div', { class: 'modal-mask' }, box);
-      mask.addEventListener('pointerdown', (e) => { if (e.target === mask) box.remove(); });
+      mask.addEventListener('pointerdown', (e) => { if (e.target === mask) close(); });
+      editorClose = close;
       document.body.append(mask);
       setTimeout(() => titleIn.focus(), 50);
     }
@@ -639,8 +704,11 @@ register({
     /* ---------- 键盘(仅本窗口聚焦且无弹窗时) ---------- */
     function onKey(e) {
       if (!root.closest('.win')?.classList.contains('focused')) return;
+      if (editorClose) {                                   // 编辑器开着:只接 Esc,其余不落到画布
+        if (e.key === 'Escape') editorClose();
+        return;
+      }
       if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;
-      if (root.querySelector('.modal-mask')) return;
       if (e.key === 'Escape') {
         if (linkingFrom) cancelLink();
         else if (focusId) exitFocus();
@@ -686,7 +754,7 @@ register({
         + (accounts.current() ? '' : ' · 未登录,内容仅本次会话保留');
       bar._r.textContent = linkingFrom
         ? '点击目标便签完成连线 · 点空白/Esc 取消'
-        : '双击空白新建 · 拖锚点连线 · 双击便签聚焦';
+        : '双击便签编辑 · 双击空白新建 · 拖锚点连线';
       bar._r.classList.toggle('accent', !!linkingFrom);
     }
 
@@ -726,6 +794,7 @@ register({
 
     return {
       onClose() {
+        editorClose?.();      // 编辑器若还开着:遮罩挂在 body 上,不摘会罩住整个桌面
         window.removeEventListener('keydown', onKey);
         offAcc();
         /* 关窗即冲:防抖中的最后一次保存立即落盘,不等 200ms */

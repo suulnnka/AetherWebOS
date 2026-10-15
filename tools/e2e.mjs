@@ -4830,8 +4830,8 @@ group('T51', '浏览器收藏(星标 / 收藏夹面板 / 起始页卡片 / Ctrl+
   t('T51.14 全程无运行错误', errs51 === 0, `errs=${errs51}`);
 });
 
-group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)', async () => {
-  /* ---- T52 clues:便签节点(只显标题)+ 有向单链 + 双击聚焦相关节点 ---- */
+group('T52', '线索(节点便签图 / 单链连线 / 双击编辑 / 缩放 / 持久化)', async () => {
+  /* ---- T52 clues:便签节点(只显标题)+ 有向单链 + 双击编辑 + 右键聚焦 ---- */
   await fresh();
   // 前置:登录专用账号并清 appdata(保证种子数据),再安装(安装按用户:登录后装)
   await ev(`(async () => {
@@ -4865,7 +4865,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
   t('T52.1 骨架(种子 3 便签 / 2 单链带箭头 / 状态栏)', opened === true
     && s0.notes === 3 && s0.links === 2 && s0.arrows === true && s0.anchor === true
     && s0.status.includes('3 节点') && s0.status.includes('2 单链')
-    && s0.statusR.includes('双击便签聚焦'), JSON.stringify(s0));
+    && s0.statusR.includes('双击便签编辑'), JSON.stringify(s0));
 
   // 选中 + 编辑:改标题/加内容
   await ev(`(() => {
@@ -4884,27 +4884,54 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
   })()`);
   const editorUp = await waitFor(`(() => {
     const box = document.querySelector('.clue-editor');
-    return box && box.querySelector('.input') && box.querySelector('textarea') && box.querySelector('.clue-swatch.on') ? true : false;
+    return box && box.querySelector('.clue-ed-title') && box.querySelector('.clue-ed-body-in')
+      && box.querySelector('.clue-ed-sheet') && box.querySelector('.clue-ed-preview .clue-note')
+      && box.querySelector('.clue-swatch.on') ? true : false;
   })()`);
-  t('T52.3 编辑器(标题 + 内容 + 颜色)', editorUp === true);
+  t('T52.3 编辑器(左编辑纸标题+正文融合 / 右预览+颜色)', editorUp === true);
   await ev(`(() => {
     const box = document.querySelector('.clue-editor');
-    box.querySelector('.input').value = '案件:仓库失窃·改';
-    box.querySelector('textarea').value = '监控断电十分钟是人为。';
+    box.querySelector('.clue-ed-title').value = '案件:仓库失窃·改';
+    box.querySelector('.clue-ed-body-in').value = '监控断电十分钟是人为。';
     [...box.querySelectorAll('.btn.primary')].find(b => b.textContent.includes('保存')).click();
   })()`);
   const edited = await waitFor(`(() => {
     const w = document.querySelector('.win[data-app=clues]');
     const n = [...w.querySelectorAll('.clue-note')].find(x => x.textContent.includes('仓库失窃·改'));
-    return n && n.classList.contains('has-body') ? true : false;
+    if (!n || !n.classList.contains('has-body')) return false;
+    // 回归:保存后编辑器与遮罩都必须消失(旧 bug 只删 box,灰色 mask 残留罩死全屏)
+    return !document.querySelector('.clue-editor') && !document.querySelector('body > .modal-mask');
   })()`);
-  t('T52.4 保存后只显标题(折角示内容,正文不上便签)', edited === true
+  t('T52.4 保存后只显标题 + 遮罩彻底关闭(回归)', edited === true
     && await ev(`(() => {
       const n = [...document.querySelector('.win[data-app=clues]').querySelectorAll('.clue-note')]
         .find(x => x.textContent.includes('仓库失窃·改'));
       return n.querySelector('.clue-title').textContent === '案件:仓库失窃·改'
         && !n.textContent.includes('监控断电');
     })()`));
+
+  // 双击便签直接打开编辑器(改名后保存生效,遮罩随之关闭)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=clues]');
+    const n = [...w.querySelectorAll('.clue-note')].find(x => x.textContent.includes('嫌疑人'));
+    const r = n.getBoundingClientRect();
+    n.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: r.left + 30, clientY: r.top + 15 }));
+  })()`);
+  const dblEd = await waitFor(`(() => {
+    const box = document.querySelector('.clue-editor');
+    return box && box.querySelector('.clue-ed-title').value.includes('嫌疑人') ? true : false;
+  })()`);
+  await ev(`(() => {
+    const box = document.querySelector('.clue-editor');
+    box.querySelector('.clue-ed-title').value = '嫌疑人 M(重点)';
+    [...box.querySelectorAll('.btn.primary')].find(b => b.textContent.includes('保存')).click();
+  })()`);
+  const dblSaved = await waitFor(`(() => {
+    const w = document.querySelector('.win[data-app=clues]');
+    return [...w.querySelectorAll('.clue-note')].some(n => n.textContent.includes('重点'))
+      && !document.querySelector('.clue-editor') && !document.querySelector('body > .modal-mask');
+  })()`);
+  t('T52.5 双击便签直接编辑(打开即带原文 / 保存生效)', dblEd === true && dblSaved === true);
 
   // 双击空白新建便签(落点即位置)
   await ev(`(() => {
@@ -4915,7 +4942,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
   const newDlg = await waitFor(`!!document.querySelector('.clue-editor')`);
   await ev(`(() => {
     const box = document.querySelector('.clue-editor');
-    box.querySelector('.input').value = '门外的新脚印';
+    box.querySelector('.clue-ed-title').value = '门外的新脚印';
     [...box.querySelectorAll('.btn.primary')].find(b => b.textContent.includes('保存')).click();
   })()`);
   const added = await waitFor(`(() => {
@@ -4923,7 +4950,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     return w.querySelectorAll('.clue-note').length === 4
       && [...w.querySelectorAll('.clue-note')].some(n => n.textContent.includes('新脚印')) ? true : false;
   })()`);
-  t('T52.5 双击空白新建(4 便签)', newDlg === true && added === true);
+  t('T52.6 双击空白新建(4 便签)', newDlg === true && added === true);
 
   // 连线:选中「门外的新脚印」→ 连出 → 点击「嫌疑人 M」
   await ev(`(() => {
@@ -4944,7 +4971,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     const w = document.querySelector('.win[data-app=clues]');
     return w.querySelectorAll('.clue-edge').length === 3 ? true : false;
   })()`);
-  t('T52.6 单链连线(连出 → 点目标,3 单链带箭头)', linking === true && linked === true
+  t('T52.7 单链连线(连出 → 点目标,3 单链带箭头)', linking === true && linked === true
     && await ev(`(() => {
       const w = document.querySelector('.win[data-app=clues]');
       return [...w.querySelectorAll('.clue-edge')].every(p => (p.getAttribute('marker-end') || '').includes('clue-arr'))
@@ -4962,19 +4989,22 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     const w = document.querySelector('.win[data-app=clues]');
     return { links: w.querySelectorAll('.clue-edge').length, linking: w.querySelector('.clues-canvas').classList.contains('linking') };
   })()`);
-  t('T52.7 同向单链去重(仍 3 条)', dupOk.links === 3 && dupOk.linking === false, JSON.stringify(dupOk));
+  t('T52.8 同向单链去重(仍 3 条)', dupOk.links === 3 && dupOk.linking === false, JSON.stringify(dupOk));
 
-  // 双击聚焦:双击「案件」只显示它 + 直接相邻(无关联的「新脚印」被隐藏)
+  // 聚焦(右键便签 → 聚焦):只显示它 + 直接相邻(无关联的「新脚印」被隐藏)
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=clues]');
     const n = [...w.querySelectorAll('.clue-note')].find(x => x.textContent.includes('仓库失窃'));
-    n.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 100, clientY: 100 }));
+    const r = n.getBoundingClientRect();
+    n.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 30, clientY: r.top + 10 }));
   })()`);
+  const focusMenu = await waitFor(`[...document.querySelectorAll('#ctx .ctx-item')].some(b => b.textContent.includes('聚焦'))`);
+  await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('聚焦')).click()`);
   const focused = await waitFor(`(() => {
     const w = document.querySelector('.win[data-app=clues]');
     return w.querySelectorAll('.clue-note').length === 3 && w.querySelector('.clue-focus-chip') ? true : false;
   })()`);
-  t('T52.8 双击聚焦(只留相关 3 张,无关节点隐藏)', focused === true
+  t('T52.9 右键聚焦(只留相关 3 张,无关节点隐藏)', focusMenu === true && focused === true
     && await ev(`(() => {
       const w = document.querySelector('.win[data-app=clues]');
       return w.querySelector('.clue-focus-chip').textContent.includes('仓库失窃')
@@ -4992,7 +5022,27 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     const chip = w && w.querySelector('.clue-focus-chip');
     return w.querySelectorAll('.clue-note').length === 4 && chip && chip.style.display === 'none' ? true : false;
   })()`);
-  t('T52.9 双击空白退出聚焦(回全图 4 张)', exited === true);
+  t('T52.10 双击空白退出聚焦(回全图 4 张)', exited === true);
+
+  // 工具栏缩放:+ 放大 / 百分比复位 / − 缩小(整体节点随之缩放)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=clues]');
+    const btns = [...w.querySelectorAll('.app-toolbar .btn')];
+    btns.find(b => b.title === '放大').click();
+    btns.find(b => b.title === '放大').click();
+  })()`);
+  const zoomedIn = await ev(`document.querySelector('.win[data-app=clues] .clue-zoom-btn').textContent`);
+  await ev(`document.querySelector('.win[data-app=clues] .clue-zoom-btn').click()`);
+  const zoomReset = await ev(`document.querySelector('.win[data-app=clues] .clue-zoom-btn').textContent`);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=clues]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.title === '缩小').click();
+  })()`);
+  const zoomedOut = await ev(`document.querySelector('.win[data-app=clues] .clue-zoom-btn').textContent`);
+  t('T52.11 工具栏缩放(放大 / 复位 100% / 缩小)', parseInt(zoomedIn) > 100
+    && zoomReset.trim() === '100%' && parseInt(zoomedOut) < 100,
+    `${zoomedIn} → ${zoomReset} → ${zoomedOut}`);
+  await ev(`document.querySelector('.win[data-app=clues] .clue-zoom-btn').click()`);   // 复位回 100%,不干扰后续
 
   // 反向单链:嫌疑人 → 案件(与已有 案件→嫌疑人 互为反向,两条都弯开)
   await ev(`(() => {
@@ -5006,7 +5056,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     const qs = [...w.querySelectorAll('.clue-edge')].filter(p => p.getAttribute('d').includes('Q'));
     return w.querySelectorAll('.clue-edge').length === 4 && qs.length === 2 ? true : false;
   })()`);
-  t('T52.10 反向单链(双向对自动弯开不重叠)', curved === true);
+  t('T52.12 反向单链(双向对自动弯开不重叠)', curved === true);
 
   // 连线右键删除
   await ev(`(() => {
@@ -5015,13 +5065,13 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
   })()`);
   const menuUp = await waitFor(`[...document.querySelectorAll('#ctx .ctx-item')].some(b => b.textContent.includes('删除连线'))`);
-  t('T52.11 连线右键菜单(反转 / 删除)', menuUp === true);
+  t('T52.13 连线右键菜单(反转 / 删除)', menuUp === true);
   await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('删除连线')).click()`);
   const linkGone = await waitFor(`(() => {
     const w = document.querySelector('.win[data-app=clues]');
     return w.querySelectorAll('.clue-edge').length === 3 ? true : false;
   })()`);
-  t('T52.12 删除连线(3 条)', linkGone === true);
+  t('T52.14 删除连线(3 条)', linkGone === true);
 
   // 删除便签:确认框 + 级联清线
   await ev(`(() => {
@@ -5032,7 +5082,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
   const confirmUp = await waitFor(`(() => {
     return [...document.querySelectorAll('.win[data-app=sysdialog]')].some(d => d.textContent.includes('删除便签'));
   })()`);
-  t('T52.13 删除便签确认框(提示级联删线)', confirmUp === true);
+  t('T52.15 删除便签确认框(提示级联删线)', confirmUp === true);
   await ev(`(() => {
     const btns = [...document.querySelectorAll('.win[data-app=sysdialog] button')];
     (btns.find(b => b.textContent.includes('删除')) || btns.find(b => b.textContent.includes('确定')))?.click();
@@ -5041,7 +5091,7 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     const w = document.querySelector('.win[data-app=clues]');
     return w.querySelectorAll('.clue-note').length === 3 && w.querySelectorAll('.clue-edge').length === 2 ? true : false;
   })()`);
-  t('T52.14 删除便签级联清线(回 3 节点 2 单链)', nodeGone === true);
+  t('T52.16 删除便签级联清线(回 3 节点 2 单链)', nodeGone === true);
 
   // 持久化:落盘后整页刷新,重新登录打开,数据原样回来
   await sleep(450);   // 等过持久化防抖(200ms),再显式冲刷元数据
@@ -5061,10 +5111,10 @@ group('T52', '线索(节点便签图 / 单链连线 / 双击聚焦 / 持久化)'
     return w.querySelectorAll('.clue-note').length === 3 && edited
       && w.querySelectorAll('.clue-edge').length === 2 ? true : false;
   })()`);
-  t('T52.15 刷新后数据恢复(编辑过的标题 / 3 节点 2 单链)', restored === true);
+  t('T52.17 刷新后数据恢复(编辑过的标题 / 3 节点 2 单链)', restored === true);
 
   const errs52 = await ev(`window.__errs.length`);
-  t('T52.16 全程无错误', errs52 === 0, `errs=${errs52}`);
+  t('T52.18 全程无错误', errs52 === 0, `errs=${errs52}`);
   await c.shot('t52-clues');
 });
 
