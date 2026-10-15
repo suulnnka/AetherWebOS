@@ -6305,7 +6305,7 @@ group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .a
   // 保存 .axl(真实保存对话框)→ 落盘内容与格式断言
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=sheet]');
-    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').startsWith('保存')).click();
   })()`);
   await sleep(300);
   await ev(`(() => {
@@ -6403,7 +6403,7 @@ group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .a
     await sleep(100);
     [...w.querySelectorAll('.sheet-pop .pop-item')].find(b => b.textContent.includes('升序')).click();
     await sleep(150);
-    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').startsWith('保存')).click();
   })()`);
   await sleep(400);
   const s8 = await ev(`(() => {
@@ -6458,14 +6458,14 @@ group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .a
   })()`);
   t('T61.14 固定表头行(下拉选 2:fz 类 + 行号着色 + 钉顶不随滚动)',
     s9.cls.r0.includes('fz') && s9.cls.r1.includes('fz-last') && !s9.cls.r2.includes('fz')
-    && s9.cls.rowh0.includes('fz') && s9.cls.label.includes('固定行 2') && s9.sticky,
+    && s9.cls.rowh0.includes('fz') && s9.cls.label.includes('2') && s9.sticky,
     JSON.stringify(s9));
   t('T61.15 固定行不参与排序(H1/H2 原位,下方数字序 10,20,30)',
     s9.colD === 'H1,H2,10,20,30', s9.colD);
   // 固定行入档
   await ev(`(() => {
     const w = document.querySelector('.win[data-app=sheet]');
-    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').startsWith('保存')).click();
   })()`);
   await sleep(400);
   const s10 = await ev(`JSON.parse(WebOS.fs.read(${JSON.stringify(FILE)})).fixed`);
@@ -6513,28 +6513,226 @@ group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .a
       styleFollows: td(3, 4).classList.contains('b') === srcBold,
       markCleared: !w.querySelector('.copy-src'),
     };
-    // 整列选择 → Ctrl+C 不接管(无标记,剪贴板仍为 A1:B2)
-    pd(w.querySelector('thead th[data-c="0"]'));
-    key('c', { ctrlKey: true });
-    const colNoCopy = w.querySelectorAll('td.copy-src').length === 0;
-    // 越界粘贴:T1(最后一列)粘 2 列宽 → 网格扩到 21 列,U1 得到 B1 的「乙」
+    // 越界粘贴(先做,此时剪贴板仍是 A1:B2):T1(最后一列)粘 2 列宽 → 网格扩到 21 列
     pd(td(0, 19));
     const curAtPaste = w.querySelector('td.cur')?.dataset?.r + ',' + w.querySelector('td.cur')?.dataset?.c;
     key('v', { ctrlKey: true });
     await sleep(150);
-    return { beforeBold, srcBold, marked, pasted, colNoCopy, curAtPaste,
-      cols2: w.querySelectorAll('.sheet-table thead th').length - 1,
-      grown: td(0, 20)?.textContent === '乙',
-      t1: td(0, 19)?.textContent };
+    const grown = td(0, 20)?.textContent === '乙';
+    const cols2 = w.querySelectorAll('.sheet-table thead th').length - 1;
+    // 空列(无内容)→ Ctrl+C 不接管:粘贴清了标记,现在应仍为 0
+    pd(w.querySelector('thead th[data-c="10"]'));
+    key('c', { ctrlKey: true });
+    const emptyNoCopy = w.querySelectorAll('td.copy-src').length === 0;
+    // 整列(有内容):B 列头 → Ctrl+C → 裁剪到内容边界(标记有限且全在 B 列)
+    pd(w.querySelector('thead th[data-c="1"]'));
+    key('c', { ctrlKey: true });
+    const colMarks = [...w.querySelectorAll('td.copy-src')];
+    const colBounded = colMarks.length >= 1 && colMarks.length < 20
+      && colMarks.every(m => m.dataset.c === '1');
+    // 整行(有内容):行头 0 → 裁剪到内容边界,全在第 0 行
+    pd(w.querySelector('tbody th.rowh[data-r="0"]'));
+    key('c', { ctrlKey: true });
+    const rowMarks = [...w.querySelectorAll('td.copy-src')];
+    const rowBounded = rowMarks.length >= 1 && rowMarks.length < 25
+      && rowMarks.every(m => m.dataset.r === '0');
+    return { beforeBold, srcBold, marked, pasted, curAtPaste, grown, cols2,
+      emptyNoCopy, colBounded, rowBounded, colN: colMarks.length, rowN: rowMarks.length };
   })()`);
   t('T61.17 单元格复制粘贴(非编辑态 Ctrl+C/V:值+样式随走、虚线标记随粘清)',
     s11.marked === 4 && s11.srcBold === !s11.beforeBold
     && s11.pasted.d4 === '甲' && s11.pasted.e4 === '乙' && s11.pasted.d5 === '丙'
     && s11.pasted.styleFollows && s11.pasted.markCleared,
     JSON.stringify(s11));
-  t('T61.18 复制边界(整列不接管;越界粘贴自动扩列 20→21)',
-    s11.colNoCopy && s11.cols2 === 21 && s11.grown,
-    JSON.stringify({ colNoCopy: s11.colNoCopy, cols2: s11.cols2, grown: s11.grown, curAtPaste: s11.curAtPaste, t1: s11.t1 }));
+  t('T61.18 表头选择复制(整行/整列裁剪到内容边界;空列不接管;越界粘贴自动扩列 20→21)',
+    s11.emptyNoCopy && s11.colBounded && s11.rowBounded && s11.cols2 === 21 && s11.grown,
+    JSON.stringify({ emptyNoCopy: s11.emptyNoCopy, colBounded: s11.colBounded, colN: s11.colN,
+      rowBounded: s11.rowBounded, rowN: s11.rowN, cols2: s11.cols2, grown: s11.grown, curAtPaste: s11.curAtPaste }));
+
+  // 剪切:Ctrl+X 立即清源(粘到本应用或外部程序语义一致),粘贴后目标得值+样式、标记清
+  const s12 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const btn = (t) => [...w.querySelectorAll('.app-toolbar .btn')]
+      .find(b => ((b.title || '') + '|' + b.textContent.trim()).includes(t));
+    const wrap = w.querySelector('.sheet-wrap');
+    const key = (k, opt = {}) => wrap.dispatchEvent(new KeyboardEvent('keydown',
+      { key: k, bubbles: true, cancelable: true, ...opt }));
+    // 源 F6:G7(此前用例未触碰的净区),F6 锚点取反确保加粗
+    edit(5, 5, 'x1'); edit(5, 6, 'x2'); edit(6, 5, 'x3');
+    pd(td(5, 5));
+    const beforeBold = td(5, 5).classList.contains('b');
+    btn('加粗').click();
+    const srcBold = td(5, 5).classList.contains('b');
+    pd(td(5, 5));
+    pd(td(6, 6), { shiftKey: true });
+    key('x', { ctrlKey: true });
+    const marked = w.querySelectorAll('td.copy-src').length;
+    const clearedNow = { f6: td(5, 5).textContent, g6: td(5, 6).textContent, f7: td(6, 5).textContent };
+    // 粘到 I9 → 目标得值带样式(剪切不落下内容),标记随粘清
+    pd(td(8, 8));
+    key('v', { ctrlKey: true });
+    await sleep(150);
+    return { beforeBold, srcBold, marked, clearedNow,
+      dest: { i9: td(8, 8).textContent, j9: td(8, 9).textContent, i10: td(9, 8).textContent,
+              styleFollows: td(8, 8).classList.contains('b') === srcBold },
+      markCleared: !w.querySelector('.copy-src') };
+  })()`);
+  t('T61.19 剪切(X 立即清源 → 粘贴后目标得值+样式、标记清)',
+    s12.marked === 4 && s12.clearedNow.f6 === '' && s12.clearedNow.g6 === '' && s12.clearedNow.f7 === ''
+    && s12.dest.i9 === 'x1' && s12.dest.j9 === 'x2' && s12.dest.i10 === 'x3'
+    && s12.dest.styleFollows && s12.srcBold === !s12.beforeBold && s12.markCleared,
+    JSON.stringify(s12));
+
+  // 行高自适应 + 行/列拖拽移动(表头按住拖 ≥5px;以内仍是点选)
+  const s13 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const wrap = w.querySelector('.sheet-wrap');
+    const dragTo = (fromEl, toEl) => {
+      const a = fromEl.getBoundingClientRect(), b = toEl.getBoundingClientRect();
+      fromEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: a.x + a.width / 2, clientY: a.y + a.height / 2, pointerId: 1, isPrimary: true }));
+      wrap.dispatchEvent(new PointerEvent('pointermove', { bubbles: true,
+        clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, pointerId: 1 }));
+      wrap.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    };
+    // 行高:短文 28 → 长文撑到 50 封顶(截断 2 行)→ 改短回 28
+    const H = (r) => getComputedStyle(td(r, 0)).height;
+    edit(6, 0, '短');
+    const hShort = H(6);
+    edit(6, 0, '这是一段很长很长很长很长很长很长很长很长的文字内容用来撑高行');
+    const hLongPx = parseInt(H(6));
+    const lc = getComputedStyle(td(6, 0).querySelector('.cell-txt')).webkitLineClamp;
+    edit(6, 0, '短');
+    const hBack = H(6);
+    // 列拖移:B 列头拖到 D 列头 → 数据换位(表头字母按位置恒定:A C B D 序)
+    edit(6, 1, 'b1'); edit(6, 2, 'c1'); edit(6, 3, 'd1');
+    dragTo(w.querySelector('thead th[data-c="1"]'), w.querySelector('thead th[data-c="3"]'));
+    await sleep(200);
+    const colMoved = { p1: td(6, 1).textContent, p2: td(6, 2).textContent, p3: td(6, 3).textContent };
+    // 行拖移:行头 8 拖到行头 7 → 两行标记换位
+    edit(7, 5, 'm7'); edit(8, 5, 'm8');
+    dragTo(w.querySelector('tbody th.rowh[data-r="8"]'), w.querySelector('tbody th.rowh[data-r="7"]'));
+    await sleep(200);
+    const rowMoved = { r7: td(7, 5).textContent, r8: td(8, 5).textContent };
+    return { hShort, hLongPx, hBack, lc, colMoved, rowMoved };
+  })()`);
+  t('T61.20 行高自适应(短 28 → 长文封顶 5 行 + 截断 → 改短回 28)',
+    s13.hShort === '28px' && s13.hLongPx >= 85 && s13.hLongPx <= 115 && s13.hBack === '28px' && s13.lc === '5',
+    JSON.stringify(s13));
+  t('T61.21 行/列拖拽移动(列数据换位;行标记换位)',
+    s13.colMoved.p1 === 'c1' && s13.colMoved.p2 === 'b1' && s13.colMoved.p3 === 'd1'
+    && s13.rowMoved.r7 === 'm8' && s13.rowMoved.r8 === 'm7',
+    JSON.stringify(s13));
+
+  // 选区内拖动 = 整块移动(源清、目标得值、选区随块走);原地点击 = 收缩选区
+  const s14 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const wrap = w.querySelector('.sheet-wrap');
+    const up = () => wrap.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    // 净区建块:G11:H12(rows 10-11 × cols 6-7)
+    edit(10, 6, 'p1'); edit(10, 7, 'p2'); edit(11, 6, 'p3');
+    pd(td(10, 6));
+    pd(td(11, 7), { shiftKey: true });
+    const selCount = w.querySelectorAll('td.sel').length;
+    // 拖动:从选区内 (10,6) 按下 → 拖到 (13,8) 松手
+    pd(td(10, 6));
+    const b = td(13, 8).getBoundingClientRect();
+    wrap.dispatchEvent(new PointerEvent('pointermove', { bubbles: true,
+      clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, pointerId: 1 }));
+    up();
+    await sleep(200);
+    const moved = {
+      src: [td(10, 6).textContent, td(10, 7).textContent, td(11, 6).textContent].join(','),
+      dest: [td(13, 8).textContent, td(13, 9).textContent, td(14, 8).textContent].join(','),
+      curAt: w.querySelector('td.cur')?.dataset?.r + ',' + w.querySelector('td.cur')?.dataset?.c,
+    };
+    // 原地点击选区内:收缩为该格
+    pd(td(14, 9));
+    up();
+    await sleep(100);
+    const collapsed = { selN: w.querySelectorAll('td.sel').length,
+      cur: w.querySelector('td.cur')?.dataset?.r + ',' + w.querySelector('td.cur')?.dataset?.c };
+    return { selCount, moved, collapsed };
+  })()`);
+  t('T61.22 选区整块拖动移动(源清、目标得值、选区随块走;原地点击收缩)',
+    s14.selCount === 4 && s14.moved.src === ',,' && s14.moved.dest === 'p1,p2,p3'
+    && s14.moved.curAt === '13,8' && s14.collapsed.selN === 1 && s14.collapsed.cur === '14,9',
+    JSON.stringify(s14));
+
+  // 自动保存开关:默认按下(.on 底色)→ 改动 1.5s 后静默落盘、标题去脏点;
+  // 关闭后改动不落盘(标题保持 ●);文件三钮已纯图标化(title 提示)
+  const s15 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const asBtn = [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').startsWith('自动保存'));
+    const defOn = asBtn.classList.contains('on');
+    const fileBtns = [...w.querySelectorAll('.app-toolbar .btn')]
+      .filter(b => ['打开', '保存', '另存为'].some(t => (b.title || '').startsWith(t))).length;
+    // 开:编辑 → 2.3s 后已静默落盘、标题无 ●
+    edit(16, 0, 'auto1');
+    await sleep(2300);
+    const on1 = WebOS.fs.read(${JSON.stringify(FILE)}).includes('auto1')
+      && !w.querySelector('.win-title').textContent.includes('●');
+    // 关:编辑 → 不落盘、标题带 ●
+    asBtn.click();
+    const offState = !asBtn.classList.contains('on');
+    edit(16, 0, 'auto2');
+    await sleep(2300);
+    const off1 = !WebOS.fs.read(${JSON.stringify(FILE)}).includes('auto2')
+      && w.querySelector('.win-title').textContent.includes('●');
+    asBtn.click();   // 还原默认开
+    return { defOn, fileBtns, on1, offState, off1 };
+  })()`);
+  t('T61.23 自动保存开关(默认按下;开=1.5s 静默落盘去脏点;关=不落盘;文件钮纯图标)',
+    s15.defOn && s15.fileBtns === 3 && s15.on1 && s15.offState && s15.off1,
+    JSON.stringify(s15));
   await c.shot('t61-sheet');
   await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
 });

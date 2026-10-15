@@ -15,12 +15,31 @@
   border-top: 1px solid var(--border);
 }
 .sheet-table th, .sheet-table td {
-  height: calc(var(--rowh, 28) * 1px);        /* 行高固定,随缩放变 */
+  height: calc(var(--rowh, 28) * 1px);          /* 默认行高;自适应行高的行由内联值覆盖 */
   padding: 0 6px; box-sizing: border-box;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
   text-align: left;
+}
+
+/* 单元格文本:按列宽换行,行数截断(--lc 由行高推算,装不下的尾部显示 …) */
+.cell-txt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--lc, 1);
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+/* 隐形测量器:按文档坐标(13px)量文本换行高度,与缩放无关 */
+.cell-measure {
+  position: absolute; left: -9999px; top: 0;
+  visibility: hidden;
+  font-size: 13px; line-height: 1.4;
+  white-space: pre-wrap; word-break: break-all;
 }
 
 /* 表头:冻结首行/首列 */
@@ -64,6 +83,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   background: var(--panel-solid);
 }
+.sheet-table td.editing .cell-txt { display: none; }
 .cell-in {
   width: 100%; height: 100%; box-sizing: border-box;
   border: 0; outline: none; padding: 0 5px;
@@ -97,6 +117,15 @@
   outline-offset: -1.5px;
 }
 
+/* 行/列拖移:源行(列)淡显,目标插入位上缘 / 左缘强调线(置于选区规则之后) */
+.sheet-table td.mv-src, .sheet-table th.mv-src { opacity: 0.45; }
+.sheet-table tr.mv-ins > td, .sheet-table tr.mv-ins > th { box-shadow: inset 0 2px 0 var(--accent); }
+.sheet-table td.mv-ins, .sheet-table th.mv-ins { box-shadow: inset 2px 0 0 var(--accent); }
+/* 单元格块拖移:落位预览(目标矩形整体着色) */
+.sheet-table td.mv-to {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 /* ---- 固定表头行:钉在列头下方,不随滚动;末行下缘投影分层 ---- */
 .sheet-table td.fz {
   position: sticky; z-index: 2;
@@ -122,6 +151,17 @@
   margin: 3px 3px; background: var(--border);
 }
 .sheet-caret { font-size: 9px; opacity: 0.65; margin-left: 1px; }
+
+/* 固定行钮:图钉 + 数字 + 下拉 caret */
+.sheet-fixed { gap: 4px; padding: 0 9px; }
+.sheet-fixed-n { font-size: 12.5px; min-width: 8px; text-align: center; }
+
+/* 开关型图标钮(自动保存):按下(.on)以底色区分 */
+.sheet-app .btn.tgl.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
 .sheet-fmt { min-width: 32px; justify-content: center; padding: 0 8px; font-size: 14px; }
 .sheet-fmt.b span { font-weight: 800; }
 .sheet-fmt.i span { font-style: italic; font-family: Georgia, 'Times New Roman', serif; }

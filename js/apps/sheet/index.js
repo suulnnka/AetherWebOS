@@ -2,16 +2,26 @@
  * 应用:电子表格
  *
  * 纯表格编辑器,刻意做减法:无公式(输入以 "=" 开头也只是普通
- * 文本)、无合并单元格、行高固定;保留的能力 ——
+ * 文本)、无合并单元格;保留的能力 ——
  *   · 单元格文本编辑(双击 / 回车 / 直接打字进入编辑)
  *   · 列宽拖拽调整(拖列头右缘;双击复位;宽度按 100% 文档坐标
  *     存储,缩放只影响显示,拖拽位移按当前缩放反算)
+ *   · 行 / 列 / 单元格块拖拽移动:按住行头 / 列头拖动 ≥5px 触发
+ *     (以内仍是点选整行 / 整列),插入到目标行 / 列之前;按住已有
+ *     选区内拖动则整块(值+样式+行高)移动落位,原地点击收缩选区;
+ *     行移动使排序状态失效,列移动把排序指示随列迁移;固定行区
+ *     内不与区外交换
+ *   · 内容自适应行高:格子文字过长自动撑高所在行,硬上限 5 行文字
+ *     (约 95px,按实测单行行高换算),装不下的尾部显示 …;高度随行
+ *     内容迁移(排序 / 移动 / 剪切),列宽变化联动重算
  *   · 针对单元格的样式:加粗 / 斜体 / 删除线 / 下划线 /
  *     文字颜色 / 单元格背景色,支持框选一片后批量套用
- *   · 单元格剪贴板(非编辑态 Ctrl+C / V,编辑态仍是输入框原生):
- *     值+样式整块覆盖式粘贴,越界自动扩容,整列选择不接管;复制
- *     同步写系统剪贴板 TSV(与记事本/Excel 互通),内部空时可读
- *     系统剪贴板按 TSV 粘纯文本;数据模块级共享,跨窗口可粘
+ *   · 单元格剪贴板(非编辑态 Ctrl+C/X/V,编辑态仍是输入框原生):
+ *     值+样式整块覆盖式粘贴,越界自动扩容;整行/整列/全选选择裁剪到
+ *     实际有内容的边界(不做整列 500 行的无限复制),空选区不接管;
+ *     剪切立即清源(粘到本应用或外部程序语义一致);复制剪切同步写
+ *     系统剪贴板 TSV(与记事本/Excel 互通),内部空时可读系统剪贴板
+ *     按 TSV 粘纯文本;数据模块级共享跨窗口可粘
  *   · 列排序:点列头 ↕ 小钮弹升/降菜单,整行随之重排(数字 < 文本,
  *     空行恒垫底;文本按系统「文本排序」设置,默认拼音),排序状态在
  *     列头显示 ▲/▼,内容再编辑即失效清除
@@ -21,8 +31,8 @@
  *     字号同步真实缩放(非 transform,文字不糊),缩放随文档保存
  *
  * 保存格式 .axl:带 axl:1 版本标记的 JSON 文本 ——
- *   { axl:1, rows, cols, colw:[列宽px@100%], zoom, sort:{c,dir}|null,
- *     fixed:0~3, cells:{ "r,c":{ t:文本, b/i/u/k:样式位, fg/bg:颜色 } } }
+ *   { axl:1, rows, cols, colw:[列宽px@100%], rowh:[行高px|null],
+ *     zoom, sort:{c,dir}|null, fixed:0~3, cells:{ "r,c":{...} } }
  * 空单元格不落盘;载入时逐字段校验裁剪,坏数据按缺省处理。
  * ============================================================ */
 import { el, clamp } from '../../core/utils.js';
@@ -36,7 +46,8 @@ import { settings } from '../../core/store.js';
 /* ---- 常量 ---- */
 const DEF_ROWS = 50, DEF_COLS = 20;            // 初始网格
 const MAX_ROWS = 500, MAX_COLS = 52;           // 上限(A..AZ;纯 DOM 网格,防失控)
-const ROW_H = 28;                              // 行高(固定,文档坐标 px @100%)
+const ROW_H = 28;                              // 默认行高(文档坐标 px @100%)
+const ROW_CAP_LINES = 5;                       // 行高硬上限按"行数":内容过长自动撑高,最多 5 行文字(约 95px),再长截断显示 …
 const DEF_COL_W = 96, MIN_COL_W = 32, MAX_COL_W = 420;
 const FONT = 13, CORNER_W = 46;
 const ZOOM_MIN = 0.5, ZOOM_MAX = 2, ZOOM_STEP = 0.1;
@@ -53,10 +64,11 @@ const PALETTE = [
 const colName = (c) => { let s = '', n = c + 1; while (n > 0) { n--; s = String.fromCharCode(65 + n % 26) + s; n = Math.floor(n / 26); } return s; };
 const cellKey = (r, c) => r + ',' + c;
 
-const emptyDoc = () => ({ axl: 1, rows: DEF_ROWS, cols: DEF_COLS, colw: [], cells: {}, zoom: 1, sort: null, fixed: 0 });
+const emptyDoc = () => ({ axl: 1, rows: DEF_ROWS, cols: DEF_COLS, colw: [], rowh: [], cells: {}, zoom: 1, sort: null, fixed: 0 });
 
-/** 校验并裁剪 .axl 文本为可用文档;结构非法抛错(由调用方提示) */
-function parseDoc(text) {
+/** 校验并裁剪 .axl 文本为可用文档;结构非法抛错(由调用方提示)。
+ *  rowCapPx:行高上限(5 行文字换算的像素,挂载后测量得出;缺省用宽松界) */
+function parseDoc(text, rowCapPx = ROW_CAP_LINES * 40) {
   let d;
   try { d = JSON.parse(text); } catch { throw new Error('不是有效的 JSON'); }
   if (!d || typeof d !== 'object' || d.axl !== 1) throw new Error('缺少 axl:1 版本标记');
@@ -65,6 +77,9 @@ function parseDoc(text) {
   doc.cols = clamp(Math.floor(+d.cols) || DEF_COLS, 1, MAX_COLS);
   doc.colw = Array.isArray(d.colw)
     ? d.colw.slice(0, doc.cols).map((w) => clamp(Math.round(+w) || DEF_COL_W, MIN_COL_W, MAX_COL_W))
+    : [];
+  doc.rowh = Array.isArray(d.rowh)
+    ? d.rowh.slice(0, doc.rows).map((v) => (Number.isFinite(+v) ? clamp(Math.round(+v), ROW_H, rowCapPx) : null))
     : [];
   doc.zoom = clamp(Math.round(+d.zoom * 10) / 10 || 1, ZOOM_MIN, ZOOM_MAX);
   if (d.sort && Number.isInteger(+d.sort.c) && +d.sort.c >= 0 && +d.sort.c < doc.cols
@@ -98,7 +113,8 @@ register({
     /* 选区:锚点 (r1,c1) 即样式按钮所反映的当前格,焦点 (r2,c2) 随导航/拖框移动 */
     let sel = { r1: 0, c1: 0, r2: 0, c2: 0 };
     let editing = null;               // { r, c, input, old }
-    let drag = null;                  // { mode:'cell'|'row'|'col' }
+    let drag = null;                  // { mode:'cell' } 单元格拖选
+    let mv = null;                    // 表头拖移 { kind:'row'|'col', from, sx, sy, moved, target }
     let pop = null;                   // 打开中的弹层(调色板 / 排序 / 固定行菜单)
     let copyMark = null;              // 本窗口的复制源虚线框(剪贴板数据在模块级)
 
@@ -131,15 +147,21 @@ register({
       for (let r = a.r1; r <= a.r2; r++) for (let c = a.c1; c <= a.c2; c++) fn(r, c, tdOf(r, c));
     };
 
-    function markDirty() { dirty = true; refreshChrome(); }
+    function markDirty() {
+      dirty = true;
+      refreshChrome();
+      if (autoSave && path) scheduleSave();
+    }
 
     /* ---- 渲染 ---- */
 
-    /** 把一个单元格的数据画到 td(文本 + 四个样式位 + 两色) */
+    /** 把一个单元格的数据画到 td(文本进内层 .cell-txt,样式位 + 两色在 td 上) */
     function paint(td, r, c) {
       if (!td) return;
       const cell = cellAt(r, c);
-      td.textContent = cell?.t || '';
+      let txt = td.querySelector('.cell-txt');
+      if (!txt) { td.textContent = ''; txt = el('div', { class: 'cell-txt' }); td.append(txt); }
+      txt.textContent = cell?.t || '';
       td.classList.toggle('b', !!cell?.b);
       td.classList.toggle('i', !!cell?.i);
       td.classList.toggle('u', !!cell?.u);
@@ -161,34 +183,93 @@ register({
           colName(c),
           el('span', { class: 'col-sort', dataset: { c: String(c) } }, '↕'),
           el('span', { class: 'col-resize', dataset: { c: String(c) }, title: '拖拽调列宽 · 双击复位' })))));
-      /* 固定表头行:r < doc.fixed 的行钉在列头下方(不随滚动),行号着色示意 */
+      /* 固定表头行:r < doc.fixed 的行钉在列头下方(不随滚动),行号着色示意;
+       * 偏移量依赖各行实际行高(内容自适应后不再是统一值),由 applyFrozenTops 统一布置 */
       const fixedN = doc.fixed || 0;
       tbody.replaceChildren(...Array.from({ length: doc.rows }, (_, r) => {
         const fz = r < fixedN;
-        const stick = fz ? { top: `calc(var(--rowh, 28) * ${r + 1} * 1px)` } : null;
         const cls = (base) => base + (fz ? ' fz' + (r === fixedN - 1 ? ' fz-last' : '') : '');
         return el('tr', {},
-          el('th', { class: cls('rowh'), dataset: { r: String(r) }, style: stick }, String(r + 1)),
-          ...Array.from({ length: doc.cols }, (_, c) => el('td', { class: fz ? 'fz' + (r === fixedN - 1 ? ' fz-last' : '') : '', dataset: { r: String(r), c: String(c) }, style: stick })));
+          el('th', { class: cls('rowh'), dataset: { r: String(r) } }, String(r + 1)),
+          ...Array.from({ length: doc.cols }, (_, c) => el('td', {
+            class: fz ? 'fz' + (r === fixedN - 1 ? ' fz-last' : '') : '',
+            dataset: { r: String(r), c: String(c) },
+          }, el('div', { class: 'cell-txt' }))));
       }));
       for (const [k, cell] of Object.entries(doc.cells)) {
         const [r, c] = k.split(',').map(Number);
         paint(tdOf(r, c), r, c);
       }
       applyZoomStyle();
+      for (let r = 0; r < doc.rows; r++) if (doc.rowh[r]) applyRowH(r);
+      applyFrozenTops();
       renderSortMarks();
       renderCopyMark();
-      if (fixedLabel) fixedLabel.textContent = `固定行 ${fixedN}`;
+      if (fixedLabel) fixedLabel.textContent = String(fixedN);
       if (st) { wrap.scrollTop = st.t; wrap.scrollLeft = st.l; }
       renderSel();
     }
 
-    /** 缩放三件套:字号 / 行高 CSS 变量 / 列宽与角宽 */
+    /** 缩放件套:字号 / 默认行高 CSS 变量 / 列宽与角宽 / 自适应行高重刷 */
     function applyZoomStyle() {
       table.style.fontSize = Math.round(FONT * doc.zoom) + 'px';
       table.style.setProperty('--rowh', String(Math.round(ROW_H * doc.zoom)));
       colgroup.children[0].style.width = Math.round(CORNER_W * doc.zoom) + 'px';
       for (let c = 0; c < doc.cols; c++) colOf(c).style.width = colW(c) + 'px';
+      for (let r = 0; r < doc.rows; r++) if (doc.rowh[r]) applyRowH(r);
+      applyFrozenTops();
+    }
+
+    /* ---- 内容自适应行高(上限 ROW_CAP,超出截断显示 …) ---- */
+
+    /** 隐形测量器:按文档坐标(13px 字号)量一段文本在指定列宽下的换行高度,与缩放无关 */
+    const measurer = el('div', { class: 'cell-measure' });
+    root.append(measurer);
+    let LINE_H = 19;
+    measurer.textContent = '测';
+    LINE_H = measurer.offsetHeight || 19;
+    const capPx = () => ROW_CAP_LINES * LINE_H + 2;   // 行高硬上限 = 5 行文字(+边框余量)
+    function measureCell(text, widthDoc) {
+      measurer.style.width = Math.max(16, Math.round(widthDoc) - 13) + 'px';   // 两侧 padding 6×2 + 边框 1
+      measurer.textContent = text;
+      return measurer.offsetHeight + 2;
+    }
+
+    /** 重算一行所需高度:行内所有格子取最大,夹到 [ROW_H, 5 行文字] */
+    function autoRow(r) {
+      let need = ROW_H;
+      for (let c = 0; c < doc.cols; c++) {
+        const t = doc.cells[cellKey(r, c)]?.t;
+        if (!t) continue;
+        const h = measureCell(t, doc.colw[c] || DEF_COL_W);
+        if (h > need) need = h;
+      }
+      setRowH(r, Math.min(capPx(), need));
+    }
+    function setRowH(r, hDoc) {
+      if ((doc.rowh[r] || ROW_H) === hDoc) return;
+      doc.rowh[r] = hDoc === ROW_H ? null : hDoc;   // 默认高度不落盘
+      applyRowH(r);
+    }
+    /** 应用一行高度到 DOM:行内联高(默认行回退 CSS 变量)+ 行级 --lc 截断行数 */
+    function applyRowH(r) {
+      const tr = tbody.children[r];
+      if (!tr) return;
+      const hDoc = doc.rowh[r] || ROW_H;
+      const disp = Math.round(hDoc * doc.zoom);
+      tr.style.setProperty('--lc', String(Math.max(1, Math.floor(hDoc / LINE_H))));
+      for (const cel of tr.children) cel.style.height = hDoc === ROW_H ? '' : disp + 'px';
+      if (r < (doc.fixed || 0)) applyFrozenTops();   // 冻结行高度变化影响下方冻结偏移
+    }
+    /** 固定表头行的 sticky 偏移 = 表头高 + 上方各行实际高度(缩放后取整) */
+    function applyFrozenTops() {
+      const fixedN = doc.fixed || 0;
+      let off = ROW_H;
+      for (let r = 0; r < fixedN && r < doc.rows; r++) {
+        const top = Math.round(off * doc.zoom);
+        for (const cel of tbody.children[r]?.children || []) cel.style.top = top + 'px';
+        off += doc.rowh[r] || ROW_H;
+      }
     }
 
     /** 选区绘制:td 高亮 + 锚点框 + 行列头联动高亮,并刷新工具栏 */
@@ -208,7 +289,8 @@ register({
 
     /* ---- 数据修改 ---- */
 
-    /** 选区内写文本("" 清空;样式保留)。内容一变,原排序状态即不可信,清除指示 */
+    /** 选区内写文本("" 清空;样式保留)。内容一变,原排序状态即不可信,清除指示;
+     *  行高按新内容自适应重算 */
     function setText(r, c, text) {
       const k = cellKey(r, c);
       const cell = doc.cells[k];
@@ -220,6 +302,7 @@ register({
       }
       if (doc.sort) { doc.sort = null; renderSortMarks(); }
       paint(tdOf(r, c), r, c);
+      autoRow(r);
     }
 
     /** 选区批量套样式:patch 里 null = 清除该属性;空格子自动回收 */
@@ -281,6 +364,11 @@ register({
         cells[pos[+k.slice(0, i)] + k.slice(i)] = cell;
       }
       doc.cells = cells;
+      const rh = doc.rowh || [];                        // 行高随行内容一起迁移
+      const rowh = Array.from({ length: doc.rows }, (_, i) => null);
+      for (let r = 0; r < fixed; r++) rowh[r] = rh[r] ?? null;
+      order.forEach((oldR, i) => { rowh[i + fixed] = rh[oldR] ?? null; });
+      doc.rowh = rowh;
       doc.sort = { c, dir };
       buildGrid(true);
       markDirty();
@@ -302,14 +390,38 @@ register({
       }
     }
 
-    /* ---- 单元格剪贴板(非编辑态 Ctrl+C / Ctrl+V;编辑态仍是输入框原生行为) ---- */
+    /* ---- 单元格剪贴板(非编辑态 Ctrl+C/X/V;编辑态仍是输入框原生行为) ---- */
 
-    /** 复制选区:值+样式入模块级剪贴板,TSV 尽力写入系统剪贴板(与记事本/Excel 互通);
-     *  整列 / 全选(列头或角标点选,特征:覆盖全部行)不接管,Ctrl+C 无副作用 */
-    function copySel() {
-      const a = normSel();
-      if (a.r1 === 0 && a.r2 === doc.rows - 1
-        && (a.c1 === a.c2 || (a.c1 === 0 && a.c2 === doc.cols - 1))) return;
+    /** 整行 / 整列 / 全选识别(选区覆盖整行宽度或整列高度):复制剪切时
+     *  裁剪到内容边界;选区内拖动不作为整块移动(整行整列移动走表头拖拽) */
+    function fullSpan(a) {
+      return (a.c1 === 0 && a.c2 === doc.cols - 1) || (a.r1 === 0 && a.r2 === doc.rows - 1);
+    }
+
+    /** 复制 / 剪切选区:值+样式入模块级剪贴板,TSV 尽力写入系统剪贴板(与记事本/Excel 互通)。
+     *  剪切(cut)立即清源 —— 内容与样式当场移出,粘到本应用或任何外部程序
+     *  都是同一致的「移动」语义;内部剪贴板保留内容,可多次粘贴。
+     *  整行/整列/全选(表头点选)裁剪到选区内实际有内容的边界矩形:只复制
+     *  有内容的部分,不做整列 500 行的无限复制;选区内无内容则不接管。 */
+    function copySel(cut = false) {
+      let a = normSel();
+      if (fullSpan(a)) {
+        let br1 = -1, br2 = 0, bc1 = 0, bc2 = 0;
+        for (const k of Object.keys(doc.cells)) {
+          const i = k.indexOf(',');
+          const r = +k.slice(0, i), c = +k.slice(i + 1);
+          if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) continue;
+          if (br1 < 0) { br1 = r; br2 = r; bc1 = c; bc2 = c; }
+          else {
+            if (r < br1) br1 = r;
+            if (r > br2) br2 = r;
+            if (c < bc1) bc1 = c;
+            if (c > bc2) bc2 = c;
+          }
+        }
+        if (br1 < 0) return;                    // 选区内无内容:不接管(原剪贴板保持)
+        a = { r1: br1, r2: br2, c1: bc1, c2: bc2 };
+      }
       const cells = {};
       const tsvRows = [];
       for (let r = 0; r <= a.r2 - a.r1; r++) {
@@ -325,6 +437,16 @@ register({
       copyMark = { ...a };
       renderCopyMark();
       if (navigator.clipboard?.writeText) navigator.clipboard.writeText(tsvRows.join('\n')).catch(() => {});
+      if (!cut) return;
+      const touched = new Set();
+      for (let r = a.r1; r <= a.r2; r++) for (let c = a.c1; c <= a.c2; c++) {
+        delete doc.cells[cellKey(r, c)];
+        paint(tdOf(r, c), r, c);
+        touched.add(r);
+      }
+      for (const r of touched) autoRow(r);
+      if (doc.sort) { doc.sort = null; renderSortMarks(); }
+      markDirty();
     }
 
     /** 粘贴:内部剪贴板优先(带样式);为空时读系统剪贴板按 TSV 粘纯文本(无权限则静默) */
@@ -371,6 +493,7 @@ register({
       if (doc.sort) { doc.sort = null; renderSortMarks(); }
       copyMark = null;
       renderCopyMark();
+      for (let r = 0; r < data.rows && sel.r1 + r < doc.rows; r++) autoRow(sel.r1 + r);
       markDirty();
     }
 
@@ -391,8 +514,7 @@ register({
       if (!td) return;
       const old = cellAt(r, c)?.t || '';
       const input = el('input', { class: 'cell-in', value: initial != null ? initial : old });
-      td.classList.add('editing');
-      td.textContent = '';
+      td.classList.add('editing');   // 文本 div 由 CSS 隐藏,提交后 paint 恢复
       td.append(input);
       input.focus();
       if (initial != null) input.select();
@@ -468,24 +590,141 @@ register({
     /** 按视口坐标定位(拖拽延续用;开场动画等过渡态下可能被装饰层遮挡) */
     const hitCell = (x, y) => hitEl(document.elementFromPoint(x, y));
 
+    /* ---- 行 / 列拖拽移动(表头按住拖动 ≥5px 触发;插入到目标之前) ---- */
+
+    /** 更新拖移目标:行移动不得跨越固定区,列自由,单元格块以悬停格为落位左上角 */
+    function mvTarget(e) {
+      const hit = hitCell(e.clientX, e.clientY);
+      if (mv.kind === 'cells') {
+        if (hit?.r == null || hit.c == null) return;
+        if (mv.target && mv.target.r === hit.r && mv.target.c === hit.c) return;
+        for (const x of wrap.querySelectorAll('.mv-to')) x.classList.remove('mv-to');
+        mv.target = { r: hit.r, c: hit.c };
+        const rowsN = mv.rect.r2 - mv.rect.r1 + 1, colsN = mv.rect.c2 - mv.rect.c1 + 1;
+        for (let r = hit.r; r < hit.r + rowsN && r < doc.rows; r++)
+          for (let c = hit.c; c < hit.c + colsN && c < doc.cols; c++)
+            tdOf(r, c)?.classList.add('mv-to');
+        return;
+      }
+      let t = null;
+      if (mv.kind === 'row' && hit?.r != null) {
+        const fixedN = doc.fixed || 0;
+        if ((mv.from < fixedN) === (hit.r < fixedN)) t = hit.r;
+      } else if (mv.kind === 'col' && hit?.c != null) {
+        t = hit.c;
+      }
+      if (t === mv.from) t = null;
+      if (t === mv.target) return;
+      for (const x of wrap.querySelectorAll('.mv-ins')) x.classList.remove('mv-ins');
+      mv.target = t;
+      if (t != null) {
+        if (mv.kind === 'row') tbody.children[t]?.classList.add('mv-ins');
+        else for (const tr of tbody.children) tr.children[t + 1]?.classList.add('mv-ins');
+      }
+    }
+    function clearMvVisual() {
+      for (const x of wrap.querySelectorAll('.mv-src, .mv-ins, .mv-to')) x.classList.remove('mv-src', 'mv-ins', 'mv-to');
+    }
+
+    /** 执行移动:整行 / 整列连内容、样式、行高(列宽)一起换位;行移动使排序状态失效,
+     *  列移动把排序指示随列迁移;固定行区内自行换位、不与区外交换 */
+    function doMove(kind, from, t) {
+      if (t === from || t < 0) return;
+      commitEdit();
+      const n = kind === 'row' ? doc.rows : doc.cols;
+      if (t >= n) return;
+      const order = Array.from({ length: n }, (_, i) => i);
+      order.splice(from, 1);
+      order.splice(t > from ? t - 1 : t, 0, from);
+      const pos = new Array(n);                 // 旧索引 → 新索引
+      order.forEach((old, i) => { pos[old] = i; });
+      const cells = {};
+      for (const [k, cell] of Object.entries(doc.cells)) {
+        const i = k.indexOf(',');
+        if (kind === 'row') cells[pos[+k.slice(0, i)] + k.slice(i)] = cell;
+        else cells[k.slice(0, i + 1) + pos[+k.slice(i + 1)]] = cell;
+      }
+      doc.cells = cells;
+      if (kind === 'row') {
+        const rh = doc.rowh || [];
+        doc.rowh = Array.from({ length: doc.rows }, (_, i) => rh[order[i]] ?? null);
+        doc.sort = null;                        // 行序手工改变,排序状态不再可信
+      } else {
+        const cw = doc.colw || [];
+        doc.colw = Array.from({ length: doc.cols }, (_, i) => cw[order[i]] ?? null);
+        if (doc.sort) doc.sort = { c: pos[doc.sort.c], dir: doc.sort.dir };
+      }
+      copyMark = null;
+      buildGrid(true);
+      markDirty();
+    }
+
+    /** 拖拽移动单元格选区整块(值+样式):快照源块 → 清源 → 覆盖落位到锚点;
+     *  与源重叠时目标覆盖(源先清);放不下先扩容(封顶);行高重算、
+     *  排序状态与复制标记失效;选区随块落到目标位置 */
+    function doCellMove(rect, anchor) {
+      commitEdit();
+      const rowsN = rect.r2 - rect.r1 + 1, colsN = rect.c2 - rect.c1 + 1;
+      const snap = {};
+      for (let r = 0; r < rowsN; r++) for (let c = 0; c < colsN; c++) {
+        const cell = doc.cells[cellKey(rect.r1 + r, rect.c1 + c)];
+        if (cell) snap[r + ',' + c] = { ...cell };
+      }
+      const needR = anchor.r + rowsN, needC = anchor.c + colsN;
+      if (needR > doc.rows || needC > doc.cols) {
+        doc.rows = Math.max(doc.rows, Math.min(MAX_ROWS, needR));
+        doc.cols = Math.max(doc.cols, Math.min(MAX_COLS, needC));
+        buildGrid(true);
+      }
+      const touched = new Set();
+      for (let r = 0; r < rowsN; r++) for (let c = 0; c < colsN; c++) {   // 先清源(重叠区由目标覆盖)
+        delete doc.cells[cellKey(rect.r1 + r, rect.c1 + c)];
+        paint(tdOf(rect.r1 + r, rect.c1 + c), rect.r1 + r, rect.c1 + c);
+        touched.add(rect.r1 + r);
+      }
+      for (let r = 0; r < rowsN; r++) for (let c = 0; c < colsN; c++) {
+        const tr = anchor.r + r, tc = anchor.c + c;
+        const src = snap[r + ',' + c];
+        if (src) doc.cells[cellKey(tr, tc)] = { ...src };
+        else delete doc.cells[cellKey(tr, tc)];
+        paint(tdOf(tr, tc), tr, tc);
+        touched.add(tr);
+      }
+      for (const r of touched) autoRow(r);
+      if (doc.sort) { doc.sort = null; renderSortMarks(); }
+      copyMark = null;
+      renderCopyMark();
+      sel = { r1: anchor.r, c1: anchor.c, r2: anchor.r + rowsN - 1, c2: anchor.c + colsN - 1 };
+      renderSel();
+      markDirty();
+    }
+
     wrap.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('.col-resize')) return;
       const hit = hitEl(e.target) || hitCell(e.clientX, e.clientY);
       if (!hit) return;
       commitEdit();
-      if (hit.r == null) {                       // 列头:整列
+      const onSortBtn = !!e.target.closest('.col-sort');   // 排序小钮:不作为拖移起点
+      if (hit.r == null) {                       // 列头:点选整列,拖动 = 移动整列
         if (e.shiftKey) sel.c2 = hit.c;
         else sel = { r1: 0, c1: hit.c, r2: doc.rows - 1, c2: hit.c };
-        drag = { mode: 'col' };
-      } else if (hit.c == null) {                // 行头:整行
+        if (!e.shiftKey && !onSortBtn) mv = { kind: 'col', from: hit.c, sx: e.clientX, sy: e.clientY, moved: false, target: null };
+      } else if (hit.c == null) {                // 行头:点选整行,拖动 = 移动整行
         if (e.shiftKey) sel.r2 = hit.r;
         else sel = { r1: hit.r, c1: 0, r2: hit.r, c2: doc.cols - 1 };
-        drag = { mode: 'row' };
+        if (!e.shiftKey) mv = { kind: 'row', from: hit.r, sx: e.clientX, sy: e.clientY, moved: false, target: null };
       } else if (e.shiftKey) {                   // 普通格 + shift:扩选
         sel.r2 = hit.r; sel.c2 = hit.c;
       } else {
-        sel = { r1: hit.r, c1: hit.c, r2: hit.r, c2: hit.c };
-        drag = { mode: 'cell' };
+        const a0 = normSel();
+        const inside = hit.r >= a0.r1 && hit.r <= a0.r2 && hit.c >= a0.c1 && hit.c <= a0.c2;
+        if (inside && !fullSpan(a0)) {
+          /* 点在已有选区内:按住拖动 = 移动整块(Excel 式);原地点击 = 收缩为该格 */
+          mv = { kind: 'cells', rect: { ...a0 }, hit: { r: hit.r, c: hit.c }, sx: e.clientX, sy: e.clientY, moved: false, target: null };
+        } else {
+          sel = { r1: hit.r, c1: hit.c, r2: hit.r, c2: hit.c };
+          drag = { mode: 'cell' };
+        }
       }
       renderSel();
       wrap.focus();
@@ -494,6 +733,22 @@ register({
     });
 
     wrap.addEventListener('pointermove', (e) => {
+      if (mv) {
+        if (!mv.moved) {
+          if (Math.hypot(e.clientX - mv.sx, e.clientY - mv.sy) < 5) return;   // 位移阈值:以内仍是点选
+          mv.moved = true;
+          if (mv.kind === 'row') {
+            for (const cel of tbody.children[mv.from].children) cel.classList.add('mv-src');
+          } else if (mv.kind === 'col') {
+            for (const tr of tbody.children) tr.children[mv.from + 1]?.classList.add('mv-src');
+          } else {
+            for (let r = mv.rect.r1; r <= mv.rect.r2; r++)
+              for (let c = mv.rect.c1; c <= mv.rect.c2; c++) tdOf(r, c)?.classList.add('mv-src');
+          }
+        }
+        mvTarget(e);
+        return;
+      }
       if (!drag) return;
       const hit = hitCell(e.clientX, e.clientY);
       if (!hit) return;
@@ -505,7 +760,26 @@ register({
       }
       renderSel();
     });
-    const endDrag = () => { drag = null; };
+    const endDrag = () => {
+      if (mv) {
+        const { kind, from, target, moved } = mv;
+        if (kind === 'cells') {
+          const { rect, hit } = mv;
+          mv = null;
+          clearMvVisual();
+          if (moved && target) doCellMove(rect, target);
+          else {                                            // 原地点击:选区收缩为该格
+            sel = { r1: hit.r, c1: hit.c, r2: hit.r, c2: hit.c };
+            renderSel();
+          }
+        } else {
+          mv = null;
+          clearMvVisual();
+          if (moved && target != null) doMove(kind, from, target);
+        }
+      }
+      drag = null;
+    };
     wrap.addEventListener('pointerup', endDrag);
     wrap.addEventListener('pointercancel', endDrag);
 
@@ -545,8 +819,9 @@ register({
         const map = { b: 'b', i: 'i', u: 'u' };
         if (map[lk]) { e.preventDefault(); toggleFmt(map[lk]); return; }
         if (e.code === 'Digit5') { e.preventDefault(); toggleFmt('k'); return; }   // Excel 惯例:Ctrl+5 删除线
-        if (lk === 'c') { e.preventDefault(); copySel(); return; }   // 单元格复制(整列不接管)
-        if (lk === 'v') { e.preventDefault(); pasteClip(); return; } // 单元格粘贴
+        if (lk === 'c') { e.preventDefault(); copySel(false); return; }  // 复制(整行/整列裁剪到内容边界)
+        if (lk === 'x') { e.preventDefault(); copySel(true); return; }   // 剪切(立即清源,跨应用粘贴一致)
+        if (lk === 'v') { e.preventDefault(); pasteClip(); return; }     // 粘贴
         return;
       }
       switch (k) {
@@ -595,7 +870,16 @@ register({
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
-        if (moved) markDirty();
+        if (moved) {
+          /* 列宽变了,该列有内容的行重新自适应高度 */
+          const touched = new Set();
+          for (const k of Object.keys(doc.cells)) {
+            const i = k.indexOf(',');
+            if (+k.slice(i + 1) === c) touched.add(+k.slice(0, i));
+          }
+          for (const r of touched) autoRow(r);
+          markDirty();
+        }
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
@@ -737,7 +1021,7 @@ register({
       const content = fs.read(p);
       if (content == null) { bus.notify('无法打开', `文件不存在或无读权限:${p}`); return; }
       let d;
-      try { d = parseDoc(content); } catch (err) {
+      try { d = parseDoc(content, capPx()); } catch (err) {
         bus.notify('无法打开', `不是有效的 .axl 文档:${err.message}`);
         return;
       }
@@ -766,7 +1050,7 @@ register({
       if (t && t !== '/') loadPath(t);
     }
 
-    async function save(as = false) {
+    async function save(as = false, silent = false) {
       let target = path;
       if (as || !target) {
         const def = `${fs.homePath() || '/home'}/documents/未命名.axl`;
@@ -788,29 +1072,61 @@ register({
       path = target;
       dirty = false;
       refreshChrome();
-      bus.notify('文件已保存', path);
+      if (!silent) bus.notify('文件已保存', path);   // 自动保存静默,不打扰
       return true;
     }
 
-    const fixedLabel = el('span', {}, `固定行 ${doc.fixed || 0}`);
+    const fixedLabel = el('span', { class: 'sheet-fixed-n' }, String(doc.fixed || 0));
     const fixedBtn = el('button', {
-      class: 'btn', title: '固定表头行:钉在顶部,不随滚动、不参与排序(0~3 行)',
+      class: 'btn sheet-fixed', title: '固定表头行:钉在顶部,不随滚动、不参与排序(0~3 行),点击选择数量',
       onClick: () => (pop?.dataset.kind === 'fixed' ? closePop() : openFixedMenu(fixedBtn)),
-    }, fixedLabel, el('span', { class: 'sheet-caret' }, '▾'));
+    }, icon('pin', 13), fixedLabel, el('span', { class: 'sheet-caret' }, '▾'));
+
+    /* 自动保存开关:图标式切换钮,.on 底色示按下;改动后 1.5s 静默写盘(需已有路径) */
+    let autoSave = localStorage.getItem('webos.sheet.autosave') !== '0';   // 默认开
+    let saveTimer = 0;
+    const asBtn = el('button', {
+      class: 'btn icon tgl' + (autoSave ? ' on' : ''),
+      onClick: () => setAutoSave(!autoSave),
+    }, icon('clock', 14));
+    function setAutoSave(on) {
+      autoSave = on;
+      try { localStorage.setItem('webos.sheet.autosave', on ? '1' : '0'); } catch { /* 忽略 */ }
+      asBtn.classList.toggle('on', on);
+      refreshAsTitle();
+      if (!on && saveTimer) { clearTimeout(saveTimer); saveTimer = 0; }
+      else if (on && dirty && path) scheduleSave();
+    }
+    function refreshAsTitle() {
+      asBtn.title = autoSave
+        ? '自动保存:已开启 —— 改动 1.5 秒后自动写盘(需已保存过,未命名新文档仍手动保存)'
+        : '自动保存:已关闭 —— 点击开启';
+    }
+    refreshAsTitle();
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        saveTimer = 0;
+        if (!autoSave || !dirty || !path) return;
+        if (editing) { scheduleSave(); return; }             // 正在编辑:等提交后再存
+        save(false, true);
+      }, 1500);
+    }
 
     const sep = () => el('span', { class: 'sheet-sep' });
 
     root.append(el('div', { class: 'app sheet-app' },
       el('div', { class: 'app-toolbar' },
-        el('button', { class: 'btn', onClick: openFile }, icon('folder', 13), '打开'),
-        el('button', { class: 'btn', onClick: () => save(false) }, icon('save', 13), '保存'),
-        el('button', { class: 'btn', onClick: () => save(true) }, icon('external', 13), '另存为'),
+        el('button', { class: 'btn icon', title: '打开(.axl 文档)', onClick: openFile }, icon('folder', 14)),
+        el('button', { class: 'btn icon', title: '保存(Ctrl+S)', onClick: () => save(false) }, icon('save', 14)),
+        el('button', { class: 'btn icon', title: '另存为(Ctrl+Shift+S)', onClick: () => save(true) }, icon('external', 14)),
         sep(),
         bBtn, iBtn, uBtn, kBtn,
         sep(),
         fgBtn, bgBtn,
         sep(),
         fixedBtn,
+        asBtn,
         sep(),
         el('button', { class: 'btn icon', title: '缩小', onClick: () => setZoom(doc.zoom - ZOOM_STEP) }, icon('minus', 13)),
         zoomLabel,
@@ -825,7 +1141,7 @@ register({
       if (content == null) { bus.notify('文件不存在', path); path = null; }
       else {
         try {
-          doc = parseDoc(content);
+          doc = parseDoc(content, capPx());
           zoomLabel.textContent = Math.round(doc.zoom * 100) + '%';
         } catch (err) { bus.notify('无法打开', `不是有效的 .axl 文档:${err.message}`); path = null; }
       }
