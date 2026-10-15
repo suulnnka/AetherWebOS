@@ -91,11 +91,37 @@
 .sheet-table thead th .col-sort:hover,
 .sheet-table thead th .col-sort.on { opacity: 1; color: var(--accent); }
 
+/* 复制源:虚线框(不占布局,可与选区着色并存) */
+.sheet-table td.copy-src {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1.5px;
+}
+
+/* ---- 固定表头行:钉在列头下方,不随滚动;末行下缘投影分层 ---- */
+.sheet-table td.fz {
+  position: sticky; z-index: 2;
+  background: var(--panel-solid);      /* 不透明,滚动行从下方穿过 */
+}
+.sheet-table th.rowh.fz {
+  position: sticky; z-index: 4;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+  color: var(--accent);
+}
+.sheet-table .fz-last { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16); }
+
 /* ---- 工具栏 ---- */
+/* 防溢出:按钮/分隔线不参与收缩,空间不足时只挤右侧文件名(省略号) */
+.sheet-app .app-toolbar > * { flex: none; }
+.sheet-app .app-toolbar > .grow { flex: 1 1 0; }
+.sheet-app .app-toolbar > .sheet-name {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sheet-sep {
   width: 1px; align-self: stretch;
   margin: 3px 3px; background: var(--border);
 }
+.sheet-caret { font-size: 9px; opacity: 0.65; margin-left: 1px; }
 .sheet-fmt { min-width: 32px; justify-content: center; padding: 0 8px; font-size: 14px; }
 .sheet-fmt.b span { font-weight: 800; }
 .sheet-fmt.i span { font-style: italic; font-family: Georgia, 'Times New Roman', serif; }
@@ -121,9 +147,8 @@
   user-select: none;
 }
 .sheet-zoom-label:hover { color: var(--accent); }
-.sheet-grow { height: 20px; padding: 0 8px; font-size: 11.5px; }
 
-/* ---- 调色板弹层 ---- */
+/* ---- 调色板 / 下拉菜单弹层 ---- */
 .sheet-palette {
   position: absolute; z-index: 60;
   width: 216px; padding: 10px;
@@ -143,3 +168,21 @@
   grid-column: span 6; width: 100%; height: 26px;
   font-size: 12px; justify-content: center;
 }
+
+.sheet-pop {
+  position: absolute; z-index: 60; min-width: 172px; padding: 6px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border); border-radius: var(--radius-s);
+  box-shadow: var(--shadow);
+}
+.sheet-pop .pop-title { font-size: 11.5px; color: var(--text-2); padding: 4px 8px 6px; }
+.sheet-pop .pop-list { display: flex; flex-direction: column; gap: 2px; }
+.pop-item {
+  display: flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: none; color: var(--text);
+  font-size: 12.5px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.pop-item:hover { background: var(--hover); }
+.pop-item.cur { color: var(--accent); font-weight: 600; }
+.pop-check { width: 14px; text-align: center; color: var(--accent); flex: none; }

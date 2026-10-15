@@ -6164,7 +6164,7 @@ group('T60', '回收站 / 文件剪贴板 / 打开方式 / 会话记录', async 
  * .axl 存取与打开方式路由。经验:窗口开场动画 950ms,须等足再交互;
  * 合成 PointerEvent 要带元素中心坐标(hitCell 走 elementFromPoint)。
  * ============================================================ */
-group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存取)', async () => {
+group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .axl 存取)', async () => {
   await fresh();
   const HOME = await ev(`WebOS.fs.homePath()`);
   const FILE = HOME + '/documents/e2e-sheet.axl';
@@ -6172,7 +6172,7 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
   await ev(`WebOS.wm.open('sheet')`);
   await sleep(1200);   // 开场动画 950ms + 应用 chunk 按需加载
 
-  // 骨架:50×20 网格、表头 A/1、工具栏齐全、状态栏定位 A1、100% 缩放
+  // 骨架:50×20 网格、表头 A/1、工具栏齐全、100% 缩放、无状态栏
   const s0 = await ev(`(() => {
     const w = document.querySelector('.win[data-app=sheet]');
     return {
@@ -6182,14 +6182,14 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
       headA: w.querySelector('.sheet-table thead th:nth-child(2)')?.textContent,
       rowh1: w.querySelector('.sheet-table tbody th.rowh')?.textContent,
       btns: w.querySelectorAll('.app-toolbar .btn').length,
-      status: w.querySelector('.app-status span')?.textContent,
       zoom: w.querySelector('.sheet-zoom-label')?.textContent,
       title: w.querySelector('.win-title')?.textContent,
+      noStatus: !w.querySelector('.app-status'),
     };
   })()`);
-  t('T61 骨架(50×20 / 表头 A·1 / 工具栏 / 状态栏 A1 / 100%)',
+  t('T61 骨架(50×20 / 表头 A·1 / 工具栏 / 100% / 无状态栏)',
     s0.win && s0.rows === 50 && s0.cols === 20 && s0.headA.startsWith('A') && s0.rowh1 === '1'
-    && s0.btns >= 15 && s0.status.startsWith('A1') && s0.zoom === '100%' && s0.title.includes('未命名'),
+    && s0.btns >= 11 && s0.zoom === '100%' && s0.title.includes('未命名') && s0.noStatus,
     JSON.stringify(s0));
 
   // 编辑链:双击 B2 写字 → Enter 提交并下移;打字即编 → Esc 取消
@@ -6207,8 +6207,8 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     input.value = '季度数据';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     const committed = cell.textContent;
-    const moved = w.querySelector('.app-status span').textContent;
-    // 打字即编 + Esc:选 A1,派发可打印字符键
+    const moved = td(2, 1).classList.contains('cur');   // 提交后选区下移到 B3
+    // 打字即编 + Esc 取消:选 A1,派发可打印字符键
     const wrap = w.querySelector('.sheet-wrap');
     pd(td(0, 0));
     wrap.focus();
@@ -6218,7 +6218,7 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     inp2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return { edit: true, committed, moved, typed, esc: td(0, 0).textContent === '' };
   })()`);
-  t('T61.1 编辑(双击写入 → Enter 提交下移 B3)', s1.edit && s1.committed === '季度数据' && s1.moved.startsWith('B3'), JSON.stringify(s1));
+  t('T61.1 编辑(双击写入 → Enter 提交下移 B3)', s1.edit && s1.committed === '季度数据' && s1.moved === true, JSON.stringify(s1));
   t('T61.2 打字即编与 Esc 取消', s1.typed === '首' && s1.esc, JSON.stringify({ typed: s1.typed, esc: s1.esc }));
 
   // 样式:四开关 + 调色板真实 UI(文字红 / 底黄)
@@ -6262,7 +6262,7 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     const nBold = () => { let n = 0; for (let r = 1; r <= 3; r++) for (let c = 1; c <= 3; c++) if (td(r, c).classList.contains('b')) n++; return n; };
     pd(td(1, 1));
     pd(td(3, 3), { shiftKey: true });
-    const selInfo = w.querySelector('.app-status span').textContent;
+    const curB2 = td(1, 1).classList.contains('cur');   // 锚点仍在 B2
     const sel9 = w.querySelectorAll('td.sel').length;
     btn('加粗').click();
     const afterOff = nBold();
@@ -6272,10 +6272,10 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     const colSel = w.querySelectorAll('td.sel').length;
     pd(w.querySelector('tbody th.rowh[data-r="0"]'));
     const rowSel = w.querySelectorAll('td.sel').length;
-    return { selInfo, sel9, afterOff, afterOn, colSel, rowSel };
+    return { curB2, sel9, afterOff, afterOn, colSel, rowSel };
   })()`);
   t('T61.4 框选批量样式(锚点取反:先取消 0/9,再加满 9/9)',
-    s3.selInfo.startsWith('B2:D4 · 9 格') && s3.sel9 === 9 && s3.afterOff === 0 && s3.afterOn === 9,
+    s3.curB2 && s3.sel9 === 9 && s3.afterOff === 0 && s3.afterOn === 9,
     JSON.stringify(s3));
   t('T61.5 整列/整行选择(列头 50 格 / 行头 20 格)',
     s3.colSel === 50 && s3.rowSel === 20, JSON.stringify({ colSel: s3.colSel, rowSel: s3.rowSel }));
@@ -6347,9 +6347,10 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     JSON.stringify(s6));
   t('T61.10 打开方式路由(.axl 内置默认 → 电子表格)', s6.route === 'sheet', String(s6.route));
 
-  // 排序:数字列升/降(空恒垫底、整行连动)+ 中文拼音序 + 指示器随编辑清除。
+  // 排序:列头 ↕ 小钮弹菜单选升/降(空恒垫底、整行连动)+ 中文拼音序 + 指示器随编辑清除。
   // 注意 sortCol 会整格重建表头,排序钮须每次重查,旧引用已脱离 DOM
-  const s7 = await ev(`(() => {
+  const s7 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const w = document.querySelector('.win[data-app=sheet]');
     const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
     const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
@@ -6364,32 +6365,44 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
     };
     const col = (c) => [0, 1, 2, 3].map((r) => td(r, c).textContent);
     const sbtn = (c) => w.querySelector('thead th[data-c="' + c + '"] .col-sort');
+    const sortVia = async (c, label) => {              // 列头 ↕ → 弹菜单 → 点对应项
+      sbtn(c).click();
+      await sleep(80);
+      const item = [...w.querySelectorAll('.sheet-pop .pop-item')].find(b => b.textContent.includes(label));
+      if (item) item.click();
+      await sleep(80);
+      return !!item;
+    };
     // A 列行标记 a1..a4;B 列 92/78/(空)/88;C 列 张三/李四/陈五/(空)
     ['a1', 'a2', 'a3', 'a4'].forEach((t, i) => edit(i, 0, t));
     edit(0, 1, '92'); edit(1, 1, '78'); edit(3, 1, '88');
     edit(0, 2, '张三'); edit(1, 2, '李四'); edit(2, 2, '陈五');
-    sbtn(1).click();                                  // B 升:78 88 92 空
+    const ok1 = await sortVia(1, '升序');                // B 升:78 88 92 空
     const asc = { A: col(0), B: col(1), mark: sbtn(1).textContent };
-    sbtn(1).click();                                  // B 降:92 88 78 空
+    const ok2 = await sortVia(1, '降序');                // B 降:92 88 78 空
     const desc = { A: col(0), B: col(1), mark: sbtn(1).textContent };
-    sbtn(2).click();                                  // C 升(拼音:陈 chen < 李 li < 张 zhang)
+    const ok3 = await sortVia(2, '升序');                // C 升(拼音:陈 chen < 李 li < 张 zhang)
     const zhAsc = col(2);
     // 任一格内容再编辑 → 排序状态不可信,指示器清除
     edit(0, 3, 'x');
-    return { asc, desc, zhAsc, cleared: !w.querySelector('.col-sort.on') };
+    return { asc, desc, zhAsc, cleared: !w.querySelector('.col-sort.on'), menu: ok1 && ok2 && ok3 };
   })()`);
-  t('T61.11 列排序(升/降:数字序、空恒垫底、整行连动、▲/▼ 指示)',
-    s7.asc.B.join(',') === '78,88,92,' && s7.asc.A.join(',') === 'a2,a4,a1,a3' && s7.asc.mark === '▲'
+  t('T61.11 列排序(列头菜单升/降:数字序、空恒垫底、整行连动、▲/▼ 指示)',
+    s7.menu && s7.asc.B.join(',') === '78,88,92,' && s7.asc.A.join(',') === 'a2,a4,a1,a3' && s7.asc.mark === '▲'
     && s7.desc.B.join(',') === '92,88,78,' && s7.desc.A.join(',') === 'a1,a4,a2,a3' && s7.desc.mark === '▼',
     JSON.stringify(s7));
   t('T61.12 中文拼音序 + 编辑清指示(陈李张;码点序会是张李陈)',
     s7.zhAsc.slice(0, 3).join(',') === '陈五,李四,张三' && s7.cleared,
     JSON.stringify({ zhAsc: s7.zhAsc, cleared: s7.cleared }));
 
-  // 排序状态随 .axl 入档:再排一次 → 保存(已有路径不弹框)→ 读档断言 sort 字段
-  await ev(`(() => {
+  // 排序状态随 .axl 入档:再排一次(菜单)→ 保存(已有路径不弹框)→ 读档断言 sort 字段
+  await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const w = document.querySelector('.win[data-app=sheet]');
     w.querySelector('thead th[data-c="1"] .col-sort').click();
+    await sleep(100);
+    [...w.querySelectorAll('.sheet-pop .pop-item')].find(b => b.textContent.includes('升序')).click();
+    await sleep(150);
     [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
   })()`);
   await sleep(400);
@@ -6399,6 +6412,129 @@ group('T61', '电子表格(编辑 / 样式 / 列宽 / 排序 / 缩放 / .axl 存
   })()`);
   t('T61.13 排序状态入档(.axl sort 字段 + 列头 ▲)',
     s8.sort && s8.sort.c === 1 && s8.sort.dir === 1 && s8.mark === '▲', JSON.stringify(s8));
+
+  // 固定表头行:工具栏下拉设 2 → 前两行冻结(钉顶不随滚动)、不参与排序、随档保存
+  const s9 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    // 打开固定行下拉 → 选「固定前 2 行」
+    const fbtn = [...w.querySelectorAll('.app-toolbar .btn')].find(b => (b.title || '').includes('固定表头行'));
+    fbtn.click();
+    await sleep(120);
+    const picked = [...w.querySelectorAll('.sheet-pop .pop-item')].find(b => b.textContent.includes('2 行'));
+    picked.click();
+    await sleep(150);
+    const cls = { r0: td(0, 0).className, r1: td(1, 0).className, r2: td(2, 0).className,
+                  rowh0: w.querySelector('tbody th.rowh').className, label: fbtn.textContent };
+    // 滚动钉顶:滚 300px 后固定行仍贴在列头正下方,普通行滚走
+    const wrap = w.querySelector('.sheet-wrap');
+    wrap.scrollTop = 300;
+    await sleep(100);
+    const headBottom = w.querySelector('.sheet-table thead th').getBoundingClientRect().bottom;
+    const fzTop = td(0, 0).getBoundingClientRect().top;
+    const fz1Top = td(1, 0).getBoundingClientRect().top;
+    const normalTop = td(20, 0).getBoundingClientRect().top;
+    const sticky = fzTop >= headBottom - 1.5 && fzTop <= headBottom + 1.5 && fz1Top - fzTop < 32 && normalTop > fzTop + 50;
+    wrap.scrollTop = 0;
+    // 排序跳过固定行:D 列 0/1 行放 H1/H2(文本),2..4 行放 30/10/20(数字)→ 升序
+    edit(0, 3, 'H1'); edit(1, 3, 'H2'); edit(2, 3, '30'); edit(3, 3, '10'); edit(4, 3, '20');
+    w.querySelector('thead th[data-c="3"] .col-sort').click();
+    await sleep(100);
+    [...w.querySelectorAll('.sheet-pop .pop-item')].find(b => b.textContent.includes('升序')).click();
+    await sleep(150);
+    const colD = [0, 1, 2, 3, 4].map((r) => td(r, 3).textContent).join(',');
+    return { cls, sticky, colD };
+  })()`);
+  t('T61.14 固定表头行(下拉选 2:fz 类 + 行号着色 + 钉顶不随滚动)',
+    s9.cls.r0.includes('fz') && s9.cls.r1.includes('fz-last') && !s9.cls.r2.includes('fz')
+    && s9.cls.rowh0.includes('fz') && s9.cls.label.includes('固定行 2') && s9.sticky,
+    JSON.stringify(s9));
+  t('T61.15 固定行不参与排序(H1/H2 原位,下方数字序 10,20,30)',
+    s9.colD === 'H1,H2,10,20,30', s9.colD);
+  // 固定行入档
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=sheet]');
+    [...w.querySelectorAll('.app-toolbar .btn')].find(b => b.textContent.includes('保存') && !b.title).click();
+  })()`);
+  await sleep(400);
+  const s10 = await ev(`JSON.parse(WebOS.fs.read(${JSON.stringify(FILE)})).fixed`);
+  t('T61.16 固定行入档(.axl fixed 字段 = 2)', s10 === 2, String(s10));
+
+  // 单元格剪贴板(非编辑态 Ctrl+C/V):值+样式随块、虚线标记随粘清、
+  // 整列选择不接管、越界粘贴自动扩列
+  const s11 = await ev(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const w = document.querySelector('.win[data-app=sheet]');
+    const td = (r, c) => w.querySelector('td[data-r="' + r + '"][data-c="' + c + '"]');
+    const pd = (el, opt = {}) => { const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0,
+        clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, pointerId: 1, isPrimary: true, ...opt })); };
+    const edit = (r, c, text) => {
+      pd(td(r, c));
+      td(r, c).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const i = td(r, c).querySelector('input.cell-in');
+      i.value = text;
+      i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    const btn = (t) => [...w.querySelectorAll('.app-toolbar .btn')]
+      .find(b => ((b.title || '') + '|' + b.textContent.trim()).includes(t));
+    const wrap = w.querySelector('.sheet-wrap');
+    const key = (k, opt = {}) => wrap.dispatchEvent(new KeyboardEvent('keydown',
+      { key: k, bubbles: true, cancelable: true, ...opt }));
+    // 源数据:A1=甲 B1=乙(锚点取反确保加粗) A2=丙。B1 可能带着此前
+    // 用例经排序迁移来的样式,故记录取反前后态,断言改为"样式随复制走"
+    edit(0, 0, '甲'); edit(0, 1, '乙'); edit(1, 0, '丙');
+    pd(td(0, 1));
+    const beforeBold = td(0, 1).classList.contains('b');
+    btn('加粗').click();
+    const srcBold = td(0, 1).classList.contains('b');
+    // 选 A1:B2 → Ctrl+C(4 格虚线标记)
+    pd(td(0, 0));
+    pd(td(1, 1), { shiftKey: true });
+    key('c', { ctrlKey: true });
+    const marked = w.querySelectorAll('td.copy-src').length;
+    // 点 D4 → Ctrl+V(值+样式覆盖粘贴,标记清除)
+    pd(td(3, 3));
+    key('v', { ctrlKey: true });
+    await sleep(150);
+    const pasted = {
+      d4: td(3, 3).textContent, e4: td(3, 4).textContent, d5: td(4, 3).textContent,
+      styleFollows: td(3, 4).classList.contains('b') === srcBold,
+      markCleared: !w.querySelector('.copy-src'),
+    };
+    // 整列选择 → Ctrl+C 不接管(无标记,剪贴板仍为 A1:B2)
+    pd(w.querySelector('thead th[data-c="0"]'));
+    key('c', { ctrlKey: true });
+    const colNoCopy = w.querySelectorAll('td.copy-src').length === 0;
+    // 越界粘贴:T1(最后一列)粘 2 列宽 → 网格扩到 21 列,U1 得到 B1 的「乙」
+    pd(td(0, 19));
+    const curAtPaste = w.querySelector('td.cur')?.dataset?.r + ',' + w.querySelector('td.cur')?.dataset?.c;
+    key('v', { ctrlKey: true });
+    await sleep(150);
+    return { beforeBold, srcBold, marked, pasted, colNoCopy, curAtPaste,
+      cols2: w.querySelectorAll('.sheet-table thead th').length - 1,
+      grown: td(0, 20)?.textContent === '乙',
+      t1: td(0, 19)?.textContent };
+  })()`);
+  t('T61.17 单元格复制粘贴(非编辑态 Ctrl+C/V:值+样式随走、虚线标记随粘清)',
+    s11.marked === 4 && s11.srcBold === !s11.beforeBold
+    && s11.pasted.d4 === '甲' && s11.pasted.e4 === '乙' && s11.pasted.d5 === '丙'
+    && s11.pasted.styleFollows && s11.pasted.markCleared,
+    JSON.stringify(s11));
+  t('T61.18 复制边界(整列不接管;越界粘贴自动扩列 20→21)',
+    s11.colNoCopy && s11.cols2 === 21 && s11.grown,
+    JSON.stringify({ colNoCopy: s11.colNoCopy, cols2: s11.cols2, grown: s11.grown, curAtPaste: s11.curAtPaste, t1: s11.t1 }));
   await c.shot('t61-sheet');
   await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
 });
