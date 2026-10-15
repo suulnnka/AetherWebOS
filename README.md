@@ -121,6 +121,7 @@ npm run e2e -- --clean             # 清空测试 profile,全新 localStorage �
 | [应用开发指南](docs/app-dev-guide.md) | 写一个新应用:清单字段、mount 上下文、总线通信、样式与测试 |
 | [系统外壳与 IPC 参考](docs/shell-api.md) | 窗体结构、窗口 API、消息信封与系统事件 |
 | [快捷键总览](docs/shortcuts.md) | 全量约 115 条快捷键,含与浏览器默认行为的三层关系 |
+| [国际化方案](docs/i18n.md) | 中英双语 i18n 设计与分阶段计划:中文即键、字典组织、切换流程、接入指南 |
 | [剧情 / 游戏作者指南](docs/game-author-guide.md) | 虚拟网络、邮件、短信的作者 API 与内置谜题链 |
 | [开发经验教训](docs/lessons.md) | 迭代中实际踩过并修复的坑 |
 | [kix4 模式评估研究](docs/kix4-pattern-eval-study.md) | 围棋引擎模式权重压缩研究笔记 |
