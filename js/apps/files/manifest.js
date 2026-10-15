@@ -7,7 +7,7 @@ export default {
   color: 'linear-gradient(135deg,#f59e0b,#f97316)',
   width: 880, height: 560,
   min: { w: 560, h: 360 },
-  singleton: true,
+  singleton: false,      // 多实例:可同时开多个目录窗口对照/拖拽
   prefetch: true,  // 高频应用:启动空闲后预读 chunk,首次打开免等
   order: 1,
   category: '系统',

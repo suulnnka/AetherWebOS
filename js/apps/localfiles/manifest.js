@@ -7,7 +7,7 @@ export default {
   neon: { a: '#60a5fa', b: '#93c5fd' },
   width: 880, height: 560,
   min: { w: 560, h: 360 },
-  singleton: true,
+  singleton: false,      // 多实例:可同时浏览多个本机目录
   order: 1.5,
   category: '系统',
   desc: '浏览本机真实文件,授权后导入系统使用',

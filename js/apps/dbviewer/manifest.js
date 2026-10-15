@@ -7,7 +7,7 @@ export default {
   neon: { a: '#a78bfa', b: '#818cf8' },
   width: 880, height: 620,
   min: { w: 600, h: 440 },
-  singleton: true,
+  singleton: false,      // 多实例:可同时打开多个库对照查询
   order: 2.6,
   store: true,          // 商店应用:需经软件商店安装
   category: '工具',
