@@ -44,7 +44,7 @@ function snapshot() {
     const w = wm.get(t.id);
     if (!w) continue;
     if (w.app?.dialog || w.appId === 'popup') continue;   // 对话框/临时弹窗不记
-    if (seen.has(w.appId)) continue;                        // 单实例只记一份
+    if (seen.has(w.appId) && w.app?.singleton !== false) continue;   // 单实例只记一份;多实例(任务便签)逐窗记录(带 params)
     seen.add(w.appId);
     let params = null;
     try { params = w.ctx?.params ? JSON.parse(JSON.stringify(w.ctx.params)) : null; }

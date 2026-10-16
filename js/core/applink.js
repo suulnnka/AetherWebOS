@@ -28,11 +28,16 @@ export function desktopDir(user = accounts.current()) {
 /** 文件名是否为应用快捷方式 */
 export const isAppLink = (name) => String(name).toLowerCase().endsWith(APPEXT);
 
-/** 读快捷方式指向的应用清单;文件缺失/内容无效时返回 null */
+/** 读快捷方式指向的应用清单;文件缺失/内容无效/目标未安装时返回 null。
+ *  未安装与「指向的应用不存在」同口径:快捷方式只认当下可用的目标,
+ *  统一灰色文件图标 + 双击报失效 —— 不区分、也不引导安装
+ *  (wm.open 的安装门禁只服务直开路径:开始菜单 / 商店 / 终端 open <应用ID>)。 */
 export function appLinkApp(path) {
   const content = fs.read(path) ?? fs.readRaw(path);
   if (content == null) return null;
-  return get(content.trim()) || null;
+  const app = get(content.trim());
+  if (!app || !isInstalled(app.id)) return null;
+  return app;
 }
 
 /** 从应用彩色渐变里取第一个 hex(files 列表用单色渲染图标) */
@@ -102,6 +107,12 @@ export function ensureDesktopShortcuts(user = accounts.current()) {
   for (const a of list()) {
     if (a.desktop === false || a.desktopIcon === false) continue;
     if (!isInstalled(a.id, user)) continue;
+    // 改名迁移:清单声明 oldNames 的应用,清掉旧名快捷方式
+    // (内容仍指向本应用才删,防误删用户自建的同名文件)
+    for (const old of a.oldNames || []) {
+      const op = fs.joinPath(desk, old + APPEXT);
+      if (fs.exists(op) && fs.read(op, { as: 'root' }) === a.id) fs.rm(op, { as: 'root' });
+    }
     const p = fs.joinPath(desk, a.name + APPEXT);
     if (!fs.exists(p) && fs.write(p, a.id, opts)) n++;
   }
@@ -125,18 +136,20 @@ export function ensureDesktopShortcuts(user = accounts.current()) {
   return n;
 }
 
-/** 卸载清理(按用户):删除 user 桌面上指向 appId 的快捷方式(根目录 + 棋类文件夹) */
+/** 卸载清理(按用户):删除 user 桌面上指向 appId 的快捷方式(根目录 + 棋类文件夹,含改名前的旧名) */
 export function removeAppShortcuts(appId, user = accounts.current()) {
   const app = get(appId);
   const desk = desktopPath(user);
   if (!app || !desk) return 0;
   const chessDir = fs.joinPath(desk, CHESS_FOLDER);   // joinPath 两参:嵌套拼三段
   let n = 0;
-  for (const p of [
-    fs.joinPath(desk, app.name + APPEXT),
-    fs.joinPath(chessDir, app.name + APPEXT),
-  ]) {
-    if (fs.rm(p, { as: 'root' })) n++;
+  for (const name of [app.name, ...(app.oldNames || [])]) {
+    for (const p of [
+      fs.joinPath(desk, name + APPEXT),
+      fs.joinPath(chessDir, name + APPEXT),
+    ]) {
+      if (fs.rm(p, { as: 'root' })) n++;
+    }
   }
   return n;
 }

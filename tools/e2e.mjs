@@ -391,9 +391,21 @@ group('T8', '文件管家 + 记事本(IPC 参数传递)', async () => {
   })`);
   t('T8 文件管家打开', files.items >= 4, `items=${files.items} path=${files.crumbs}`);
   await c.shot('t8-files');
-  // 进入 documents,双击 欢迎使用.txt
-  await ev(`[...document.querySelectorAll('.fitem')].find(f => f.textContent.trim().startsWith('documents')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`);
-  await sleep(400);
+
+  // 双击进入文件夹后不保持选中态(打开文件同理,走同一 openItem)
+  const selAfterNav = await ev(`(async () => {
+    const doc = [...document.querySelectorAll('.fitem')].find(f => f.textContent.trim().startsWith('documents'));
+    doc.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 100));
+    const wasSel = doc.classList.contains('selected');
+    doc.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+    return { wasSel, selLeft: !!document.querySelector('.fitem.selected'), entered: !doc.isConnected };
+  })()`);
+  t('T8.0 打开(文件夹/文件)后不保持选中', selAfterNav.wasSel && !selAfterNav.selLeft && selAfterNav.entered,
+    JSON.stringify(selAfterNav));
+
+  // 双击 欢迎使用.txt
   await ev(`[...document.querySelectorAll('.fitem')].find(f => f.textContent.includes('欢迎使用')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`);
   await sleep(600);
   const notes = await ev(`({
@@ -1375,6 +1387,22 @@ group('T24', '桌面操作系统化:文件图标/右键新建/框选/吸附/固�
   })()`);
   t('T24 桌面 = 快捷方式文件 + 文件夹(无自动图标)', dsk1.apps === 0 && dsk1.links >= 12 && await ev(`WebOS.fs.isDir(WebOS.fs.desktopPath())`), JSON.stringify(dsk1));
 
+  // 双击打开应用后,图标不再保持选中态
+  const iconSel = await ev(`(async () => {
+    const icon = [...document.querySelectorAll('.dicon')].find(n => n.dataset.key.endsWith('/便签.app'));
+    if (!icon) return { noIcon: true };
+    icon.classList.add('selected');
+    icon.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 600));
+    return {
+      opened: !!document.querySelector('.win[data-app=todo]'),
+      selLeft: !!document.querySelector('.dicon.selected'),
+    };
+  })()`);
+  await ev(`[...document.querySelectorAll('.win[data-app=todo]')].forEach(w => WebOS.wm.close(w.dataset.id))`);
+  await sleep(300);
+  t('T24.0 双击打开后图标不保持选中', iconSel.opened === true && !iconSel.selLeft, JSON.stringify(iconSel));
+
   // b. 桌面右键 → 新建文本文档(全 GUI:菜单 → 系统对话框输入)
   await ev(`document.getElementById('icons').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 700, clientY: 300 }))`);
   await sleep(250);
@@ -1526,7 +1554,8 @@ group('T25', '真实输入回归(浏览器输入管线:真实鼠标与键盘事�
     notes: !!document.querySelector('.win[data-app=notes]'),
     selected: document.querySelectorAll('.dicon.selected').length,
   })`);
-  t('T25 真实鼠标双击桌面图标', realClick.notes === true && realClick.selected >= 1, JSON.stringify(realClick));
+  // 打开后不保持选中(新语义)
+  t('T25 真实鼠标双击桌面图标(打开且不残留选中)', realClick.notes === true && realClick.selected === 0, JSON.stringify(realClick));
 
   // 25.2 真实键盘:记事本打字
   await ev(`(() => { document.querySelector('.win[data-app=notes] .notes-area').focus(); return true; })()`);
@@ -1713,14 +1742,14 @@ group('T26', '邮件应用', async () => {
 
 });
 
-group('T27', '任务(Todo)应用', async () => {
-  /* ---- T27 任务(Todo)应用 ---- */
+group('T27', '便签(Todo)应用', async () => {
+  /* ---- T27 便签应用(原名「任务」):无边框顶栏(最小化/锁/☰,输入态让位)+ 双击空白新建 + 独立便签窗口 ---- */
   await ev(`(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('webos.todo.v1') || k === 'webos.account-session.v1') localStorage.removeItem(k);
   })()`);
   await wipeAppData('todoer', 'todo');   // 数据已迁 appdata:清档,种子任务重新播种
   await fresh();   // 清档重载(含账号会话),种子数据从零开始
-  // 登录测试用户(todo 现在需要账号)
+  // 登录测试用户(todo 需要账号)
   await ev(`(async () => {
     const acc = (await import('./js/core/accounts.js')).accounts;
     if (!(await acc.login('todoer', 'todopass').then(r => r.ok)).catch?.(() => false)) {
@@ -1731,118 +1760,474 @@ group('T27', '任务(Todo)应用', async () => {
   await ev(`WebOS.wm.open('todo')`);
   await sleep(700);
   const td0 = await ev(`(() => {
-    const items = [...document.querySelectorAll('.todo-item')];
+    const w = document.querySelector('.win[data-app=todo]');
+    const wr = w.getBoundingClientRect();
+    const cr = w.querySelector('.todo-close').getBoundingClientRect();
     return {
-      items: items.length,
-      ring: document.querySelector('.todo-ring-num')?.textContent,
-      status: document.querySelector('.win[data-app=todo] .app-status span').textContent,
+      items: w.querySelectorAll('.todo-item').length,
+      head: !!w.querySelector('.win-head'),          // 无边框:无系统窗头
+      bar: !!w.querySelector('.todo-bar'),
+      input: w.querySelector('.todo-bar .todo-input')?.tagName,   // TEXTAREA
+      min: !!w.querySelector('.todo-min'),           // 最小化
+      lock: !!w.querySelector('.todo-lock'),         // 置顶锁
+      menuBtn: !!w.querySelector('.todo-menu-btn'),  // ☰ 更多设置
+      close: !!w.querySelector('.todo-close'),
+      inputCollapsed: w.querySelector('.todo-input').offsetWidth < 200,   // 未聚焦时收窄
+      spacerW: w.querySelector('.todo-bar-spacer')?.offsetWidth || 0,     // 图标组右对齐的占位
+      rightAligned: wr.right - cr.right < 20,        // ✕ 贴窗口右缘
+      bg: getComputedStyle(w).backgroundColor,       // 激活态不透明淡黄
     };
   })()`);
-  t('T27 任务:种子数据 + 侧栏 + 进度环', td0.items === 3 && td0.ring === '33%', JSON.stringify(td0));
+  t('T27 便签结构(顶栏:输入收窄/图标组右对齐,最小化/锁/☰/✕,种子 1 条)',
+    td0.items === 1 && !td0.head && td0.bar && td0.input === 'TEXTAREA' && td0.min && td0.lock
+      && td0.menuBtn && td0.close && td0.inputCollapsed && td0.spacerW > 40 && td0.rightAligned
+      && td0.bg === 'rgb(254, 249, 224)',
+    JSON.stringify(td0));
 
-  // 添加任务(真实流程:选项目 → 输入 → 回车)
-  await ev(`(() => {
+  // 输入态让位:聚焦 → 输入框展开,隐藏 最小化/锁/☰(✕ 保留);失焦恢复
+  const es = await ev(`(async () => {
     const w = document.querySelector('.win[data-app=todo]');
-    const sel = w.querySelector('.todo-add select');   // 项目下拉
-    sel.value = '工作';
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
-    const inp = w.querySelector('.todo-add input');
+    const bar = w.querySelector('.todo-bar');
+    const inp = w.querySelector('.todo-input');
+    const hidden = (sel) => {
+      const b = w.querySelector(sel);
+      return !b || b.offsetParent === null;
+    };
+    inp.dispatchEvent(new Event('focus'));
+    await new Promise(r => setTimeout(r, 250));
+    const during = {
+      editing: bar.classList.contains('editing'),
+      wide: inp.offsetWidth > 200,
+      minHidden: hidden('.todo-min'), lockHidden: hidden('.todo-lock'), menuHidden: hidden('.todo-menu-btn'),
+      closeVisible: !hidden('.todo-close'),
+    };
+    inp.dispatchEvent(new Event('blur'));
+    await new Promise(r => setTimeout(r, 250));
+    const after = {
+      editing: !bar.classList.contains('editing'),
+      narrow: inp.offsetWidth < 200,
+      minVisible: !hidden('.todo-min'), lockVisible: !hidden('.todo-lock'), menuVisible: !hidden('.todo-menu-btn'),
+    };
+    return { during, after };
+  })()`);
+  t('T27.0b 输入态让位(聚焦隐藏最小化/锁/☰,失焦恢复)',
+    es.during.editing && es.during.wide && es.during.minHidden && es.during.lockHidden && es.during.menuHidden && es.during.closeVisible
+      && es.after.editing && es.after.narrow && es.after.minVisible && es.after.lockVisible && es.after.menuVisible,
+    JSON.stringify(es));
+
+  // 添加任务(输入 → 回车 → 列表 + 持久化)
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=todo] .todo-input');
     inp.value = '写周报';
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(600);   // persist 防抖 200ms
   const stored1 = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return (s?.tasks || []).some(t => t.text === '写周报' && t.project === '工作') || null;
+    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text === '写周报' && !t.done) || null;
   })()`, 5000);
   const td1 = {
     added: await ev(`[...document.querySelectorAll('.todo-t')].some(t => t.textContent === '写周报')`),
     store: stored1 === true,
   };
-  t('T27.1 添加任务(项目下拉→回车→持久化)', td1.added && td1.store, JSON.stringify(td1));
+  t('T27.1 添加任务(回车→列表+持久化)', td1.added && td1.store, JSON.stringify(td1));
 
-  // 完成任务 → 通知 + 进度更新
+  // 完成与取消完成(圆圈点击 → 划线;再点 → 还原)
   const td2 = await ev(`(async () => {
-    const row = [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('写周报'));
-    row.querySelector('.todo-check').click();
-    await new Promise(r => setTimeout(r, 400));
+    const row = () => [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('写周报'));
+    row().querySelector('.todo-check').click();
+    await new Promise(r => setTimeout(r, 150));
+    const done = !!row()?.classList.contains('done');
+    row().querySelector('.todo-check').click();
+    await new Promise(r => setTimeout(r, 150));
+    const undone = !row()?.classList.contains('done');
+    return { done, undone };
+  })()`);
+  t('T27.2 点击完成/取消完成', td2.done && td2.undone, JSON.stringify(td2));
+
+  // 双击编辑任务文本(Enter 保存)—— 编辑种子行「未完成任务」
+  const td3 = await ev(`(async () => {
+    const row = [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('未完成任务'));
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    const ed = row.querySelector('.todo-edit');
+    if (!ed) return { noEdit: true };
+    ed.value = '未完成任务(已编辑)';
+    ed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    return { edited: [...document.querySelectorAll('.todo-t')].some(x => x.textContent.includes('已编辑')) };
+  })()`);
+  await sleep(600);
+  const stored3 = await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text.includes('已编辑'));
+  })()`);
+  t('T27.3 双击编辑任务文本(保存+持久化)', td3.edited && stored3 === true, JSON.stringify(td3));
+
+  // 双击空白处新建:空内容失焦不创建;有内容失焦创建
+  const draft0 = await ev(`(() => {
+    const box = document.querySelector('.win[data-app=todo] .todo-items');
+    box.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 220, clientY: 330 }));
+    return !!document.querySelector('.todo-draft .todo-edit');
+  })()`);
+  await ev(`document.querySelector('.todo-draft .todo-edit')?.dispatchEvent(new Event('blur'))`);   // 无头 Chrome 的 .blur() 不派发事件,须合成
+  await sleep(200);
+  const noCreate = await ev(`(() => ({
+    draftGone: !document.querySelector('.todo-draft'),
+    count: document.querySelectorAll('.win[data-app=todo] .todo-item').length,
+  }))()`);
+  await ev(`(() => {
+    const box = document.querySelector('.win[data-app=todo] .todo-items');
+    box.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 220, clientY: 330 }));
+    const ed = document.querySelector('.todo-draft .todo-edit');
+    ed.value = '空白处双击创建';
+    ed.dispatchEvent(new Event('blur'));
+  })()`);
+  await sleep(600);
+  const created = await ev(`(() => ({
+    created: [...document.querySelectorAll('.todo-t')].some(x => x.textContent === '空白处双击创建'),
+    count: document.querySelectorAll('.win[data-app=todo] .todo-item').length,
+  }))()`);
+  t('T27.3b 双击空白新建任务(空弃/有文即建)',
+    draft0 === true && noCreate.draftGone && noCreate.count === 2 && created.created && created.count === 3,
+    JSON.stringify({ draft0, noCreate, created }));
+
+  // 回车 = 新建并直接编辑(焦点在空白处时;输入框/编辑框里的回车另有语义)
+  const enterDraft = await ev(`(async () => {
+    document.activeElement?.blur?.();
+    document.body.focus?.();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    const ed = document.querySelector('.todo-draft .todo-edit');
+    if (!ed) return { draft: false };
+    ed.value = '回车新建的任务';
+    ed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 200));
     return {
-      done: [...document.querySelectorAll('.todo-item.done')].some(i => i.textContent.includes('写周报')),
-      toast: [...document.querySelectorAll('#toasts .toast')].some(t => t.textContent.includes('任务完成')),
-      ring: document.querySelector('.todo-ring-num')?.textContent,
+      draft: true,
+      created: [...document.querySelectorAll('.todo-t')].some(x => x.textContent === '回车新建的任务'),
+      count: document.querySelectorAll('.win[data-app=todo] .todo-item').length,
     };
   })()`);
-  t('T27.2 完成任务(划线+通知+进度环)', td2.done && td2.toast && td2.ring === '50%', JSON.stringify(td2));
+  t('T27.3c 回车新建并编辑任务', enterDraft.draft && enterDraft.created && enterDraft.count === 4,
+    JSON.stringify(enterDraft));
 
-  // 新建项目 + 切换
-  await ev(`(() => { [...document.querySelectorAll('.app-side .btn')].find(b => b.textContent.includes('新建项目')).click(); })()`);
-  await sleep(450);
+  // 拖拽排序(合成 DnD:第 1 条拖到「写周报」上,落在其前)
+  const orderBefore = await ev(`[...document.querySelectorAll('.todo-t')].map(x => x.textContent)`);
+  // 拖拽为指针版(5px 起拖阈值):pointerdown 于第 1 条,move 到「写周报」行上,up
   await ev(`(() => {
-    const inp = document.querySelector('.win[data-app=sysdialog] .dlg-input');
-    inp.value = '解谜';
-    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const rows = [...document.querySelectorAll('.todo-item')];
+    const a = rows[0].getBoundingClientRect();
+    rows[0].dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: a.x + 30, clientY: a.y + 10, bubbles: true, cancelable: true }));
+    const t = rows.find(r => r.textContent.includes('写周报')).getBoundingClientRect();
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: t.x + 40, clientY: t.y + 10, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: t.x + 40, clientY: t.y + 10, bubbles: true }));
   })()`);
-  await sleep(500);
-  const stored3 = await waitFor(`(async () => {
+  await sleep(600);
+  const orderAfter = await ev(`[...document.querySelectorAll('.todo-t')].map(x => x.textContent)`);
+  const stored4 = await ev(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return (s?.projects || []).includes('解谜') || null;
-  })()`, 5000);
-  const td3 = {
-    projects: stored3 === true ? ['解谜'] : [],
-    active: await ev(`document.querySelector('.app-side .nav-item.active')?.textContent.replace(/\\s+/g, '') || ''`),
-  };
-  t('T27.3 新建项目并切换', td3.projects.includes('解谜') && td3.active?.startsWith('解谜'), JSON.stringify(td3));
+    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).map(x => x.text);
+  })()`);
+  const di = orderBefore.indexOf('写周报');   // 目标行索引(第 1 条拖到它前面)
+  t('T27.4 拖拽排序(DOM+持久化)',
+    di > 0 && orderAfter[di] === orderBefore[0] && orderAfter[0] === orderBefore[1] && stored4[di] === orderBefore[0],
+    JSON.stringify({ before: orderBefore, after: orderAfter }));
 
-  // 逾期任务:注入一条到 appdata(模拟另一实例写入),重开后验证
-  await ev(`(async () => {
-    const { loadState, saveState } = WebOS.appdata;
-    const user = WebOS.accounts.current();
-    const s = (await loadState('todo', user)) || { seq: 0, projects: ['个人', '工作'], tasks: [] };
-    s.seq = (s.seq || 0) + 1;   // 提升版本号,让运行中的 todo 实例同步采纳
-    if (!s.tasks.some(t => t.text === '过期任务')) {
-      s.tasks.push({ id: 't99', project: '解谜', text: '过期任务', done: false, prio: 2, due: '2020-01-01', starred: false, created: Date.now() });
+  // 删除任务(悬停出的红色 ✕,无确认弹窗)
+  const td5 = await ev(`(async () => {
+    const row = [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('写周报'));
+    row.querySelector('.todo-del').click();
+    await new Promise(r => setTimeout(r, 150));
+    return { gone: ![...document.querySelectorAll('.todo-t')].some(x => x.textContent === '写周报') };
+  })()`);
+  await sleep(600);
+  const stored5 = await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text === '写周报');
+  })()`);
+  t('T27.5 删除任务(列表+持久化)', td5.gone && stored5 === false, JSON.stringify(td5));
+
+  // 创建新便签:☰ 菜单 → 新窗口(无输入框/勾选框,点进去就写)→ 持久化 → 菜单删除
+  await ev(`(() => {
+    document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('新建便签')).click();
+  })()`);
+  await sleep(700);
+  const note0 = await ev(`(() => {
+    const wins = [...document.querySelectorAll('.win[data-app=todo]')];
+    const n = wins.find(w => w.querySelector('.todo-note-text'));
+    return {
+      count: wins.length,
+      hasInput: !!n?.querySelector('.todo-input'),
+      hasCheck: !!n?.querySelector('.todo-check'),
+      ta: n?.querySelector('.todo-note-text')?.tagName,
+    };
+  })()`);
+  await ev(`(() => {
+    const ta = [...document.querySelectorAll('.win[data-app=todo] .todo-note-text')].pop();
+    ta.value = '便签内容测试';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(700);
+  const noteStore = await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return ((s?.boards || []).some(b => b.type === 'note' && b.text === '便签内容测试'));
+  })()`);
+  await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    n.querySelector('.todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('删除便签')).click();
+  })()`);
+  await sleep(700);
+  const noteGone = await ev(`(() => ({
+    winGone: ![...document.querySelectorAll('.win[data-app=todo]')].some(w => w.querySelector('.todo-note-text')),
+    mainAlive: !!document.querySelector('.win[data-app=todo] .todo-input'),
+  }))()`);
+  const noteStoreGone = await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    return (s?.boards || []).filter(b => b.type === 'note').length;
+  })()`);
+  t('T27.5b 创建/删除便签窗口(速记+持久化)',
+    note0.count === 2 && !note0.hasInput && !note0.hasCheck && note0.ta === 'TEXTAREA'
+      && noteStore === true && noteGone.winGone && noteGone.mainAlive && noteStoreGone === 0,
+    JSON.stringify({ note0, noteStore, noteGone, noteStoreGone }));
+
+  // 窗口自动增高:连加 30 条 → 窗口长高并封顶(不超桌面),列表内部出现滚动
+  const h0 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=todo] .todo-input');
+    for (let i = 1; i <= 30; i++) {
+      inp.value = '批量任务' + i;
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     }
-    await saveState('todo', s, user);
-    WebOS.wm.close(document.querySelector('.win[data-app=todo]').dataset.id);
-    WebOS.wm.open('todo');
   })()`);
-  await sleep(2100);   // 等跨实例同步 tick(1.5s)
-  const td4 = await ev(`(() => {
-    const w = [...document.querySelectorAll('.win[data-app=todo]')].pop();
-    const late = [...w.querySelectorAll('.todo-due')].find(d => d.classList.contains('late'));
-    return { late: late?.textContent, status: w.querySelector('.app-status span').textContent };
+  await sleep(400);
+  const td6 = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=todo]');
+    const box = w.querySelector('.todo-items');
+    const areaH = document.getElementById('windows').getBoundingClientRect().height;
+    return { h: w.offsetHeight, areaH: Math.round(areaH), scrollable: box.scrollHeight > box.clientHeight + 2 };
   })()`);
-  t('T27.4 逾期任务红色标记', td4.late?.includes('已逾期'), JSON.stringify(td4));
+  t('T27.6 自动增高封顶与列表内部滚动',
+    td6.h > h0 + 200 && td6.h <= td6.areaH - 25 && td6.scrollable,
+    JSON.stringify({ h0, ...td6 }));
   await c.shot('t27-todo');
 
-  // 导出到桌面
-  await ev(`(() => { [...document.querySelectorAll('.win[data-app=todo] .btn')].find(b => b.textContent.includes('导出到桌面')).click(); })()`);
+  // 删除批量任务:窗口高度回落
+  await ev(`(() => {
+    for (let i = 0; i < 30; i++) {
+      const btn = document.querySelector('.win[data-app=todo] .todo-item .todo-del');
+      if (!btn) break;
+      btn.click();
+    }
+  })()`);
+  await sleep(400);
+  const h2 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
+  t('T27.7 删除后窗口回落', h2 < td6.h - 200 && h2 >= 150, `h2=${h2} capped=${td6.h}`);
+
+  // 用户手动改尺寸(拖右下角)后:自动调高永久停用
+  const h3 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=todo]');
+    const rz = w.querySelector('.rz-se');
+    const r = rz.getBoundingClientRect();
+    rz.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: r.x + 3, clientY: r.y + 3, bubbles: true, cancelable: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: r.x + 80, clientY: r.y + 120, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: r.x + 80, clientY: r.y + 120, bubbles: true }));
+  })()`);
+  const h4 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=todo] .todo-input');
+    inp.value = '锁定后任务A';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    inp.value = '锁定后任务B';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(300);
+  const h5 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
+  const cnt5 = await ev(`document.querySelectorAll('.win[data-app=todo] .todo-item').length`);
+  t('T27.8 用户改尺寸后锁定(加任务不再自动调高)', h4 > h3 + 50 && h5 === h4 && cnt5 === 5, JSON.stringify({ h3, h4, h5, cnt5 }));
+
+  // 置顶(顶栏锁按钮,点亮表示选中):压过新窗口;再点熄灭;非激活态底色半透明
+  await ev(`document.querySelector('.win[data-app=todo] .todo-lock').click()`);
+  const lockOn = await ev(`document.querySelector('.win[data-app=todo] .todo-lock').classList.contains('on')`);
+  await sleep(200);
+  await ev(`WebOS.wm.open('calc')`);
   await sleep(500);
-  await sleep(600);
-  const td5 = await ev(`WebOS.fs.read(WebOS.fs.desktopPath()+'/todo.txt')`);
-  const ok5 = typeof td5 === 'string' && td5.includes('过期任务') && td5.includes('写周报');
-  if (!ok5) console.log('   todo.txt 内容:', JSON.stringify((td5 || '').slice(0, 200)));
-  t('T27.5 导出清单到桌面文件', ok5, (td5 || '').slice(0, 80));
+  const td9 = await ev(`(() => {
+    const a = document.querySelector('.win[data-app=todo]');
+    const b = document.querySelector('.win[data-app=calc]');
+    return {
+      todo: +a.style.zIndex, calc: +b.style.zIndex,
+      bgInactive: getComputedStyle(a).backgroundColor,
+    };
+  })()`);
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=calc]').dataset.id)`);
+  const unpin = await ev(`(() => {
+    const lock = document.querySelector('.win[data-app=todo] .todo-lock');
+    lock.click();   // 取消置顶
+    return !lock.classList.contains('on');
+  })()`);
+  t('T27.9 顶栏锁按钮(点亮/压过新窗口/再点熄灭/非激活半透明)',
+    lockOn === true && td9.todo > td9.calc && td9.bgInactive.includes('0.6') && unpin === true,
+    JSON.stringify(td9) + ` lockOn=${lockOn} unpin=${unpin}`);
+
+  // 层级模型:置顶只是提升一档,压不过系统模态(全屏遮罩锁定的对话框)
+  await ev(`document.querySelector('.win[data-app=todo] .todo-lock').click()`);
+  await sleep(150);
+  await ev(`(() => { WebOS.dialogs.confirm({ title: '系统模态', message: '置顶不应压过系统模态' }); })()`);
+  await sleep(500);
+  const mod = await ev(`(() => {
+    const t = document.querySelector('.win[data-app=todo]');
+    const d = document.querySelector('.win[data-app=sysdialog]');
+    const s = document.querySelector('.modal-shade');
+    return { todo: +t.style.zIndex, dlg: +d?.style.zIndex, shade: +s?.style.zIndex };
+  })()`);
+  await ev(`(() => {
+    const btn = [...document.querySelectorAll('.win[data-app=sysdialog] .btn')].pop();
+    if (btn) btn.click();
+  })()`);
+  await sleep(400);
+  const modAfter = await ev(`(() => ({
+    shadeGone: !document.querySelector('.modal-shade'),
+    stillTop: [...document.querySelectorAll('.win')].every(x => x === document.querySelector('.win[data-app=todo]')
+      || +x.style.zIndex < +document.querySelector('.win[data-app=todo]').style.zIndex),
+  }))()`);
+  t('T27.9b 置顶压不过系统模态(遮罩与对话框在其上,解除后自动回顶)',
+    mod.dlg > mod.todo && mod.shade > mod.todo && modAfter.shadeGone && modAfter.stillTop,
+    JSON.stringify(mod) + ' ' + JSON.stringify(modAfter));
+  await ev(`document.querySelector('.win[data-app=todo] .todo-lock').click()`);   // 收尾:取消置顶
+
+  // 置顶继承:置顶窗口创建的新便签也应是置顶(锁点亮,且浮在创建者之上)
+  await ev(`document.querySelector('.win[data-app=todo] .todo-lock').click()`);   // 主窗置顶
+  await sleep(150);
+  await ev(`(() => {
+    document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('新建便签')).click();
+  })()`);
+  await sleep(700);
+  const inherit = await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    return {
+      newPinned: n.querySelector('.todo-lock').classList.contains('on'),
+      newZ: +n.style.zIndex,
+      mainZ: +document.querySelector('.win[data-app=todo]').style.zIndex,
+      mainPinned: document.querySelector('.win[data-app=todo] .todo-lock').classList.contains('on'),
+    };
+  })()`);
+  // 收尾:删除这张便签,主窗取消置顶
+  await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    n.querySelector('.todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('删除便签')).click();
+  })()`);
+  await sleep(400);
+  await ev(`document.querySelector('.win[data-app=todo] .todo-lock').click()`);
+  t('T27.9c 置顶窗口创建的新便签继承置顶',
+    inherit.newPinned && inherit.mainPinned && inherit.newZ > inherit.mainZ,
+    JSON.stringify(inherit));
 
   // 持久化:刷新后任务仍在
   await fresh();
-  const td6 = await ev(`(async () => {
+  const td10 = await ev(`(async () => {
     const { loadState } = WebOS.appdata;
     const s = await loadState('todo', WebOS.accounts.current());
-    return ((s?.tasks) || []).length;
+    const first = (s?.boards || []).find(b => b.type === 'todo');
+    return { n: (first?.tasks || []).length, boards: JSON.stringify(s) };
   })()`);
-  t('T27.6 持久化(刷新后任务保留)', td6 >= 5, `tasks=${td6}`);
+  if (td10.n !== 5) console.log('   [T27.10 debug] boards =', td10.boards);
+  t('T27.10 持久化(刷新后任务保留)', td10.n === 5, `tasks=${td10.n}`);
+
+  // 桌面再次打开 = 新开一张独立空便签(不共享已开窗口数据);菜单「新建待办」
+  // 同样独立;「删除待办」只删本板(断言用增量,不受会话恢复时机影响)
+  const before = await ev(`document.querySelectorAll('.win[data-app=todo]').length`);
+  await ev(`WebOS.wm.open('todo')`);
+  await sleep(700);
+  const opened = await ev(`(() => {
+    const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
+    const nw = mains[mains.length - 1];
+    return {
+      count: document.querySelectorAll('.win[data-app=todo]').length,
+      emptyNew: nw.querySelectorAll('.todo-item').length === 0,   // 新开的是空清单
+      oldKeptVisible: mains.length < 2 || [...mains[0].querySelectorAll('.todo-t')].some(x => x.textContent.includes('锁定后任务A')),
+    };
+  })()`);
+  await ev(`(() => {
+    document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('新建便签')).click();
+  })()`);
+  await sleep(700);
+  await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    n.querySelector('.todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('新建待办')).click();
+  })()`);
+  await sleep(700);
+  const wNew = await ev(`(() => ({
+    count: document.querySelectorAll('.win[data-app=todo]').length,
+    mains: [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input')).length,
+  }))()`);
+  // 在新清单窗口加任务 → 其他任何待办窗口都看不到(板间数据隔离)
+  await ev(`(() => {
+    const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
+    const inp = mains[mains.length - 1].querySelector('.todo-input');
+    inp.value = '隔离板专属任务';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await sleep(700);
+  const isolation = await ev(`(async () => {
+    const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
+    const nw = mains[mains.length - 1];
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    const boards = s?.boards || [];
+    return {
+      inNew: [...nw.querySelectorAll('.todo-t')].some(x => x.textContent === '隔离板专属任务'),
+      othersClean: mains.slice(0, -1).every(m => ![...m.querySelectorAll('.todo-t')].some(x => x.textContent === '隔离板专属任务')),
+      onlyInOne: boards.filter(b => (b.tasks || []).some(t => t.text === '隔离板专属任务')).length === 1,
+    };
+  })()`);
+  // 删除新清单:只删它自己,原数据原封不动
+  await ev(`(() => {
+    const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
+    mains[mains.length - 1].querySelector('.todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('删除待办')).click();
+  })()`);
+  await sleep(700);
+  const cleared = await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    const todos = (s?.boards || []).filter(b => b.type === 'todo');
+    return {
+      count: document.querySelectorAll('.win[data-app=todo]').length,   // 少一个窗口
+      oldKept: todos.some(b => (b.tasks || []).some(t => t.text === '锁定后任务A')),
+      goneTask: todos.every(b => !(b.tasks || []).some(t => t.text === '隔离板专属任务')),
+    };
+  })()`);
+  t('T27.10b 每窗一板数据隔离(桌面重开=新空清单/新清单独立/删除只删自己)',
+    opened.count === before + 1 && opened.emptyNew && opened.oldKeptVisible
+      && wNew.count === opened.count + 2 && wNew.mains >= 2
+      && isolation.inNew && isolation.othersClean && isolation.onlyInOne
+      && cleared.count === wNew.count - 1 && cleared.oldKept && cleared.goneTask,
+    JSON.stringify({ before, opened, wNew, isolation, cleared }));
+  // 收尾:清场全部便签窗口
+  await ev(`(() => {
+    [...document.querySelectorAll('.win[data-app=todo]')].forEach(w => WebOS.wm.close(w.dataset.id));
+  })()`);
+  await sleep(400);
+
+  // 自绘关闭按钮(顶栏黑色 ✕)
   await ev(`WebOS.wm.open('todo')`);
   await sleep(600);
+  await ev(`document.querySelector('.win[data-app=todo] .todo-close').click()`);
+  await sleep(400);
+  t('T27.11 自绘关闭按钮', await ev(`!document.querySelector('.win[data-app=todo]')`) === true);
 
   const errs27 = await ev(`window.__errs.length`);
-  t('T27.7 全程无错误', errs27 === 0, `errs=${errs27}`);
+  t('T27.12 全程无错误', errs27 === 0, `errs=${errs27}`);
 
 });
 
 group('T28', '短信应用', async () => {
   /* ---- T28 短信应用 ---- */
-  const prevUser = await ev(`WebOS.accounts.current()`);   // 记住会话用户(T28.4 会切到 todoer)
   await ev(`localStorage.removeItem('webos.sms.v1')`);
   await wipeSharedAppData('sms');   // 短信为设备级收件箱:清设备库 + 旧按用户库,种子短信重新播种
   await fresh();   // 种子短信播种
@@ -1893,68 +2278,32 @@ group('T28', '短信应用', async () => {
   })()`);
   t('T28.3 服务台短信自动回信', s3.msgs?.length === 2 && s3.msgs[1].includes('图书馆凭据'), JSON.stringify(s3.msgs));
 
-  // Todo 到期联动:逾期任务产生提醒短信;打开 todo 触发 checkDue 立即检查
-  // 独立运行前置:登录测试账号并注入一条逾期任务(原流程依赖 T27 的遗留数据)
+  // (原「Todo 到期短信提醒」用例已移除:任务应用极简化后不再有截止日期与提醒)
   await ev(`(async () => {
     const { accounts } = await import('./js/core/accounts.js');
     if (!(await accounts.login('todoer', 'todopass')).ok) await accounts.register('todoer', 'todopass');
     return true;
   })()`);
-  await wipeAppData('todoer', 'todo');   // 只注入一条逾期任务,不依赖 T27 遗留(也清掉可能的坏档)
-  // 短信已是设备级收件箱:不再按用户清库(组首已清设备库),避免误删前序会话
-  await ev(`(async () => {
-    const { loadState, saveState } = WebOS.appdata;
-    let s = null;
-    try { s = await loadState('todo', 'todoer'); } catch { s = null; }
-    s = s || { seq: 0, projects: ['个人', '工作'], tasks: [] };
-    s.tasks = s.tasks || [];
-    if (!s.tasks.some(t => t.text === '过期任务')) {
-      s.seq = (s.seq || 0) + 1;
-      s.tasks.push({ id: 't' + s.seq, project: '工作', text: '过期任务', done: false, prio: 2, due: '2020-01-01', starred: false, created: Date.now() });
-    }
-    await saveState('todo', s, 'todoer');
-  })()`);
-  await sleep(300);
-  await ev(`WebOS.wm.open('todo')`);
-  await sleep(800);
-  let s4 = await ev(`(() => {
-    const c = WebOS.sms.chat('todo-reminder');
-    return { exists: !!c, text: c?.msgs.map(m => m.text).join('|') };
-  })()`);
-  for (let i = 0; i < 10 && !s4.exists; i++) { await sleep(500); s4 = await ev(`(() => {
-    const c = WebOS.sms.chat('todo-reminder');
-    return { exists: !!c, text: c?.msgs.map(m => m.text).join('|') };
-  })()`); }
-  if (!s4.text?.includes('任务提醒')) console.log('   [T28.4 debug] s4 =', JSON.stringify(s4));
-  t('T28.4 Todo 到期短信提醒(应用联动)', s4.exists === true && s4.text?.includes('任务提醒'), s4.text);
-  // 提醒已在内存:直接把当前短信态写盘并冲刷元数据
-  // (数据页经 writeAt 直写 OPFS,但 inode 元数据是 250ms 防抖 —— 不 flush 会
-  //  被随后的刷新打断,重载后文件"不存在")
-  await ev(`(async () => {
-    await WebOS.appdata.saveState('sms', { chats: WebOS.sms.chats() }, 'todoer');
-    await WebOS.fs.flush();
-    return true;
-  })()`);
+  await wipeAppData('todoer', 'todo');   // 清 todoer 任务档(后续组各自独立播种)
+  // 元数据是 250ms 防抖:冲刷落盘,防被随后的刷新打断(重载后文件"不存在")
+  await ev(`WebOS.fs.flush()`);
 
-  // 刷新持久化:原会话用户的会话 + todoer 的提醒短信都落在各自 appdata
+  // 刷新持久化:设备级短信会话跨重载保留
   await fresh();
   const s5 = await ev(`(async () => {
-    const { loadState } = WebOS.appdata;
-    const prev = ${JSON.stringify(prevUser)};
     const dev = await WebOS.appdata.loadSharedState('sms');   // 短信为设备级收件箱
     return {
       myChats: (dev?.chats || []).length,
       myMsgs: (dev?.chats || []).reduce((s, c) => s + (c.msgs || []).length, 0),
-      reminder: (dev?.chats || []).some(c => c.addr === 'todo-reminder' && c.msgs.some(m => m.text.includes('任务提醒'))),
     };
   })()`);
-  t('T28.5 持久化(刷新后会话保留)', s5.myChats >= 2 && s5.myMsgs >= 4 && s5.reminder === true, JSON.stringify(s5));
+  t('T28.4 持久化(刷新后会话保留)', s5.myChats >= 2 && s5.myMsgs >= 4, JSON.stringify(s5));
   await ev(`WebOS.wm.open('sms')`);
   await sleep(600);
   await c.shot('t28-sms');
 
   const errs28 = await ev(`window.__errs.length`);
-  t('T28.6 全程无错误', errs28 === 0, `errs=${errs28}`);
+  t('T28.5 全程无错误', errs28 === 0, `errs=${errs28}`);
 
 });
 
@@ -2701,7 +3050,7 @@ group('T38', '账号系统', async () => {
   await ev(`WebOS.wm.open('todo')`);
   await sleep(700);
   const iso = await ev(`(async () => {
-    const inp = document.querySelector('.win[data-app=todo] .todo-add input');
+    const inp = document.querySelector('.win[data-app=todo] .todo-input');
     if (!inp) return { noInput: true, errs: window.__errs.slice(0, 2) };
     inp.value = 'alice 的任务';
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2709,9 +3058,10 @@ group('T38', '账号系统', async () => {
     const { loadState } = WebOS.appdata;
     const alice = await loadState('todo', 'alice');
     const bob = await loadState('todo', 'bob').catch(() => null);
+    const at = (s) => ((s?.boards || [])).filter(b => b.type === 'todo').flatMap(b => b.tasks || []);
     return {
-      inStore: (alice?.tasks || []).some(t => t.text === 'alice 的任务'),
-      bobTask: (bob?.tasks || []).some(t => t.text === 'alice 的任务'),
+      inStore: at(alice).some(t => t.text === 'alice 的任务'),
+      bobTask: at(bob).some(t => t.text === 'alice 的任务'),
     };
   })()`);
   t('T38.1 每用户数据隔离(alice 命名空间)', iso.inStore === true && iso.bobTask === false, JSON.stringify(iso));
@@ -2775,9 +3125,10 @@ group('T38', '账号系统', async () => {
   await sleep(700);
   const loginGate = await ev(`(() => ({
     panel: !!document.querySelector('.acc-panel'),
+    close: !!document.querySelector('.win[data-app=todo] .todo-close'),
     noData: !document.querySelectorAll('.todo-item').length,
   }))()`);
-  t('T38.2 登出后需要登录(数据隐藏)', loginGate.panel === true, JSON.stringify(loginGate));
+  t('T38.2 登出后需要登录(数据隐藏,登录门仍有关闭钮)', loginGate.panel === true && loginGate.close === true, JSON.stringify(loginGate));
 
   // 登录 alice(登录面板)→ 数据恢复
   await ev(`(async () => {
@@ -3037,7 +3388,7 @@ group('T41', '应用内右键', async () => {
   })()`);
   t('T41.3 全选生效', selAll === true);
 
-  // 41.4 任务应用:任务行自定义右键(标记完成 / 删除任务)
+  // 41.4 任务应用:任务行自定义右键(按完成态显示「标记完成/标记为待办」/ 删除任务)
   // 任务数据按用户持久化:历史轮次的「删除任务」会耗尽种子任务,
   // 先清该用户的任务存储再打开(应用检测不到存储即重新播种),并用轮询等行渲染
   await ev(`(async () => {
@@ -3058,7 +3409,8 @@ group('T41', '应用内右键', async () => {
       count: document.querySelectorAll('.todo-item').length,
     };
   })()`);
-  t('T41.4 任务行自定义右键', (ctx3.items || []).includes('标记完成') && (ctx3.items || []).includes('删除任务'),
+  t('T41.4 任务行自定义右键',
+    (ctx3.items || []).some(i => i === '标记完成' || i === '标记为待办') && (ctx3.items || []).includes('删除任务'),
     JSON.stringify(ctx3));
   await ev(`[...document.querySelectorAll('#ctx .ctx-item')].find(b => b.textContent.includes('删除任务')).click()`);
   await sleep(400);
@@ -4338,23 +4690,13 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
     [...document.querySelectorAll('.win[data-app=dbviewer] .dbv-editor .btn.primary')]
       .find(b => b.textContent.includes('执行')).click();
   })()`);
-  /* 系统设置「文本排序」切码点序:同一查询换序,设置即刻生效。
-   * 必须驱动真实设置 UI —— ev 里裸 import('./js/core/store.js') 是无
-   * ?t= 版本号的另一份模块实例(与页面模块图隔离),改了页面也看不见 */
-  const setSortLocale = async (name) => {
-    await ev(`WebOS.wm.open('settings')`);
-    await sleep(700);
-    const clicked = await ev(`(() => {
-      const r = [...document.querySelectorAll('.win[data-app=settings] .set-row')]
-        .find(x => x.textContent.includes('文本排序'));
-      const btn = r && [...r.querySelectorAll('.seg-btn')].find(b => b.textContent.trim() === ${JSON.stringify(name)});
-      if (!btn) return false;
-      btn.click();
-      return true;
-    })()`);
-    await ev(`WebOS.wm.close('settings')`);
-    return clicked;
-  };
+  /* 排序规则切换:设置 UI 已撤(排序跟剧情语言走,不再暴露给用户),e2e
+   * 经 WebOS.settings 写页面同一模块实例(裸 import('./js/core/store.js')
+   * 是无 ?t= 版本号的另一份实例,改了页面也看不见),回读确认写入生效 */
+  const setSortLocale = (v) => ev(`(() => {
+    WebOS.settings.set({ sortLocale: ${JSON.stringify(v)} });
+    return WebOS.settings.get('sortLocale');
+  })()`);
 
   /* 连续查询防读到上一查询的旧表:轮询直到行内容精确等于期望 */
   const waitRowsEq = (expected) => waitFor(`(() => {
@@ -4365,14 +4707,14 @@ group('T49', '数据库(SQL 只读查询 / 分页)', async () => {
   await runSql("SELECT id FROM people WHERE note MATCH '项目 数据'");
   t('T49.9a MATCH 全文(空白分词全命中 → 仅陈静)', (await waitRowsEq('c')) === true);
 
-  await setSortLocale('拼音');   // 归位(上一轮若以码点序收尾,localStorage 会粘到本轮页面启动)
+  await setSortLocale('zh');   // 归位(上一轮若以码点序收尾,localStorage 会粘到本轮页面启动)
   await runSql('SELECT id FROM people ORDER BY name');
   t('T49.9b 拼音排序(陈→李→张,码点序会是张李陈)', (await waitRowsEq('c|l|z')) === true);
 
-  const swBin = await setSortLocale('码点序');
+  const swBin = await setSortLocale('');
   await runSql('SELECT id FROM people ORDER BY name');
-  t('T49.9b2 设置切码点序后同查询换序(张李陈)', swBin === true && (await waitRowsEq('z|l|c')) === true);
-  const swZh = await setSortLocale('拼音');   // 还原,防 '' 粘到下一轮
+  t('T49.9b2 切码点序后同查询换序(张李陈)', swBin === '' && (await waitRowsEq('z|l|c')) === true);
+  await setSortLocale('zh');   // 还原,防 '' 粘到下一轮
   await runSql("SELECT id, CASE WHEN note MATCH '项目' THEN '相关' ELSE '无关' END AS tag FROM people ORDER BY id");
   t('T49.9c CASE + MATCH 组合', (await waitRowsEq('c相关|l无关|z相关')) === true);
 
@@ -4618,6 +4960,50 @@ group('T50', '软件商店(未安装门禁 / 安装 / 卸载 / 菜单桌面联�
   }))()`);
   t('T50.11 GUI 卸载(确认框+入口移除)', dlgOk.dialog && dlgOk.msg && s2.installed === false && s2.sm === 0 && s2.desk === false && s2.installBtn, JSON.stringify({ dlgOk, s2 }));
   await c.shot('t50-store');
+
+  // k2. 失效快捷方式同一口径:指向「未安装应用」(map)与指向「不存在的应用」
+  //     的快捷方式同样处理 —— 图标退灰、双击同报「快捷方式失效」,
+  //     不再走安装门禁引导去商店(门禁只保留给直开路径,见 b 节)。
+  //     先最小化所有窗口露出桌面(商店窗口盖着图标,真实双击会点在窗口上);
+  //     不用 closeAll —— 后面 m 节还要查商店卡片 DOM(最小化仅 display:none)
+  await ev(`WebOS.wm.taskList().forEach(t => WebOS.wm.minimize(t.id))`);
+  await ev(`WebOS.fs.write(WebOS.fs.desktopPath() + '/失效链.app', 'map', { as: WebOS.accounts.current() })`);
+  await ev(`WebOS.fs.write(WebOS.fs.desktopPath() + '/幽灵链.app', 'no-such-app', { as: WebOS.accounts.current() })`);
+  await sleep(400);
+  const broken = await ev(`(() => {
+    const tile = (name) => document.querySelector('.dicon[data-key="fs:' + WebOS.fs.desktopPath() + '/' + name + '.app"] .tile');
+    const gray = (n) => (getComputedStyle(tile(n)).getPropertyValue('--tile-bg') || '').includes('#94a3b8');
+    return { uninst: gray('失效链'), ghost: gray('幽灵链'), lnk: !!tile('失效链')?.querySelector('.lnk-badge') };
+  })()`);
+  const dblBroken = async (name) => {
+    const q = JSON.stringify(name);
+    // 真实双击偶发被桌面重渲染吞掉(两次点击之间节点被替换则不成 dblclick):
+    // waitFor 等对话框出现,没等到就再点一次
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const p = await ev(`(() => {
+        const n = document.querySelector('.dicon[data-key="fs:' + WebOS.fs.desktopPath() + '/' + ${q} + '.app"]');
+        const r = n.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      })()`);
+      await clickReal(p.x, p.y, 2);
+      if (await waitFor(`!!document.querySelector('.win[data-app=sysdialog]')`, 1500)) break;
+    }
+    const r = await ev(`(() => {
+      const d = document.querySelector('.win[data-app=sysdialog]');
+      return { dlg: !!d, invalid: (d?.textContent || '').includes('快捷方式失效'),
+        noStore: !(d?.textContent || '').includes('软件商店') };
+    })()`);
+    await ev(`[...document.querySelectorAll('.win[data-app=sysdialog] button')].find(b => b.textContent.trim() === '确定')?.click()`);
+    await waitFor(`!document.querySelector('.win[data-app=sysdialog]')`, 2000);
+    await sleep(250);   // 关窗动画(170ms)走完再进行下一处点击
+    return r;
+  };
+  const b1 = await dblBroken('失效链');   // 目标 = 已注册但未安装的 map
+  const b2 = await dblBroken('幽灵链');   // 目标 = 从未注册的应用 ID
+  await ev(`WebOS.fs.rm(WebOS.fs.desktopPath() + '/失效链.app'); WebOS.fs.rm(WebOS.fs.desktopPath() + '/幽灵链.app');`);
+  t('T50.11b 失效快捷方式统一口径(未安装=不存在:退灰图标 + 双击同报「快捷方式失效」,不引导去商店)',
+    broken.uninst && broken.ghost && broken.lnk && b1.dlg && b1.invalid && b1.noStore && b2.dlg && b2.invalid && b2.noStore,
+    JSON.stringify({ broken, b1, b2 }));
 
   // l. 安装按用户:新建用户(不切会话)从系统预装起步,本人装过的商店应用他没有
   await ev(`(async () => { await WebOS.accounts.createUser('storeuser', 'storepass'); return true; })()`);
@@ -6785,6 +7171,100 @@ group('T61', '电子表格(编辑 / 样式 / 列排序 / 固定行 / 缩放 / .a
     JSON.stringify(s15));
   await c.shot('t61-sheet');
   await ev(`WebOS.fs.rm(${JSON.stringify(FILE)})`);
+});
+
+group('T62', '任务栏收缩与同时任务上限(按钮收窄 / 藏头留尾 / 60 上限)', async () => {
+  /* ---- T62 任务栏:任务多时按钮按任务区可用宽收窄(下限 48px),最小宽也
+   * 放不下则藏前面的留后面的(溢出钮弹出被藏清单可取回);同时任务上限 60
+   * (对话框豁免不拦,上限期系统提示仍可弹出)。popup 窗口与普通窗口一样
+   * 进任务栏,这里用它低成本造大量任务(level:1 非模态)。 ---- */
+  await fresh();
+  const openJobs = (from, to) => ev(`(async () => {
+    for (let i = ${from}; i < ${to}; i++) {
+      WebOS.wm.popup({ title: 'job' + String(i).padStart(2, '0'), level: 1, width: 320, height: 200 });
+      await new Promise(r => setTimeout(r, 30));
+    }
+    return true;
+  })()`);
+  await openJobs(0, 1);
+  await sleep(250);
+  const one = await ev(`(() => {
+    const b = document.querySelector('#tb-tasks .tbtn');
+    return { n: document.querySelectorAll('#tb-tasks .tbtn').length, w: b?.offsetWidth };
+  })()`);
+  t('T62 单任务:按钮保持默认宽 140px', one.n === 1 && one.w === 140, JSON.stringify(one));
+
+  // 8 个任务:140×8 超出任务区 → 按钮均匀收窄(等宽、不小于 48、容器不溢出)
+  await openJobs(1, 8);
+  await sleep(250);
+  const shrunk = await ev(`(() => {
+    const box = document.getElementById('tb-tasks');
+    const ws = [...box.querySelectorAll('.tbtn')].map(b => b.offsetWidth);
+    return { n: ws.length, min: Math.min(...ws), max: Math.max(...ws),
+      fits: box.scrollWidth <= box.clientWidth + 1 };
+  })()`);
+  t('T62.1 任务变多按钮收窄(等宽 / ≥48 / <140 / 不溢出容器)',
+    shrunk.n === 8 && shrunk.max < 140 && shrunk.min >= 48 && shrunk.max - shrunk.min <= 1 && shrunk.fits,
+    JSON.stringify(shrunk));
+  await c.shot('t62-shrink');
+
+  // 25 个:最小宽也放不下 → 藏头留尾(最早的 job00 收起,最新的 job24 仍在栏)
+  await openJobs(8, 25);
+  await sleep(250);
+  const ovf = await ev(`(() => {
+    const box = document.getElementById('tb-tasks');
+    const ov = box.querySelector('.tb-overflow');
+    const btns = [...box.querySelectorAll('.tbtn:not(.tb-overflow)')];
+    const titles = btns.map(b => b.title);
+    return { total: WebOS.wm.count(), visible: btns.length,
+      ovN: ov ? +ov.querySelector('.ov-n').textContent : -1,
+      hasFirst: titles.includes('job00'), hasLast: titles.includes('job24'),
+      fits: box.scrollWidth <= box.clientWidth + 1,
+      minW: btns.length ? Math.min(...btns.map(b => b.offsetWidth)) : 0 };
+  })()`);
+  t('T62.2 放不下藏头留尾(job00 收起 / job24 在栏 / 溢出钮计数吻合 / 可见钮仍 ≥48)',
+    ovf.total === 25 && ovf.visible + ovf.ovN === 25 && !ovf.hasFirst && ovf.hasLast && ovf.fits && ovf.minW >= 48,
+    JSON.stringify(ovf));
+  await c.shot('t62-overflow');
+
+  // 溢出菜单取回:点溢出钮列被藏任务,点 job00 → 其窗口被聚焦
+  const menuPick = await ev(`(async () => {
+    document.querySelector('#tb-tasks .tb-overflow').click();
+    await new Promise(r => setTimeout(r, 120));
+    const items = [...document.querySelectorAll('#ctx .ctx-item')];
+    const first = items.find(b => b.textContent.includes('job00'));
+    if (!first) return { opened: items.length, found: false, focused: false };
+    first.click();
+    await new Promise(r => setTimeout(r, 200));
+    const win = [...document.querySelectorAll('.win')].find(w => w.querySelector('.win-title')?.textContent === 'job00');
+    return { opened: items.length, found: true, focused: !!win?.classList.contains('focused') };
+  })()`);
+  t('T62.3 溢出菜单可取回被藏任务(点击聚焦对应窗口)',
+    menuPick.found && menuPick.focused, JSON.stringify(menuPick));
+
+  // 上限:补到 60 → 第 61 个(files)被拒 + toast;对话框豁免照常弹;关一个后恢复可开
+  await openJobs(25, 60);
+  await sleep(300);
+  const cap = await ev(`(async () => {
+    const n0 = WebOS.wm.count();
+    const refused = await WebOS.wm.open('files');
+    const toast = [...document.querySelectorAll('#toasts .toast')].map(x => x.textContent).join('|');
+    WebOS.dialogs.info({ level: 1, title: '上限期对话框', message: '对话框豁免' });
+    await new Promise(r => setTimeout(r, 250));
+    const dlg = !!document.querySelector('.win[data-app=sysdialog]');
+    const dlgBtn = [...document.querySelectorAll('.win[data-app=sysdialog] .dlg-btns .btn')].pop();
+    if (dlgBtn) dlgBtn.click();
+    await new Promise(r => setTimeout(r, 200));
+    WebOS.wm.close(WebOS.wm.taskList()[0].id);   // 关最早的任务腾名额
+    await new Promise(r => setTimeout(r, 120));
+    const ok = await WebOS.wm.open('files');
+    await new Promise(r => setTimeout(r, 300));
+    return { n0, refused: refused === null, toastHasCap: toast.includes('上限'),
+      dlg, filesOk: !!ok && !!document.querySelector('.win[data-app=files]') };
+  })()`);
+  t('T62.4 同时任务上限 60(第 61 个被拒 + toast;对话框豁免;关一个后可开)',
+    cap.n0 === 60 && cap.refused && cap.toastHasCap && cap.dlg && cap.filesOk, JSON.stringify(cap));
+  await c.shot('t62-limit');
 });
 
 /* ---------- 用例筛选 ---------- */

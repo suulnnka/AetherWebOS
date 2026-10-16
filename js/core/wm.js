@@ -3,6 +3,8 @@
  *
  * 职责:窗口的创建/销毁、焦点与层级(z-index)、拖动、
  *       8 方向调整大小、最小化/最大化/还原、级联定位。
+ * 层级模型(见 tierOf/restack):0 普通 < 1 置顶 < 2 应用模态 < 3 系统模态,
+ *       档内按最近激活时间排;z-index 全量重排,不增量递增。
  * 所有窗口事件通过总线广播:sys:win-open / win-close /
  * win-focus / win-min / win-restore / win-max / win-unmax
  * ============================================================ */
@@ -21,9 +23,14 @@ import { forApp as dialogHelpers, dialogs } from './dialogs.js';
 import { isInstalled } from './install.js';
 
 const wins = new Map();   // winId -> win 对象
-let zTop = 20;
 let seq = 0;
 let cascadeSeq = 0;
+let actSeq = 0;           // 激活序:同档内后激活的窗口排前面(见 restack)
+
+/* 同时任务上限(任务栏按钮数):防任务栏挤爆与性能的兜底。
+ * 对话框(dialog)不拦也不占名额 —— 上限期系统提示必须仍能弹出,否则连
+ * 「请先关一些窗口」这句话本身都弹不出来;对话框照常计入 wins/任务栏。 */
+export const MAX_WINS = 60;
 
 /* ============================================================
  * 模态分级:0 = 非模态(一级,不影响任何界面)
@@ -39,10 +46,10 @@ const appModalWins = new Set();  // 应用模态(二级)对话框
 /* ============================================================
  * 最小尺寸规范(WM 统一口径)
  *
- * 下限三档来源,取最大者:
- *   1) MIN_W / MIN_H —— 全局兜底,清单什么都没声明时用;
- *   2) app.min       —— 「整窗」下限,多数应用直接给这个(如浏览器 520×360);
- *   3) app.contentMin—— 「内容区」下限,WM 负责补窗框(标题栏 + 边框)。
+ * 下限来源(取最大者):
+ *   1) app.min 或 MIN_W/MIN_H —— 「整窗」下限:清单声明了 min 就以清单为准
+ *      (允许比全局兜底更小,如窄便签),什么都没声明时用全局兜底;
+ *   2) app.contentMin         —— 「内容区」下限,WM 负责补窗框(标题栏 + 边框)。
  *      棋类走这条:棋盘是固定像素、窗口再小棋盘也不缩,下限就是棋盘尺寸,
  *      不该在每个应用里各自重复「标题栏 38 + 边框 2」这种窗框魔数。
  *
@@ -66,8 +73,8 @@ function minSizeOf(w) {
   const cw = w.contentMin ? w.contentMin.w + c.x : 0;
   const ch = w.contentMin ? w.contentMin.h + c.y : 0;
   return {
-    w: Math.min(Math.max(MIN_W, w.app?.min?.w || 0, cw), a.width),
-    h: Math.min(Math.max(MIN_H, w.app?.min?.h || 0, ch), a.height),
+    w: Math.min(Math.max(w.app?.min?.w || MIN_W, cw), a.width),
+    h: Math.min(Math.max(w.app?.min?.h || MIN_H, ch), a.height),
   };
 }
 
@@ -118,20 +125,43 @@ function syncAppShades() {
   }
 }
 
+/* ---------------- 层级模型(restack) ----------------
+ * 窗口分四档优先级,高档永远覆盖低档;同档内按最近激活时间(actSeq)定先后,
+ * 后激活的在上:
+ *   0 普通窗口
+ *   1 置顶(pinned —— 只是提升一档,压不过任何模态)
+ *   2 应用模态弹框(二级)
+ *   3 系统模态弹框(三级)
+ * 系统模态遮罩插在 0-2 档全部窗口之上、3 档之下 —— 置顶窗口自然被压住,
+ * 模态解除后无需任何"恢复"动作,下一次重排自动回到置顶档。
+ * 窗口集合 / 焦点 / 置顶 / 模态任一变化后由 restack() 全量重排 z-index,
+ * 不再增量递增,也就没有计数溢出与重归一化的问题。 */
+function tierOf(w) {
+  if (w.modalLevel >= 3) return 3;
+  if (w.modalLevel === 2) return 2;
+  if (w.pinned) return 1;
+  return 0;
+}
+
+function restack() {
+  const sorted = [...wins.values()]
+    .sort((a, b) => (tierOf(a) - tierOf(b)) || (a.actSeq - b.actSeq));
+  // 遮罩占一个独立槽位:压在 0-2 档全部窗口之上、最低的 3 档窗口之下
+  const k = shadeEl ? sorted.filter(w => tierOf(w) < 3).length : -1;
+  sorted.forEach((w, i) => { w.el.style.zIndex = 10 + i + (k >= 0 && i >= k ? 1 : 0); });
+  if (shadeEl) shadeEl.style.zIndex = 10 + k;
+}
+
 function raiseShade() {
   const locked = modalWins.size > 0;
   if (!locked) {
     shadeEl?.remove();
     shadeEl = null;
-  } else {
-    if (!shadeEl) {
-      shadeEl = el('div', { class: 'modal-shade' });
-      layerEl().append(shadeEl);
-    }
-    // 遮罩压在最低的对话框之下,堆叠的多个对话框都保持可见
-    const bottom = Math.min(...[...modalWins].map(w => +w.el.style.zIndex || 0));
-    shadeEl.style.zIndex = Math.max(1, bottom - 1);
+  } else if (!shadeEl) {
+    shadeEl = el('div', { class: 'modal-shade' });
+    layerEl().append(shadeEl);
   }
+  restack();
   // 三级模态锁的是「整个系统」,而遮罩挂在窗口层,物理上盖不到任务栏 ——
   // 任务栏/开始菜单/托盘的锁定与已开面板的收起由订阅方完成
   // (taskbar.js 加锁 + inert,startmenu.js / tray.js 收面板)
@@ -202,6 +232,16 @@ export async function open(appId, { params, level, owner } = {}) {
     }
   }
 
+  // 同时任务上限:满了拒绝再开,toast 提示(见 MAX_WINS 注释,对话框走豁免)
+  if (!m.dialog && wins.size >= MAX_WINS) {
+    console.warn(`[wm] 已达同时窗口上限(${MAX_WINS}),拒绝打开:`, appId);
+    publish('sys:notify', { from: 'wm', type: 'notify', payload: {
+      title: '窗口已达上限',
+      body: `最多同时运行 ${MAX_WINS} 个窗口,请先关闭一些窗口。`,
+    } });
+    return null;
+  }
+
   // 已加载:直接挂载
   if (!m.load) return spawnWindow(m, { params, level, owner, mount: (ctx) => m.mount(ctx) });
 
@@ -257,27 +297,41 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     : clamp(Math.round((a.height - height) / 2) + k * 24 - 84, 6, Math.max(6, a.height - height - 6));
 
   const titleEl = el('span', { class: 'win-title' }, app.name);
-  const icoEl = el('span', { class: 'win-ico' },
-    icon(app.icon, 13));
-  paintTile(icoEl, app);
 
-  const btnMin = el('button', { class: 'wbtn mn', title: '最小化' }, icon('minus', 14));
-  const btnMax = el('button', { class: 'wbtn mx', title: '最大化 / 还原' },
-    el('span', { class: 'i-max' }, icon('max', 13)),
-    el('span', { class: 'i-restore' }, icon('restore', 13)));
-  const btnClose = el('button', { class: 'wbtn close', title: '关闭' }, icon('close', 14));
-  // 对话框窗口:只保留关闭按钮(不可最小化/最大化/缩放)
-  const headChildren = app.dialog
-    ? [icoEl, titleEl, btnClose]
-    : [icoEl, titleEl, btnMin, btnMax, btnClose];
+  // 无边框窗口(frameless,如便签类应用):不创建系统窗头与窗口按钮,
+  // 应用自绘顶栏(拖动区用 [data-windrag] 标注,关闭等按钮自理);
+  // titleEl 仍保留在内存里供任务栏/事件读取标题
+  const frameless = app.frameless === true;
 
-  const head = el('header', { class: 'win-head' }, ...headChildren);
+  let head = null;
+  if (!frameless) {
+    const icoEl = el('span', { class: 'win-ico' },
+      icon(app.icon, 13));
+    paintTile(icoEl, app);
+
+    const btnMin = el('button', { class: 'wbtn mn', title: '最小化' }, icon('minus', 14));
+    const btnMax = el('button', { class: 'wbtn mx', title: '最大化 / 还原' },
+      el('span', { class: 'i-max' }, icon('max', 13)),
+      el('span', { class: 'i-restore' }, icon('restore', 13)));
+    const btnClose = el('button', { class: 'wbtn close', title: '关闭' }, icon('close', 14));
+    if (!app.dialog) {
+      btnMin.addEventListener('click', () => minimize(id));
+      btnMax.addEventListener('click', () => toggleMax(id));
+    }
+    btnClose.addEventListener('click', () => close(id));
+    // 对话框窗口:只保留关闭按钮(不可最小化/最大化/缩放)
+    const headChildren = app.dialog
+      ? [icoEl, titleEl, btnClose]
+      : [icoEl, titleEl, btnMin, btnMax, btnClose];
+
+    head = el('header', { class: 'win-head' }, ...headChildren);
+  }
   const body = el('div', { class: 'win-body' });
   const root = el('section', {
     class: 'win opening',
     dataset: { app: app.id, id },
-    style: { left: x + 'px', top: y + 'px', width: width + 'px', height: height + 'px', zIndex: ++zTop },
-  }, head, body,
+    style: { left: x + 'px', top: y + 'px', width: width + 'px', height: height + 'px', zIndex: 10 },
+  }, ...(head ? [head] : []), body,
     ...['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => el('div', { class: `rz rz-${d}`, dataset: { dir: d } })));
 
   // 应用专属霓虹灯条颜色(霓虹未来皮肤消费;--neon-a/--neon-b)
@@ -297,6 +351,8 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     modalLevel: level ?? (app.dialog ? 3 : 0),
     ownerApp: owner || null,    // 二级弹框:锁定的目标应用
     shadeEl: null,
+    pinned: false,              // 置顶:层级提升一档(见 tierOf),压不过任何模态
+    actSeq: 0,                  // 激活序(focus 时更新)
     // 内容区下限(清单给的初值;应用挂载后可用 ctx.setContentMin() 按实测棋盘覆盖)
     contentMin: app.contentMin ? { ...app.contentMin } : null,
   };
@@ -306,11 +362,6 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     get appId() { return app.id; },
   };
 
-  if (!app.dialog) {
-    btnMin.addEventListener('click', () => minimize(id));
-    btnMax.addEventListener('click', () => toggleMax(id));
-  }
-  btnClose.addEventListener('click', () => close(id));
   // 多窗口模式:按下即把焦点给这个窗口。这一次点击照常穿透到内容
   // (与 Windows / macOS 一致;早先的"首次点击仅激活"模式已移除)
   root.addEventListener('pointerdown', () => focus(id), true);
@@ -357,6 +408,14 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     },
     close: () => close(id),
     focus: () => focus(id),
+    minimize: () => minimize(id),
+    /** 置顶开关(便签类应用):开启后窗口提升一个层级档,浮在普通窗口之上;
+     *  仍低于二级/三级模态弹框 —— 全屏遮罩的系统模态压得住它(见 tierOf) */
+    setPinned: (on) => {
+      w.pinned = !!on;
+      if (w.pinned) focus(id);   // 立即浮到置顶档最上
+      else restack();
+    },
     /** 程序化调整窗口尺寸(对话框自适应内容高度等);会被窗口下限夹住 */
     setSize: (nw, nh) => applyRect(w, { x: w.el.offsetLeft, y: w.el.offsetTop, w: nw, h: nh }, false),
     /** 上报「内容区」下限(不含标题栏/边框,WM 补):
@@ -466,6 +525,7 @@ export function close(id) {
   wins.delete(id);
   if (w.modalLevel >= 3) { modalWins.delete(w); raiseShade(); }
   if (w.modalLevel === 2) { appModalWins.delete(w); syncAppShades(); }
+  restack();   // 模态窗口的遮罩槽位随窗口集合变化(raiseShade 内亦重排,此处兜底)
   emit('close', { id, appId: w.appId });
   w.el.classList.add('closing');
   setTimeout(() => w.el.remove(), 170);
@@ -490,20 +550,10 @@ export function focus(id) {
   // 应用模态期:被二级弹框锁定的窗口不可激活
   if (isAppLocked(w)) return;
   if (w.state === 'min') restoreWin(id);
-  if (w.el.style.zIndex != zTop) {
-    w.el.style.zIndex = ++zTop;
-    if (zTop > 900) renormalizeZ();
-    if (w.modalLevel >= 3) raiseShade();
-  }
+  w.actSeq = ++actSeq;   // 同档内按激活时间排:刚激活的浮到本档最上
   for (const o of wins.values()) o.el.classList.toggle('focused', o === w);
+  restack();
   emit('focus', { id, appId: w.appId });
-}
-
-function renormalizeZ() {
-  [...wins.values()]
-    .sort((a, b) => (+a.el.style.zIndex) - (+b.el.style.zIndex))
-    .forEach((w, i) => { w.el.style.zIndex = 10 + i; });
-  zTop = 10 + wins.size;
 }
 
 /* ---------------- 最小化 / 还原 ---------------- */
@@ -590,8 +640,12 @@ function unmaximize(w) {
  * 松手时把位移固化回取整的 left/top,同一帧清掉 transform,无肉眼跳动。 */
 function makeDraggable(w) {
   const head = w.el.querySelector('.win-head');
-  head.addEventListener('pointerdown', (e) => {
+  const zone = head || w.el;   // 无边框窗口:监听整窗,命中 [data-windrag] 才可拖
+  zone.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || e.target.closest('.wbtn')) return;
+    if (!head && !e.target.closest('[data-windrag]')) return;
+    // 顶栏里嵌了输入控件时(无边框应用自绘顶栏),点在控件上不启动拖动
+    if (e.target.closest('input, textarea, button, select, [contenteditable="true"]')) return;
     e.preventDefault();
     focus(w.id);
     const a = area();
@@ -649,7 +703,7 @@ function makeDraggable(w) {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
-  head.addEventListener('dblclick', (e) => {
+  if (head) head.addEventListener('dblclick', (e) => {
     if (!e.target.closest('.wbtn')) toggleMax(w.id);
   });
 }
@@ -795,12 +849,12 @@ export function focusCycle() {
   focus(pool[(cur + 1) % pool.length].id);
 }
 
-/** 关闭并重新打开某应用的所有窗口(登录状态变化后刷新界面) */
-export function reopen(appId) {
+/** 关闭并重新打开某应用的所有窗口(登录状态变化后刷新界面);params 透传给重开的窗口 */
+export function reopen(appId, params) {
   const ids = [...wins.values()].filter(w => w.appId === appId).map(w => w.id);
   for (const id of ids) close(id);
   // 等动画结束后重开
-  setTimeout(() => open(appId), 200);
+  setTimeout(() => open(appId, params ? { params } : undefined), 200);
 }
 
 /** 关闭所有窗口(注销时清空工作区) */

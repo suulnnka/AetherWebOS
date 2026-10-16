@@ -1,14 +1,19 @@
-/* 任务 —— 应用清单(纯数据;实现在 index.js,由 js/apps/index.js 惰性加载) */
+/* 便签 —— 应用清单(纯数据;实现在 index.js,由 js/apps/index.js 惰性加载)
+ * frameless:无边框窗口,自绘顶栏(拖动区 [data-windrag]);
+ * 多实例:主窗口 = 待办清单,便签窗口 = params.noteId 的速记窗;
+ * oldNames:曾用名( applink 播种时清理旧名桌面快捷方式) */
 export default {
   id: 'todo',
-  name: '任务',
+  name: '便签',
+  oldNames: ['任务'],
   icon: 'check',
-  color: 'linear-gradient(135deg,#10b981,#0d9488)',
-  neon: { a: '#34d399', b: '#2dd4bf' },
-  width: 760, height: 560,
-  min: { w: 520, h: 380 },
-  singleton: true,
+  color: 'linear-gradient(135deg,#f5de8a,#eac53f)',
+  neon: { a: '#f7dd7a', b: '#e8b93c' },
+  frameless: true,
+  width: 340, height: 260,
+  min: { w: 230, h: 150 },
+  singleton: false,
   order: 2.5,
   category: '效率',
-  desc: '待办任务管理,逾期提醒',
+  desc: '便签式待办与速记:清单 + 独立便签窗口,可置顶、换色',
 };

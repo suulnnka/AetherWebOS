@@ -262,5 +262,4 @@ sms.deliverLater({ from: 'x', text: '…' }, 2000);
 sms.onSend(({ to, text }) => to === 'nexus-hint' ? { text: '自动回信…' } : null);
 ```
 
-系统联动:任务应用到期/逾期时自动向「任务提醒」会话发短信;
-`hint@nexus` 的短信版服务台 `nexus-hint` 同样支持自动回信。
+系统联动:`hint@nexus` 的短信版服务台 `nexus-hint` 支持自动回信。

@@ -87,6 +87,9 @@ register({
     }
 
     function openItem(item) {
+      selected = null;   // 打开即取消选中(双击/右键打开一致):图标不停留在选中态
+      grid.querySelectorAll('.fitem.selected').forEach(x => x.classList.remove('selected'));
+      renderStatus();
       if (item.dir) nav(item.path);
       else if (isAppLink(item.name)) {
         // 应用快捷方式:启动目标应用(单实例应用复用已有窗口)

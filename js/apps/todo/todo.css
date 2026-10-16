@@ -1,51 +1,212 @@
-/* ---- 任务(Todo) ---- */
-.todo-proj-row { display: flex; align-items: center; gap: 2px; }
-.todo-proj-row .nav-item { padding-right: 4px; }
-.todo-proj-del { width: 22px; height: 22px; border-radius: 6px; opacity: 0; transition: opacity 0.15s; }
-.todo-proj-row:hover .todo-proj-del { opacity: 1; }
+/* ---- 任务(Todo):便签 ----
+ * 完全独立于桌面主题的便签风:窗口本体、顶栏、列表全部自绘。
+ * 关键属性用 !important 压过各皮肤对 .win 的改写(刻意脱离主题)。
+ * 背景色 = --note-bg(JS 按 ☰ 菜单色球设置,默认淡柠黄)。 */
 
-.todo-add { padding: 0 4px 12px; }
-.todo-items { display: flex; flex-direction: column; gap: 4px; }
-.todo-item {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px; border-radius: var(--radius-s);
-  border: 1px solid var(--border);
-  background: var(--panel-solid);
-  transition: background 0.12s;
+/* 窗口本体:激活不透明 + macOS 式阴影;非激活半透明、无阴影 */
+.win[data-app=todo] {
+  background: var(--note-bg, #fef9e0) !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  animation: none !important;
+  min-width: 0 !important;      /* 允许比全局窗口更窄(清单 min 230) */
+  min-height: 0 !important;
+  --note-bg: #fef9e0;
 }
-.todo-item:hover { background: var(--hover); }
-.todo-item.dragging { opacity: 0.5; }
+.win[data-app=todo]::after { content: none !important; }
+.win[data-app=todo] .win-body > * { animation: none !important; }   /* 皮肤开场动画(如霓虹内容淡入)也不进便签 */
+.win[data-app=todo].focused {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.22),
+    0 8px 20px rgba(0, 0, 0, 0.18),
+    0 30px 80px -6px rgba(0, 0, 0, 0.34) !important;
+}
+.win[data-app=todo]:not(.focused) {
+  background: color-mix(in srgb, var(--note-bg, #fef9e0) 60%, transparent) !important;
+}
+.win[data-app=todo] .win-body,
+.win[data-app=todo] .win-skeleton { background: transparent !important; }
+/* 便签内不要系统蓝焦点圈(勾选/按钮即点即走,不留痕) */
+.win[data-app=todo] :focus-visible { outline: none; }
+
+/* 细滚动条 */
+.win[data-app=todo] ::-webkit-scrollbar { width: 7px; height: 7px; }
+.win[data-app=todo] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 4px; }
+.win[data-app=todo] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.27); }
+.win[data-app=todo] ::-webkit-scrollbar-track { background: transparent; }
+
+/* 应用根:色底即窗底,墨色暖棕文字(上边距归顶栏,顶栏整条可拖动) */
+.todo-app {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 0 11px 11px; gap: 7px;
+  font-size: 13px; line-height: 19px; color: #463d2e;
+  background: transparent !important;
+}
+
+/* ---- 顶栏(融合标题栏):输入 + [弹性占位] + ✓ + 最小化 + 锁 + ☰ + ✕ ----
+ * 占位把图标组钉在右上角(不受输入框宽度影响),也是主要拖动区;
+ * 输入态(.editing,输入框 focus 时挂上):输入框展开占满、占位收零,
+ * 同时隐藏 最小化/锁/☰ 给输入让空间 */
+.todo-bar { flex: none; display: flex; align-items: flex-start; gap: 5px; padding: 9px 2px 0 0; }
+.todo-bar-gate, .todo-bar-note { padding: 9px 9px 0; }   /* 无输入框的顶栏 */
+.todo-bar-spacer { flex: 1 1 0; min-width: 14px; }
+
+/* 输入框:平时窄条、无底色 */
+.todo-input {
+  flex: 0 1 auto; min-width: 0;
+  max-width: min(150px, 42%);
+  resize: none; border: none; outline: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit; line-height: 19px; color: inherit;
+  max-height: 107px;              /* 5 行 × 19 + 上下 padding */
+  overflow-y: auto;
+  transition: max-width 0.18s ease, background 0.16s ease;
+}
+/* 占位:窄窗不换行直接截断(免得多行撑出滚动条);窗口未激活时干脆不显示 */
+.todo-input::placeholder {
+  color: rgba(70, 61, 46, 0.40);
+  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+}
+.win[data-app=todo]:not(.focused) .todo-input::placeholder { color: transparent; }
+.todo-input.filled { max-width: min(1000px, 100%); }
+.todo-bar.editing .todo-input { flex: 1 1 auto; max-width: min(1000px, 100%); background: rgba(255, 255, 255, 0.55); }
+.todo-bar.editing .todo-bar-spacer { flex: 0 0 0; min-width: 0; }
+.todo-bar.editing .todo-min,
+.todo-bar.editing .todo-lock,
+.todo-bar.editing .todo-menu-btn { display: none; }
+
+/* 顶栏图标钮:无任何按钮装饰,只是图标;颜色统一跟字体色 */
+.todo-bar-btn {
+  flex: none; width: 25px; height: 25px; margin-top: 3px;   /* 与输入首行居中对齐 */
+  border: none; background: none; padding: 0;
+  display: grid; place-items: center;
+  color: rgba(70, 61, 46, 0.62);
+  outline: none; box-shadow: none;
+  cursor: pointer;
+}
+.todo-bar-btn:hover { color: #463d2e; }
+.todo-close { color: #111 !important; }               /* 简单的黑色 X */
+.todo-close:hover { color: #000 !important; }
+.todo-lock.on { color: #b45309 !important; }          /* 置顶中:点亮 */
+.todo-add-btn { display: none; }                       /* 有内容才出现(从占位区借宽,图标组不动) */
+.todo-add-btn.has { display: grid; color: #463d2e; }
+
+/* ---- 任务列表 ---- */
+.todo-items { flex: 1; min-height: 0; overflow-y: auto; }
+/* 底部预留空白:双击建任务的目标区(offsetHeight 含 padding,自适应高度随之上抬;
+ * 封顶滚动时滚到底也留有这片双击区) */
+.todo-list { display: flex; flex-direction: column; gap: 1px; padding-bottom: 48px; }
+
+.todo-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 5px 6px 3px; border-radius: 7px;
+  cursor: grab;
+}
+.todo-item:hover { background: rgba(0, 0, 0, 0.05); }
+.todo-item:active { cursor: grabbing; }
+.todo-item.dragging { opacity: 0.45; }
+
+/* 完成圆圈:颜色跟字体,无阴影;对齐任务首行 */
 .todo-check {
-  width: 19px; height: 19px; border-radius: 50%; flex: none;
-  border: 2px solid var(--border);
+  flex: none; width: 18px; height: 18px; margin-top: 0.5px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(70, 61, 46, 0.45);
+  background: transparent; padding: 0;
   display: grid; place-items: center; color: transparent;
+  outline: none; box-shadow: none;
+  cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.todo-check:hover { border-color: var(--accent); }
-.todo-check.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.todo-prio { width: 5px; height: 22px; border-radius: 3px; flex: none; }
-.todo-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.todo-item.done .todo-t { text-decoration: line-through; color: var(--text-2); }
-.todo-t { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.todo-meta { display: flex; align-items: center; gap: 8px; }
-.todo-due {
-  display: inline-flex; align-items: center; gap: 3px;
-  font-size: 11px; color: var(--text-2);
-  padding: 0 6px; border-radius: 8px; background: var(--hover);
-}
-.todo-due.today { color: #f59e0b; background: color-mix(in srgb, #f59e0b 14%, transparent); }
-.todo-due.late { color: #ef4444; background: color-mix(in srgb, #ef4444 13%, transparent); font-weight: 600; }
-.todo-star.on { color: #f59e0b; }
-.todo-star.on svg { fill: #f59e0b; }
-.todo-star:hover, .todo-del:hover { color: var(--text); }
-.todo-del:hover { color: #ef4444; }
+.todo-check:hover { border-color: rgba(70, 61, 46, 0.8); }
+.todo-check.on { background: #463d2e; border-color: #463d2e; color: var(--note-bg, #fef9e0); }
 
-.todo-progress { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.todo-ring {
-  width: 74px; height: 74px; border-radius: 50%;
-  display: grid; place-items: center;
-  background:
-    radial-gradient(closest-side, var(--panel-solid) 74%, transparent 75% 100%),
-    conic-gradient(var(--accent) calc(var(--p, 0) * 1%), var(--hover) 0);
+/* 任务文本:多行换行;完成后变淡 + 删除线 */
+.todo-t {
+  flex: 1; min-width: 0;
+  white-space: pre-wrap; word-break: break-word;
 }
-.todo-ring-num { font-size: 15px; font-weight: 700; }
+.todo-item.done .todo-t {
+  text-decoration: line-through;
+  color: rgba(70, 61, 46, 0.38);
+}
+
+/* 删除:悬停出现,柔和的红 ✕,对齐首行 */
+.todo-del {
+  flex: none; width: 21px; height: 21px; margin-top: -1px;
+  border: none; background: none; padding: 0;
+  display: grid; place-items: center;
+  color: #b0564a;
+  outline: none; box-shadow: none;
+  opacity: 0; cursor: pointer;
+  transition: opacity 0.12s, color 0.12s;
+}
+.todo-item:hover .todo-del { opacity: 1; }
+.todo-del:hover { color: #8f3d33; }
+
+/* 行内编辑框(双击任务 / 双击空白新建草稿):原地编辑,无内嵌白盒 ——
+ * 透明底、零内边距对齐原文位置,仅一条虚线下划线示意可编辑 */
+.todo-edit {
+  flex: 1; min-width: 0;
+  resize: none; border: none; outline: none;
+  background: transparent;
+  padding: 0;
+  font: inherit; line-height: 19px; color: inherit;
+  max-height: 107px; overflow-y: auto;
+  border-bottom: 1px dashed rgba(70, 61, 46, 0.35);
+  margin-bottom: -1px;   /* 下划线不撑高行 */
+}
+.todo-edit::placeholder {
+  color: rgba(70, 61, 46, 0.40);
+  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+}
+
+.todo-empty { padding: 14px 4px; text-align: center; font-size: 12.5px; color: rgba(70, 61, 46, 0.4); }
+
+/* ---- 便签窗口(无输入框无勾选框,点进去就写) ---- */
+.todo-note-app { padding: 0 6px 8px; gap: 2px; }
+.todo-bar-note { padding: 8px 6px 0; }
+.todo-note-text {
+  flex: 1; min-height: 0;
+  resize: none; border: none; outline: none;
+  background: transparent;
+  padding: 4px 9px;
+  font: inherit; font-size: 13.5px; line-height: 1.6; color: inherit;
+}
+.todo-note-text::placeholder {
+  color: rgba(70, 61, 46, 0.40);
+  white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+}
+.win[data-app=todo]:not(.focused) .todo-note-text::placeholder { color: transparent; }
+
+/* ---- ☰ 菜单弹出层(便签配色) ---- */
+.todo-menu {
+  position: fixed; z-index: 3000;
+  min-width: 172px; padding: 5px;
+  background: #fffdf3;
+  border: 1px solid rgba(0, 0, 0, 0.10); border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15), 0 2px 5px rgba(0, 0, 0, 0.07);
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 12.5px; color: #463d2e;
+  user-select: none; -webkit-user-select: none;
+}
+.tm-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border: none; background: none; border-radius: 7px;
+  cursor: pointer; color: inherit; font: inherit; text-align: left;
+}
+.tm-item:hover { background: rgba(0, 0, 0, 0.06); }
+.tm-item.danger { color: #a4443a; }
+.tm-sep { height: 1px; margin: 4px 8px; background: rgba(0, 0, 0, 0.09); }
+.tm-label { padding: 5px 10px 3px; font-size: 11.5px; color: rgba(70, 61, 46, 0.55); }
+.tm-colors { display: flex; gap: 7px; padding: 4px 10px 7px; }
+.tm-ball {
+  width: 17px; height: 17px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.14); padding: 0;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.tm-ball:hover { transform: scale(1.14); }
+.tm-ball.cur { box-shadow: 0 0 0 2px #fffdf3, 0 0 0 3.5px rgba(70, 61, 46, 0.55); }

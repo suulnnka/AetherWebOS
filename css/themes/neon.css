@@ -267,7 +267,6 @@ html[data-style="neon"] .list-item,
 html[data-style="neon"] .music-item,
 html[data-style="neon"] .fitem,
 html[data-style="neon"] .mail-item,
-html[data-style="neon"] .todo-item,
 html[data-style="neon"] .crumb,
 html[data-style="neon"] .ckey {
   transition: background 0.14s, border-color 0.14s, box-shadow 0.14s, transform 0.14s;
@@ -293,17 +292,15 @@ html[data-style="neon"] .mail-item.unread .m-dot {
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.55);
 }
 
-/* 卡片 / 统计砖:玻璃微光 */
+/* 卡片 / 统计砖:玻璃微光(便签应用刻意独立于主题,不在此列) */
 html[data-style="neon"] .card,
 html[data-style="neon"] .stat,
-html[data-style="neon"] .todo-item,
 html[data-style="neon"] .wx-hour {
   border-color: rgba(0, 240, 255, 0.12);
   background:
     linear-gradient(180deg, rgba(0, 240, 255, 0.04), rgba(255, 255, 255, 0.01));
 }
-html[data-style="neon"] .stat:hover,
-html[data-style="neon"] .todo-item:hover {
+html[data-style="neon"] .stat:hover {
   border-color: rgba(0, 240, 255, 0.22);
   background: rgba(0, 240, 255, 0.06);
 }
@@ -365,26 +362,12 @@ html[data-style="neon"] textarea.input {
   background: rgba(0, 240, 255, 0.04);
 }
 
-/* 待办勾选环 / 日记日历 */
-html[data-style="neon"] .todo-check {
-  border-color: rgba(0, 240, 255, 0.28);
-}
-html[data-style="neon"] .todo-check.on {
-  background: linear-gradient(135deg, #00e5ff, #5b8cff);
-  border-color: transparent;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
-}
+/* 日记日历(旧版任务应用的 .todo-check/.todo-ring 皮肤适配已随应用重写移除:便签刻意独立于主题) */
 html[data-style="neon"] .diary-day:hover { background: rgba(0, 240, 255, 0.1); }
 html[data-style="neon"] .diary-day.sel {
   background: linear-gradient(135deg, #00e5ff, #5b8cff);
   color: #02141a;
   box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
-}
-html[data-style="neon"] .todo-ring {
-  background:
-    radial-gradient(closest-side, var(--panel-solid) 74%, transparent 75% 100%),
-    conic-gradient(#00e5ff calc(var(--p, 0) * 1%), rgba(0, 240, 255, 0.12) 0);
-  box-shadow: 0 0 18px rgba(0, 240, 255, 0.12);
 }
 
 /* 终端:与系统同渊的深空底,覆盖应用内写死色 */

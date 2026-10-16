@@ -292,6 +292,8 @@ export function renderDesktopIcons() {
     });
 
     node.addEventListener('dblclick', () => {
+      // 打开即取消选中:双击启动/打开后图标不应停留在选中态
+      box.querySelectorAll('.dicon.selected').forEach(d => d.classList.remove('selected'));
       if (item.kind === 'trash') return wm.open('trash');
       openFsItem(item);
     });

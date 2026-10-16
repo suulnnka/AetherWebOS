@@ -112,6 +112,7 @@ register({
 | `prefetch` | boolean | false | 高频应用预读:启动空闲后后台拉取应用 chunk,首次打开免等(browser/terminal/files 已启用) |
 | `hoverPrefetch` | boolean | true | 悬停预读:鼠标移到启动入口(桌面图标/开始菜单/任务栏)上时预读应用 chunk;重型应用可设 false 关闭(围棋:引擎 chunk 与 1.1MB 模型权重都不小,已关闭) |
 | `dialog` | boolean | false | 对话框型窗口(无最小化/最大化,配合模态遮罩) |
+| `frameless` | boolean | false | 无边框窗口:不创建系统窗头与窗口按钮,应用自绘顶栏(拖动区用 `[data-windrag]` 标注,顶栏内点击输入控件不会触发拖动);关闭等按钮由应用经 `ctx.close()` 自理(任务便签即此模式) |
 
 ## 4. `mount(ctx)` 上下文
 
@@ -245,6 +246,18 @@ const h = dialogs.progress({ title, determinate: true })     // h.set(pct, msg) 
 | `level: 1` | 非模态:不影响任何界面,其他窗口/任务栏/桌面照常可操作 |
 | `level: 2` | 应用模态:锁定 `owner` 应用打开的所有窗口,其余系统照常 |
 | `level: 3` | 系统模态:全屏遮罩 + 任务栏锁定(inert、开始菜单/托盘面板收起),关闭弹框前整个系统不可操作(默认) |
+
+**窗口层级模型**(WM 统一裁定,`wm.js` 的 `tierOf`/`restack`):窗口分四档优先级,
+高档永远覆盖低档;**同档内按最近激活时间排序**,后激活(打开/点击聚焦)的在上:
+
+```
+0 普通窗口  <  1 置顶(pinned,ctx.setPinned)  <  2 应用模态(level 2)  <  3 系统模态(level 3)
+```
+
+- 「总在最前」只是把窗口从 0 档提到 1 档 —— 压过所有普通窗口,但**压不过任何模态弹框**
+- 系统模态的全屏遮罩插在 0-2 档全部窗口之上、3 档对话框之下,置顶窗口自然被灰罩盖住;
+  模态关闭后无需恢复动作,下一次层级重排自动回到置顶档
+- 窗口集合/焦点/置顶/模态任一变化都会全量重排 z-index,不存在计数溢出问题
 
 ```js
 dialogs.confirm({ level: 1, title: '随手记' })                      // 浮窗,不打断任何操作
