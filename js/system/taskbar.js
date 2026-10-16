@@ -6,7 +6,7 @@ import { list as listApps, prefetchOnHover } from '../core/registry.js';
 import { isInstalled } from '../core/install.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
-import { showMenu } from '../core/menu.js';
+import { showMenu, showMenuAnchored } from '../core/menu.js';
 import { dialogs } from '../core/dialogs.js';
 
 /* 任务栏:固定应用 + 运行窗口按钮 */
@@ -65,35 +65,77 @@ export function renderPinned() {
 let focusedId = null;
 const tasksBox = $('#tb-tasks');
 
+/* 任务按钮点击语义(按钮本体与溢出菜单共用):已聚焦则最小化,否则还原/聚焦 */
+function activateTask(w) {
+  if (w.id === focusedId && w.state !== 'min') wm.minimize(w.id);
+  else if (w.state === 'min') wm.restoreWin(w.id);
+  else wm.focus(w.id);
+}
+
+function taskButton(w) {
+  return el('button', {
+    class: 'tbtn' + (w.id === focusedId && w.state !== 'min' ? ' active' : ''),
+    title: w.title,
+    onClick: () => activateTask(w),
+    onContextmenu: (e) => {
+      e.preventDefault();
+      const pinned = pinnedApps().includes(w.appId);
+      showMenu(e.clientX, e.clientY, [
+        { label: w.state === 'min' ? '还原' : '最小化', icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
+        { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
+        { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(w.appId) },
+        { sep: true },
+        { label: '关闭窗口', icon: 'close', danger: true, fn: () => wm.close(w.id) },
+      ]);
+    },
+  }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, w); t.append(icon(w.icon || 'file', 14)); return t; })(),
+    el('span', { class: 't-title' }, w.title));
+}
+
+/* 溢出指示钮:任务太多放不下时,前面的(较早打开)收进菜单,只留后面的 */
+function overflowButton(hidden) {
+  const b = el('button', {
+    class: 'tbtn tb-overflow',
+    title: `还有 ${hidden.length} 个较早任务被收起`,
+    onClick: () => showMenuAnchored(b, hidden.map(w => ({
+      label: w.title, icon: w.icon || 'file', fn: () => activateTask(w),
+    }))),
+  }, el('span', { class: 't-ico' }, icon('chevronL', 14)),
+    el('span', { class: 'ov-n' }, String(hidden.length)));
+  return b;
+}
+
 export function renderTasks() {
+  const list = wm.taskList();
   tasksBox.innerHTML = '';
-  for (const w of wm.taskList()) {
-    const b = el('button', {
-      class: 'tbtn' + (w.id === focusedId && w.state !== 'min' ? ' active' : ''),
-      title: w.title,
-      onClick: () => {
-        if (w.id === focusedId && w.state !== 'min') wm.minimize(w.id);
-        else if (w.state === 'min') wm.restoreWin(w.id);
-        else wm.focus(w.id);
-      },
-      onContextmenu: (e) => {
-        e.preventDefault();
-        const pinned = pinnedApps().includes(w.appId);
-        showMenu(e.clientX, e.clientY, [
-          { label: w.state === 'min' ? '还原' : '最小化', icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
-          { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
-          { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(w.appId) },
-          { sep: true },
-          { label: '关闭窗口', icon: 'close', danger: true, fn: () => wm.close(w.id) },
-        ]);
-      },
-    }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, w); t.append(icon(w.icon || 'file', 14)); return t; })(),
-      el('span', { class: 't-title' }, w.title));
+  for (const w of list) {
+    const b = taskButton(w);
     if (w.neon?.a) b.style.setProperty('--neon-a', w.neon.a);
     if (w.neon?.b) b.style.setProperty('--neon-b', w.neon.b);
     tasksBox.append(b);
   }
+
+  /* 收不下时藏头留尾:全部按最小宽排布仍溢出 → 前面的(较早打开)收进溢出菜单,
+   * 保留最后 k 个。宽度口径与 CSS 同源(min-width/gap 读 computed style,
+   * 换主题改了尺寸这里自动跟上)。 */
+  const avail = tasksBox.clientWidth;
+  if (avail <= 0 || tasksBox.scrollWidth <= avail + 1) return;   // 放得下(或未布局)
+  const cs = getComputedStyle(tasksBox);
+  const minW = parseFloat(cs.getPropertyValue('--tb-task-min')) || 48;
+  const gap = parseFloat(cs.columnGap) || 3;
+
+  const ov = overflowButton(list.slice(0, list.length));   // 先挂上量宽度,数量随后修正
+  tasksBox.prepend(ov);
+  const usable = avail - ov.offsetWidth - gap;
+  const k = Math.max(0, Math.min(list.length, Math.floor((usable + gap) / (minW + gap))));
+  const hidden = list.slice(0, list.length - k);
+  for (let i = 0; i < hidden.length; i++) tasksBox.children[1].remove();   // 摘掉排在最前的任务钮
+  if (!hidden.length) { ov.remove(); return; }
+  ov.replaceWith(overflowButton(hidden));   // 数量/菜单内容落定
 }
+
+/* 视口/固定区变化 → 任务区可用宽变了,重算藏几个 */
+new ResizeObserver(() => renderTasks()).observe(tasksBox);
 
 for (const ev of ['open', 'close', 'focus', 'min', 'restore', 'max', 'unmax', 'title']) {
   subscribe(`sys:win-${ev}`, (p) => {

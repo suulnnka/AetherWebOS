@@ -60,7 +60,7 @@ register({
         encrypted,
         listCollections: async () => unwrap(await sqlCollections(handle)),
         count: async (name) => unwrap(await sqlCount(handle, name)),
-        /* 排序语言随系统设置走(每次查询现读,改设置即刻生效,无需换库) */
+        /* 排序语言跟剧情语言走(设置键保留但不在设置界面暴露;每次查询现读,改值即刻生效,无需换库) */
         sql: async (text) => unwrap(await sqlQuery(handle, text, [], settings.get('sortLocale') ?? 'zh')),
       };
     }

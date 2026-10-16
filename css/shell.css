@@ -132,10 +132,17 @@
 .tb-start.on { color: var(--accent); }
 
 .tb-pinned, .tb-tasks { display: flex; align-items: center; gap: 3px; }
-.tb-sep { width: 1px; height: 22px; margin: 0 5px; background: var(--border); }
+.tb-sep { width: 1px; height: 22px; margin: 0 5px; background: var(--border); flex: none; }
+
+/* 任务区占满剩余空间并允许被压缩:任务多时按钮跟着收窄(见下 --tb-task-min),
+ * 容器裁掉超出部分 —— 藏头留尾的溢出裁剪由 taskbar.js 按此宽度决定渲染几个 */
+.tb-tasks {
+  flex: 1; min-width: 0; overflow: hidden;
+  --tb-task-min: 48px;   /* 单个任务按钮的最小宽度;JS 读取同名列(taskbar.js) */
+}
 
 .tbtn {
-  height: 38px; width: 168px; flex: none;
+  height: 38px; width: 140px; flex: none;
   display: flex; align-items: center; gap: 8px;
   padding: 0 10px; border-radius: var(--radius-s);
   position: relative;
@@ -143,6 +150,13 @@
 }
 /* 固定应用只有图标:窄固定宽,不跟运行按钮一样宽 */
 .tb-pinned .tbtn { width: 42px; justify-content: center; padding: 0; }
+/* 运行任务按钮:空间够时保持 140px,不够时均匀收窄,收不过最小宽
+ * (grow 让少数任务也能填满分配到的空间,但被 max-width 封顶不超宽) */
+.tb-tasks .tbtn { flex: 1 1 140px; min-width: var(--tb-task-min); max-width: 140px; }
+/* 溢出指示钮:任务太多藏了前面的,显示被藏数量,点击弹出被藏任务清单 */
+.tb-tasks .tbtn.tb-overflow { flex: none; width: auto; min-width: 42px; justify-content: center; gap: 4px; padding: 0 8px; color: var(--text-2); }
+.tb-overflow .t-ico { --tile-bg: transparent; color: var(--text-2); }
+.tb-overflow .ov-n { font-size: 11px; font-weight: 600; }
 .tbtn:hover { background: var(--hover); }
 .tbtn .t-ico {
   width: 26px; height: 26px; border-radius: 7px;

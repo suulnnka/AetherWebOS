@@ -71,14 +71,6 @@ function renderSection(root, sec, bus) {
           onClick: (e) => { settings.set({ theme: v }); [...themeSeg.children].forEach(b => b.classList.remove('active')); e.currentTarget.classList.add('active'); },
         }, name)));
 
-    /* 文本排序 locale:数据库 ORDER BY 的文本键序(设置即刻生效,无需换库) */
-    const sortSeg = el('div', { class: 'seg' },
-      ...[['zh', '拼音'], ['zh-u-co-stroke', '笔画'], ['en', '英文'], ['', '码点序']].map(([v, name]) =>
-        el('button', {
-          class: 'seg-btn' + ((s.sortLocale ?? 'zh') === v ? ' active' : ''),
-          onClick: (e) => { settings.set({ sortLocale: v }); [...sortSeg.children].forEach(b => b.classList.remove('active')); e.currentTarget.classList.add('active'); },
-        }, name)));
-
     /** 风格主题选择器(迷你预览卡) */
     const styleCards = el('div', { class: 'style-cards' },
       ...STYLES.map(st => el('button', {
@@ -100,7 +92,6 @@ function renderSection(root, sec, bus) {
     root.append(el('div', { class: 'set-body' }, title,
       row('风格主题', '整套系统皮肤:窗体、任务栏、开始菜单、按钮全部跟随', styleCards),
       row('主题模式', '深色 / 浅色界面风格,可跟随系统的显示设置', themeSeg),
-      row('文本排序', '数据库查询 ORDER BY 文本键的排序规则(等值与分组不受影响)', sortSeg),
       row('强调色', '应用于按钮、开关、选中态等控件', el('div', { class: 'swatches' },
         ...ACCENTS.map(c => el('button', {
           class: 'swatch' + (s.accent === c ? ' selected' : ''),
