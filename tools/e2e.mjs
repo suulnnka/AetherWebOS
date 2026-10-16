@@ -8,6 +8,8 @@
  *   node tools/e2e.mjs --list           # 列出全部用例组
  *   node tools/e2e.mjs --parallel 3     # 3 个浏览器并行跑
  *   node tools/e2e.mjs --keep           # 复用上轮浏览器 profile(默认每轮全新,见下)
+ *   E2E_PORT=8090 node tools/e2e.mjs    # 打到另一个端口的 Vite(如 git worktree 检出的 HEAD 快照,
+ *                                       #   避免本目录编辑触发 HMR 重载冲掉跑到一半的用例)
  * 输出 PASS/FAIL 清单 + .shots/ 截图
  *
  * 文件布局(原 7800 行单文件按职责拆开,入口路径不变):
@@ -152,7 +154,7 @@ try {
   const pong = await fetch(URL_BASE, { signal: AbortSignal.timeout(3000) });
   if (!pong.ok) throw new Error('HTTP ' + pong.status);
 } catch {
-  console.error('开发服务器未就绪:先运行 npm run dev(端口 8080),再跑 e2e');
+  console.error(`开发服务器未就绪:先运行 npm run dev(端口 ${process.env.E2E_PORT || 8080}),再跑 e2e`);
   process.exit(2);
 }
 

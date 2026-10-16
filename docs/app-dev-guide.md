@@ -422,13 +422,19 @@ await copyText(text);   // Clipboard API + execCommand 回退
 
 - **控制台全局对象**:`WebOS.wm/fs/settings/dialogs/bus/apps`、`window.__errs`(启动期错误收集);
 - **打开应用**:`WebOS.wm.open('id')` 或 `WebOS.wm.open('id', { params: {...} })`;
-- **e2e 冒烟测试**(`tools/e2e.mjs`):为应用新增一个 `group('T4x', '名称', async () => {...})` 用例组,
+- **e2e 冒烟测试**(入口 `tools/e2e.mjs`;用例组按域分在 `tools/e2e-groups/*.mjs`,公共助手在
+  `tools/e2e-harness.mjs`):为应用在对应域文件里新增一个 `group('T4x', '名称', async () => {...})`
+  用例组(应用放 `apps.mjs`、编辑器/数据/商店类放 `editors.mjs`、游戏放 `games.mjs`、外壳/窗口放 `shell.mjs`),
+  文件头已统一从 harness 导入 `t / ev / fresh / waitFor / needApps / c` 等助手,直接用即可,入口无需改动;
   每组自动重置到初始桌面、可独立运行(`npm run e2e -- T4x`);
   页面自带 `?e2e=1` 测试模式(跳过装饰性等待),剪贴板类断言先
   `c.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] })`;
   用例组用到**商店应用**(`store: true`,默认未安装)时,组开头先
   `await needApps('<id>', ...)` 装好再测(幂等,见 T50 软件商店组);
 - **跑法**:`npm run dev` 起服务器(8080)→ `npm run e2e`(全量,默认 6 并行)或 `npm run e2e -- T41`。
+  边改代码边跑全量会被 Vite HMR 整页重载冲掉跑到一半的用例组(表现为大批 `WebOS is not defined` /
+  `Page.navigate 超时`),此时把 HEAD 用 `git worktree` 检出到别处(`vendor/` 子模块需一并初始化)单独起一个 Vite,
+  `E2E_PORT=<端口> npm run e2e` 打过去即可。
 
 ## 10. 接入清单
 

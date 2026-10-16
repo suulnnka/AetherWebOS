@@ -7,7 +7,10 @@
  * ============================================================ */
 
 // ?e2e=1 进入应用测试模式:跳过开机动画等装饰性等待(约定见 js/core/utils.js 的 E2E)
-export const URL_BASE = 'http://localhost:8080/?e2e=1';
+// 端口默认 8080(npm run dev);E2E_PORT=8090 可指向另一个 Vite 实例 —— 典型用法是
+// 把 HEAD 用 git worktree 检出到别处单独起服务跑全量(vendor/ 子模块需一并初始化),
+// 免得本目录正在编辑的文件触发 HMR 整页重载,把跑到一半的用例组冲掉
+export const URL_BASE = `http://localhost:${process.env.E2E_PORT || 8080}/?e2e=1`;
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ---------- 结果收集 ---------- */

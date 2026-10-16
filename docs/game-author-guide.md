@@ -223,7 +223,7 @@ SSH 会话由 `core/vssh.js` 驱动,Hacknet 式玩法核心能力:
 6. `search.nexus` 全程可搜内网已收录页面(地址栏输入关键词即达)。
 
 测试:`node tools/aether-sites-smoke.mjs`(Node 侧全站点断言)+
-`tools/e2e.mjs` 的 T18 组(浏览器全链路,含键盘口令试错、403 门禁、
+`tools/e2e-groups/net.mjs` 的 T18 组(入口 `tools/e2e.mjs`;浏览器全链路,含键盘口令试错、403 门禁、
 /goto/ 中转、下载联动、外网域名隔离验证)。
 
 ## 二、邮件系统(`core/mail.js`)
