@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '娱乐',
   desc: '本地音乐播放,随点随听',
+  i18n: { en: { name: 'Music', desc: 'Play local music on demand' } },
 };

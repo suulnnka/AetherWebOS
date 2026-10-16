@@ -9,6 +9,7 @@
  * 不设超时;Worker 异常退出由惰性重生兜底,未决请求即时失败。
  * ============================================================ */
 import fsCore from './fs.js';
+import { t } from './i18n.js';
 
 let worker = null;
 let alive = false;
@@ -39,7 +40,7 @@ function spawn() {
     pending.delete(m.id);
     resolve(m.ok ? { ok: true, value: m.value } : { ok: false, message: m.message });
   };
-  w.onerror = () => { if (worker === w) kill('SQL Worker 异常退出'); };
+  w.onerror = () => { if (worker === w) kill(t('SQL Worker 异常退出')); };
 }
 
 /** 发起一次 Worker 请求(永不 reject) */
@@ -74,7 +75,7 @@ async function readAllBytes(path, as) {
  */
 export async function openSql(path, { password = '', as } = {}) {
   const bytes = await readAllBytes(path, as);
-  if (!bytes) return { ok: false, message: '无法读取数据库文件(不存在或无权限)' };
+  if (!bytes) return { ok: false, message: t('无法读取数据库文件(不存在或无权限)') };
   return request({ type: 'open', bytes, password });
 }
 

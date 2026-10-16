@@ -11,4 +11,5 @@ export default {
   order: 1.5,
   category: '系统',
   desc: '浏览本机真实文件,授权后导入系统使用',
+  i18n: { en: { name: 'Local Files', desc: 'Browse real files on this device and import them after granting access' } },
 };

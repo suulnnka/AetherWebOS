@@ -34,6 +34,7 @@
  * ============================================================ */
 import { parse, blockHtml } from './md.js';
 import './mdedit.css';
+import { t } from '../core/i18n.js';
 
 /* ---------- 轻量 DOM 助手(避免依赖 core/utils) ---------- */
 
@@ -169,12 +170,12 @@ function serInline(el, out) {
       case 'EM': wrapMk(ch, '*', '*', out); break;
       case 'S': wrapMk(ch, '~~', '~~', out); break;
       case 'CODE': {
-        const t = ch.textContent;
-        if (!t) break;
-        const fence = t.includes('`') ? '``' : '`';
+        const text = ch.textContent;
+        if (!text) break;
+        const fence = text.includes('`') ? '``' : '`';
         out.push(vd(fence));
         const tn = [...ch.childNodes].find((n) => n.nodeType === 3);
-        out.push(tn ? td(tn, 0, tn.data.length) : vd(t));
+        out.push(tn ? td(tn, 0, tn.data.length) : vd(text));
         out.push(vd(fence));
         break;
       }
@@ -332,8 +333,8 @@ function serTable(table, lines) {
   };
   const ths = [...table.querySelectorAll('thead th')];
   const alignOf = (th) => {
-    const t = (th.getAttribute('style') || '').match(/text-align:\s*(\w+)/)?.[1];
-    return t === 'center' ? ':---:' : t === 'right' ? '---:' : t === 'left' ? ':---' : '---';
+    const ta = (th.getAttribute('style') || '').match(/text-align:\s*(\w+)/)?.[1];
+    return ta === 'center' ? ':---:' : ta === 'right' ? '---:' : ta === 'left' ? ':---' : '---';
   };
   lines.push(pipeRow(ths.map(cell)));
   lines.push([vd('| ' + ths.map(alignOf).join(' | ') + ' |')]);
@@ -830,8 +831,8 @@ export function createMdEditor(opts = {}) {
     slash.el.innerHTML = '';
     slash.items.forEach((item, k) => {
       const row = h('button', 'md-slash-item' + (k === slash.selIdx ? ' sel' : ''),
-        h('span', 'md-slash-ico', item.icon), h('span', 'md-slash-label', item.label),
-        h('span', 'md-slash-hint', item.hint));
+        h('span', 'md-slash-ico', item.icon), h('span', 'md-slash-label', t(item.label)),
+        h('span', 'md-slash-hint', t(item.hint)));
       row.type = 'button';
       row.addEventListener('mousedown', (e) => e.preventDefault());   // 不抢编辑面焦点
       row.addEventListener('click', () => { slash.selIdx = k; slashApply(); });
@@ -847,7 +848,7 @@ export function createMdEditor(opts = {}) {
     if (q.includes(' ') || q.includes('/') || q.includes('\n')) { closeSlash(); return; }
     slash.query = q;
     const hit = SLASH_ITEMS.filter((x) => !x.sep
-      && (x.label.toLowerCase().includes(q) || x.cmd.includes(q) || x.hint.includes(q)));
+      && (t(x.label).toLowerCase().includes(q) || x.cmd.includes(q) || t(x.hint).includes(q)));
     if (!hit.length) { closeSlash(); return; }
     slash.items = hit;
     slash.selIdx = 0;
@@ -908,7 +909,7 @@ export function createMdEditor(opts = {}) {
       for (const [cmd, label, tip] of SELBAR_BTNS) {
         const btn = h('button', 'md-selbar-btn', label);
         btn.type = 'button';
-        btn.title = tip;
+        btn.title = t(tip);
         btn.addEventListener('mousedown', (e) => e.preventDefault());  // 保住选区
         btn.addEventListener('click', () => { exec(cmd); hideSelbar(); });
         selbar.append(btn);
@@ -1143,12 +1144,12 @@ export function createMdEditor(opts = {}) {
     };
 
     switch (cmd) {
-      case 'bold': wrap('**', '**', '加粗'); break;
-      case 'italic': wrap('*', '*', '斜体'); break;
-      case 'strike': wrap('~~', '~~', '删除线'); break;
-      case 'code': wrap('`', '`', '代码'); break;
-      case 'link': wrap('[', '](https://example.com)', '链接文字'); break;
-      case 'image': wrap('![', '](https://example.com)', '替代文字'); break;
+      case 'bold': wrap('**', '**', t('加粗')); break;
+      case 'italic': wrap('*', '*', t('斜体')); break;
+      case 'strike': wrap('~~', '~~', t('删除线')); break;
+      case 'code': wrap('`', '`', t('代码')); break;
+      case 'link': wrap('[', '](https://example.com)', t('链接文字')); break;
+      case 'image': wrap('![', '](https://example.com)', t('替代文字')); break;
       case 'h1': case 'h2': case 'h3': {
         const lv = +cmd[1];
         const cur = doc.lines[b.s].match(/^ {0,3}(#{1,6})\s+/);
@@ -1179,7 +1180,7 @@ export function createMdEditor(opts = {}) {
         break;
       }
       case 'codeblock': insertBlockAfter(['```', '', '```'], 1); break;
-      case 'table': insertBlockAfter(['| 列一 | 列二 |', '| --- | --- |', '| 内容 | 内容 |'], 1); break;
+      case 'table': insertBlockAfter([t('| 列一 | 列二 |'), '| --- | --- |', t('| 内容 | 内容 |')], 1); break;
       case 'hr': {
         const bb = blocks()[p[0]];
         doc.lines.splice(bb.e, 0, '', '---', '');
@@ -1235,14 +1236,14 @@ export function createMdEditor(opts = {}) {
   function makeToolbar() {
     const bar = h('div', 'md-toolbar');
     const map = new Map(SLASH_ITEMS.filter((x) => !x.sep).map((x) => [x.cmd, x]));
-    const tips = { bold: '粗体 (Ctrl+B)', italic: '斜体 (Ctrl+I)', link: '链接 (Ctrl+K)' };
+    const tips = { bold: t('粗体 (Ctrl+B)'), italic: t('斜体 (Ctrl+I)'), link: t('链接 (Ctrl+K)') };
     for (const cmd of TOOLBAR_CMDS) {
       if (cmd === '|') { bar.append(h('span', 'md-tsep')); continue; }
       const item = map.get(cmd);
       if (!item) continue;
       const btn = h('button', 'md-tbtn', item.icon);
       btn.type = 'button';
-      btn.title = tips[cmd] || `${item.label}(${item.hint})`;
+      btn.title = tips[cmd] || `${t(item.label)}(${t(item.hint)})`;
       btn.addEventListener('mousedown', (e) => e.preventDefault());   // 不抢编辑面焦点/选区
       btn.addEventListener('click', () => exec(cmd));
       bar.append(btn);
@@ -1296,13 +1297,13 @@ export function createMdEditor(opts = {}) {
   });
   surface.addEventListener('paste', (e) => {
     e.preventDefault();
-    const t = (e.clipboardData || window.clipboardData).getData('text/plain');
-    if (t) document.execCommand('insertText', false, t.replace(/\r\n?/g, '\n'));
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    if (text) document.execCommand('insertText', false, text.replace(/\r\n?/g, '\n'));
   });
   surface.addEventListener('drop', (e) => {
     e.preventDefault();
-    const t = e.dataTransfer?.getData('text/plain');
-    if (t) document.execCommand('insertText', false, t.replace(/\r\n?/g, '\n'));
+    const text = e.dataTransfer?.getData('text/plain');
+    if (text) document.execCommand('insertText', false, text.replace(/\r\n?/g, '\n'));
   });
   surface.addEventListener('keydown', (e) => {
     if (composing) return;                                  // IME 选词回车不接管

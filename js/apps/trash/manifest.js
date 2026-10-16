@@ -12,4 +12,5 @@ export default {
   order: 2,
   category: '系统',
   desc: '回收站:还原误删的文件,或彻底删除',
+  i18n: { en: { name: 'Recycle Bin', desc: 'Restore mistakenly deleted files, or delete them for good' } },
 };

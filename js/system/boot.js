@@ -5,6 +5,7 @@ import { $, E2E } from '../core/utils.js';
 import { svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings, applyAll as applyAllSettings } from '../core/store.js';
+import { ready, t, localeTag } from '../core/i18n.js';
 import { accounts } from '../core/accounts.js';
 import fs, { fsReady } from '../core/fs.js';
 import { ensureDesktopShortcuts } from '../core/applink.js';
@@ -50,39 +51,66 @@ function boot() {
     return;
   }
 
-  applyAllSettings();   // 主题 / 强调色 / 风格 / 动效 / 亮度 / 图标尺寸
-  $('#start-btn').innerHTML = svg('grid', 19);
-  setupLayoutButton();
-  applyWallpaper();
-  paintVolIcon();
-  paintBell();
-
-  // 首启:尚无任何可登录用户 → 自动创建默认账号并登录(不进注册锁屏)
   const start = async () => {
+    applyAllSettings();   // 主题 / 强调色 / 风格 / 动效 / 亮度 / 图标尺寸
+    // 界面语言:解析 locale、设 <html lang>;en 时动态加载 core/system/lib
+    // 单元字典(zh 零开销,字典加载点统一在此装配层,docs/i18n.md §5)
+    await ready();
+    if (localeTag().split('-')[0].toLowerCase() === 'en') {
+      await Promise.all([
+        import('../core/i18n/en.js'),
+        import('../system/i18n/en.js'),
+        import('../lib/i18n/en.js'),
+      ]).catch((e) => console.warn('[boot] 界面字典加载失败(回落中文):', e));
+    }
+    // index.html 静态可见文案随语言同步(动态设值,源文件保持 zh)
+    $('#sm-input').placeholder = t('搜索应用…');
+    $('#start-btn').title = t('开始菜单');
+    $('#tray-vol').title = t('音量');
+    $('#tray-bell').title = t('通知');
+    $('#tray-clock').title = t('日期和时间');
+    $('#sm-power').title = t('电源');
+    $('#start-btn').innerHTML = svg('grid', 19);
+    setupLayoutButton();
+    applyWallpaper();
+    paintVolIcon();
+    paintBell();
+
+    // 首启:尚无任何可登录用户 → 自动创建默认账号并登录(不进注册锁屏)
     try { await fsReady(); }   // OPFS 装载/迁移完成后再碰文件系统
     catch (e) { console.warn('[boot] FS 就绪失败:', e); }
     if (!accounts.current() && !accounts.list().length) {
       try { await accounts.bootstrapIfNeeded(); }
       catch (e) { console.warn('[boot] 自动创建初始用户失败:', e); }
     }
+    // 先渲染与文件系统无关的外壳(任务栏/开始菜单/时钟):下面的 fs.batch
+    // 播种要走 OPFS 落盘,不应推迟它们就绪(桌面图标已由 accounts:changed
+    // 订阅者先行渲染,批量完成后下方再绘一次为准)
+    renderPinned();
+    renderTasks();
+    renderStartMenu();
+    renderStartUser();
+    tickClock();
     // 已有会话 / 刚 bootstrap:先迁移旧版桌面快捷方式(商店出现前播种过
-    // 全部应用 → 视为已安装),再确保家目录与桌面快捷方式齐全
+    // 全部应用 → 视为已安装),再确保家目录与桌面快捷方式齐全。
+    // 播种走 fs.batch:几十个写入合并为一条广播 + 一趟确定性落盘
+    // (reconcileLegacyShortcuts 不直接写 fs,其补播种经广播同步回到
+    // applink,并入同一批)
     const cur = accounts.current();
     if (cur) {
-      fs.ensureUserHome(cur);
-      reconcileLegacyShortcuts();
-      ensureDesktopShortcuts(cur);
+      try {
+        await fs.batch(async () => {
+          fs.ensureUserHome(cur);
+          reconcileLegacyShortcuts();
+          ensureDesktopShortcuts(cur);
+        });
+      } catch (e) { console.warn('[boot] 播种批量失败:', e); }
     }
     // 应用包模式兜底:老版本写过的 /app 残留模式(r-xr-x / rw-r--)在
     // 穿越免费的新语义下是真实泄露,开机整树归一到 root 私有(幂等)
     try { normalizeAllModes(); }
     catch (e) { console.warn('[boot] /app 模式归一失败:', e); }
-    renderPinned();
-    renderTasks();
-    renderStartMenu();
-    renderStartUser();
     renderDesktopIcons();
-    tickClock();
 
     // E2E/调试:URL hash 直开应用(#open=browser&url=http%3A%2F%2Fportal.nexus%2F,
     // 其余键并入应用 params)—— 无交互环境下(如 Firefox --headless --screenshot)

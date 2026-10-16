@@ -26,6 +26,7 @@ import { register } from './registry.js';
 import { open as openWin, close as closeWin } from './wm.js';
 import { publish } from './bus.js';
 import { beep } from './audio.js';
+import { t } from './i18n.js';
 
 const KINDS = {
   error:    { icon: 'close',         color: '#ef4444', beep: [196, 0.22] },
@@ -57,22 +58,22 @@ export const dialogs = {
   error: (o = {}) => spawn({ kind: 'error', buttons: ['ok'], ...o }),
 
   /** 确认框:确定 → true;取消/关闭/Esc → false */
-  confirm({ level, owner, title = '确认', message = '', detail = '', okText = '确定', cancelText = '取消', danger = false } = {}) {
+  confirm({ level, owner, title = t('确认'), message = '', detail = '', okText = t('确定'), cancelText = t('取消'), danger = false } = {}) {
     return spawn({ level, owner, kind: danger ? 'warning' : 'question', buttons: ['cancel', 'ok'], danger, title, message, detail, okText, cancelText });
   },
 
   /** 是/否框:→ 'yes' | 'no' | null(关闭) */
-  yesno({ level, owner, title = '请选择', message = '', detail = '' } = {}) {
-    return spawn({ level, owner, kind: 'question', buttons: ['no', 'yes'], title, message, detail, okText: '是', cancelText: '否' });
+  yesno({ level, owner, title = t('请选择'), message = '', detail = '' } = {}) {
+    return spawn({ level, owner, kind: 'question', buttons: ['no', 'yes'], title, message, detail, okText: t('是'), cancelText: t('否') });
   },
 
   /** 输入框:确定 → 输入值(可为空串);取消/关闭 → null */
-  prompt({ level, owner, title = '输入', message = '', value = '', placeholder = '', okText = '确定' } = {}) {
+  prompt({ level, owner, title = t('输入'), message = '', value = '', placeholder = '', okText = t('确定') } = {}) {
     return spawn({ level, owner, kind: 'info', input: 'text', buttons: ['cancel', 'ok'], title, message, value, placeholder, okText });
   },
 
   /** 密码输入框 */
-  password({ level, owner, title = '需要密码', message = '请输入密码', okText = '解锁' } = {}) {
+  password({ level, owner, title = t('需要密码'), message = t('请输入密码'), okText = t('解锁') } = {}) {
     return spawn({ level, owner, kind: 'lock', input: 'password', buttons: ['cancel', 'ok'], title, message, okText });
   },
 
@@ -81,12 +82,12 @@ export const dialogs = {
    *   h.set(0~100, '阶段说明')   h.done('完成说明') → promise 为 true
    *   h.cancel() → promise 为 false;用户点取消同样为 false
    */
-  progress({ level, owner, title = '处理中', message = '请稍候…', determinate = true, cancelable = true } = {}) {
+  progress({ level, owner, title = t('处理中'), message = t('请稍候…'), determinate = true, cancelable = true } = {}) {
     const token = 'pg' + (++tokenSeq);
     const promise = spawn({
       level, owner,
       kind: 'progress', buttons: cancelable ? ['cancel'] : [], title, message,
-      determinate, cancelable, progressToken: token, okText: '确定', cancelText: '取消',
+      determinate, cancelable, progressToken: token, okText: t('确定'), cancelText: t('取消'),
     });
     const settleWrap = (val, msg) => {
       if (!progressApi.has(token)) return;
@@ -98,8 +99,8 @@ export const dialogs = {
     const handle = {
       promise: promise.then((v) => v === true || v === 'ok'),
       set(value, msg) { progressApi.get(token)?.set(value, msg); },
-      done(msg = '完成') { settleWrap(true, msg); },
-      cancel() { settleWrap(false, '已取消'); },
+      done(msg = t('完成')) { settleWrap(true, msg); },
+      cancel() { settleWrap(false, t('已取消')); },
     };
     return handle;
   },
@@ -161,17 +162,17 @@ register({
     const btnBox = el('div', { class: 'dlg-btns' });
     // 是/否框 → ['否','是'];其余 → [取消, 确定]
     if (p.buttons.includes('yes')) {
-      btnBox.append(el('button', { class: 'btn', onClick: () => settle('no') }, '否'));
-      btnBox.append(el('button', { class: 'btn primary', onClick: () => settle('yes') }, '是'));
+      btnBox.append(el('button', { class: 'btn', onClick: () => settle('no') }, t('否')));
+      btnBox.append(el('button', { class: 'btn primary', onClick: () => settle('yes') }, t('是')));
     } else {
       for (const spec of p.buttons) {
         if (spec === 'cancel') {
-          btnBox.append(el('button', { class: 'btn', onClick: () => settle(cancelValue()) }, p.cancelText || '取消'));
+          btnBox.append(el('button', { class: 'btn', onClick: () => settle(cancelValue()) }, p.cancelText || t('取消')));
         } else if (spec === 'ok') {
           btnBox.append(el('button', {
             class: 'btn ' + (p.danger ? 'danger' : 'primary'),
             onClick: () => settle(p.input ? input.value : true),
-          }, p.okText || '确定'));
+          }, p.okText || t('确定')));
         }
       }
     }
@@ -188,7 +189,7 @@ register({
       btnBox);
 
     root.append(dlg);
-    setTitle(p.title || '系统对话框');
+    setTitle(p.title || t('系统对话框'));
 
     /* ---- 进度句柄接线 ---- */
     if (p.progressToken) {

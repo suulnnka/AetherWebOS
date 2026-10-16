@@ -17,6 +17,7 @@ import { get as getApp } from '../core/registry.js';
 import { accounts } from '../core/accounts.js';
 import { settings } from '../core/store.js';
 import { isInstalled } from '../core/install.js';
+import { t } from '../core/i18n.js';
 
 const KEY = 'webos.session.windows.v1';
 const MAX_WINDOWS = 8;          // 恢复上限:防意外开出几十个窗口
@@ -62,9 +63,12 @@ const schedule = () => {
   timer = setTimeout(snapshot, SAVE_DEBOUNCE);
 };
 
-/* 开 / 关窗即记录(关最后一个窗也记:空清单 = 桌面本来就没有窗口) */
+/* 开 / 关窗即记录(关最后一个窗也记:空清单 = 桌面本来就没有窗口);
+ * 标题变化也记:应用在挂载后异步回填窗口参数(如便签的 boardId),
+ * 只听开窗会快照到空参数,恢复时就开不回原来的板 */
 subscribe('sys:win-open', schedule);
 subscribe('sys:win-close', schedule);
+subscribe('sys:win-title', schedule);
 
 /* 注销 = 显式结束会话:丢弃该用户的清单,下次登录不恢复 */
 subscribe('accounts:changed', (_p, msg) => {
@@ -102,7 +106,7 @@ export async function restoreIfSaved() {
   if (!settings.get().sessionRestore) return 0;
   const n = await doRestore(user);
   if (n > 0) {
-    publish('sys:notify', { from: 'sessionsave', type: 'notify', payload: { title: '已恢复上次会话', body: `重新打开了 ${n} 个窗口` } });
+    publish('sys:notify', { from: 'sessionsave', type: 'notify', payload: { title: t('已恢复上次会话'), body: t('重新打开了 {n} 个窗口', { n }) } });
   }
   return n;
 }
@@ -115,7 +119,7 @@ subscribe('accounts:changed', async (p, msg) => {
   if (!user || !settings.get().sessionRestore) return;
   const n = await doRestore(user);
   if (n > 0) {
-    publish('sys:notify', { from: 'sessionsave', type: 'notify', payload: { title: '已恢复上次会话', body: `重新打开了 ${n} 个窗口` } });
+    publish('sys:notify', { from: 'sessionsave', type: 'notify', payload: { title: t('已恢复上次会话'), body: t('重新打开了 {n} 个窗口', { n }) } });
   }
 });
 

@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '社交',
   desc: '经典号码登录的虚拟聊天',
+  i18n: { en: { name: 'QQ', desc: 'Virtual chat with classic numeric-account login' } },
 };

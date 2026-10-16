@@ -2,7 +2,8 @@ import { $, el } from '../core/utils.js';
 import { icon, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
-import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { list as listApps, prefetchOnHover, appName } from '../core/registry.js';
+import { t } from '../core/i18n.js';
 import { isInstalled } from '../core/install.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
@@ -33,7 +34,7 @@ export function renderPinned() {
     if (!app) continue;
     if (!isInstalled(id)) continue;   // 安装按用户:本人未安装的应用不渲染固定钮
     const b = el('button', {
-      class: 'tbtn', title: app.name,
+      class: 'tbtn', title: appName(id),
       onClick: () => {
         // 已在运行:聚焦;否则启动
         const open = wm.taskList().filter(w => w.appId === id);
@@ -46,10 +47,10 @@ export function renderPinned() {
       onContextmenu: (e) => {
         e.preventDefault();
         showMenu(e.clientX, e.clientY, [
-          { label: `打开 ${app.name}`, icon: 'chevronR', fn: () => wm.open(app.id) },
-          { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(app.id) },
+          { label: t('打开 {name}', { name: appName(app.id) }), icon: 'chevronR', fn: () => wm.open(app.id) },
+          { label: t('发送到桌面'), icon: 'monitor', fn: () => sendAppToDesktop(app.id) },
           { sep: true },
-          { label: '从任务栏取消固定', icon: 'close', danger: true, fn: () => togglePin(app.id) },
+          { label: t('从任务栏取消固定'), icon: 'close', danger: true, fn: () => togglePin(app.id) },
         ]);
       },
     }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, app); t.append(icon(app.icon, 14)); return t; })());
@@ -81,11 +82,11 @@ function taskButton(w) {
       e.preventDefault();
       const pinned = pinnedApps().includes(w.appId);
       showMenu(e.clientX, e.clientY, [
-        { label: w.state === 'min' ? '还原' : '最小化', icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
-        { label: '发送到桌面', icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
-        { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(w.appId) },
+        { label: w.state === 'min' ? t('还原') : t('最小化'), icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
+        { label: t('发送到桌面'), icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
+        { label: pinned ? t('从任务栏取消固定') : t('固定到任务栏'), icon: 'check', fn: () => togglePin(w.appId) },
         { sep: true },
-        { label: '关闭窗口', icon: 'close', danger: true, fn: () => wm.close(w.id) },
+        { label: t('关闭窗口'), icon: 'close', danger: true, fn: () => wm.close(w.id) },
       ]);
     },
   }, (() => { const t = el('span', { class: 't-ico' }); paintTile(t, w); t.append(icon(w.icon || 'file', 14)); return t; })(),
@@ -96,7 +97,7 @@ function taskButton(w) {
 function overflowButton(hidden) {
   const b = el('button', {
     class: 'tbtn tb-overflow',
-    title: `还有 ${hidden.length} 个较早任务被收起`,
+    title: t('还有 {n} 个较早任务被收起', { n: hidden.length }),
     onClick: () => showMenuAnchored(b, hidden.map(w => ({
       label: w.title, icon: w.icon || 'file', fn: () => activateTask(w),
     }))),
@@ -163,19 +164,19 @@ $('#taskbar').addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const x = e.clientX, y = e.clientY;
   const layoutItems = [
-    { label: '网格平铺全部窗口', icon: 'grid', fn: () => wm.tile() },
-    { label: '层叠排列', icon: 'restore', fn: () => wm.cascade() },
-    { label: '切换活动窗口(Alt+Q)', icon: 'refresh', fn: () => wm.focusCycle() },
+    { label: t('网格平铺全部窗口'), icon: 'grid', fn: () => wm.tile() },
+    { label: t('层叠排列'), icon: 'restore', fn: () => wm.cascade() },
+    { label: t('切换活动窗口(Alt+Q)'), icon: 'refresh', fn: () => wm.focusCycle() },
   ];
   const shellItems = [
-    { label: '显示桌面', icon: 'monitor', fn: () => wm.toggleShowDesktop() },
+    { label: t('显示桌面'), icon: 'monitor', fn: () => wm.toggleShowDesktop() },
     { sep: true },
-    { label: '任务栏设置', icon: 'settings', fn: () => wm.open('settings', { params: { section: 'desktop' } }) },
+    { label: t('任务栏设置'), icon: 'settings', fn: () => wm.open('settings', { params: { section: 'desktop' } }) },
   ];
 
   if (e.target.closest('.tb-start')) {
     showMenu(x, y, [
-      { label: '打开开始菜单', icon: 'grid', fn: () => $('#start-btn').click() },
+      { label: t('打开开始菜单'), icon: 'grid', fn: () => $('#start-btn').click() },
       { sep: true },
       ...shellItems,
     ]);
@@ -189,15 +190,15 @@ $('#taskbar').addEventListener('contextmenu', (e) => {
   if (e.target.closest('#tray-vol')) {
     const muted = !!settings.get('muted');
     showMenu(x, y, [
-      { label: muted ? '取消静音' : '静音', icon: muted ? 'volume2' : 'volumeX', fn: () => settings.set({ muted: !muted }) },
+      { label: muted ? t('取消静音') : t('静音'), icon: muted ? 'volume2' : 'volumeX', fn: () => settings.set({ muted: !muted }) },
       { sep: true },
-      { label: '声音设置', icon: 'settings', fn: () => wm.open('settings', { params: { section: 'sound' } }) },
+      { label: t('声音设置'), icon: 'settings', fn: () => wm.open('settings', { params: { section: 'sound' } }) },
     ]);
     return;
   }
   if (e.target.closest('#tray-bell')) {
     showMenu(x, y, [
-      { label: '打开通知中心', icon: 'bell', fn: () => $('#tray-bell').click() },
+      { label: t('打开通知中心'), icon: 'bell', fn: () => $('#tray-bell').click() },
       { sep: true },
       ...shellItems,
     ]);
@@ -205,9 +206,9 @@ $('#taskbar').addEventListener('contextmenu', (e) => {
   }
   if (e.target.closest('#tray-clock')) {
     showMenu(x, y, [
-      { label: '打开日历', icon: 'calendar', fn: () => $('#tray-clock').click() },
+      { label: t('打开日历'), icon: 'calendar', fn: () => $('#tray-clock').click() },
       {
-        label: settings.get('clockSeconds') ? '时钟不显示秒' : '时钟显示秒',
+        label: settings.get('clockSeconds') ? t('时钟不显示秒') : t('时钟显示秒'),
         icon: 'clock',
         fn: () => settings.set({ clockSeconds: !settings.get('clockSeconds') }),
       },

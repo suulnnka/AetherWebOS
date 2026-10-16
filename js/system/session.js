@@ -17,6 +17,7 @@ import { icon } from '../core/icons.js';
 import { publish, subscribe } from '../core/bus.js';
 import { accounts } from '../core/accounts.js';
 import * as wm from '../core/wm.js';
+import { t } from '../core/i18n.js';
 
 let overlay = null;
 export const sessionActive = () => !!overlay;
@@ -47,9 +48,9 @@ function buildPanel() {
   const refreshHint = () => {
     if (!hintLine) return;
     const h = state.reg
-      ? (hintIn?.value?.trim() || '可选:用于锁屏时提示找回密码')
-      : (accounts.passwordHint(state.user) || '未设置密码提示');
-    hintLine.textContent = state.reg ? `提示(可选):${h}` : `密码提示:${h}`;
+      ? (hintIn?.value?.trim() || t('可选:用于锁屏时提示找回密码'))
+      : (accounts.passwordHint(state.user) || t('未设置密码提示'));
+    hintLine.textContent = state.reg ? t('提示(可选):{hint}', { hint: h }) : t('密码提示:{hint}', { hint: h });
   };
 
   const redraw = () => {
@@ -58,9 +59,9 @@ function buildPanel() {
     const last = accounts.lastUser();
     box.append(
       el('div', { class: 'ss-logo' }, icon('grid', 30)),
-      el('div', { class: 'ss-title' }, state.reg ? '创建新用户' : '欢迎回来'),
+      el('div', { class: 'ss-title' }, state.reg ? t('创建新用户') : t('欢迎回来')),
       el('div', { class: 'ss-sub' },
-        state.reg ? '注册后自动登录进桌面' : '选择用户,输入密码登录'),
+        state.reg ? t('注册后自动登录进桌面') : t('选择用户,输入密码登录')),
     );
 
     if (!state.reg && users.length) {
@@ -81,29 +82,29 @@ function buildPanel() {
           el('span', { class: 'ss-avatar' }, (u.displayName[0] || '?').toUpperCase()),
           el('span', { class: 'ss-uname' }, u.displayName),
           u.name === last
-            ? el('span', { class: 'ss-badge', title: '上次登录的用户' }, '上次登录')
+            ? el('span', { class: 'ss-badge', title: t('上次登录的用户') }, t('上次登录'))
             : null)));
       box.append(list);
     }
 
     errEl = el('div', { class: 'ss-error' });
     userInput = el('input', {
-      class: 'input', placeholder: '用户名(2-20 位)', autocomplete: 'username', spellcheck: 'false',
+      class: 'input', placeholder: t('用户名(2-20 位)'), autocomplete: 'username', spellcheck: 'false',
     });
     passIn = el('input', {
       class: 'input', type: 'password',
-      placeholder: state.reg ? '密码(至少 4 位)' : '密码',
+      placeholder: state.reg ? t('密码(至少 4 位)') : t('密码'),
       autocomplete: state.reg ? 'new-password' : 'current-password',
     });
     hintIn = el('input', {
-      class: 'input', placeholder: '密码提示(可选,最多 80 字)', autocomplete: 'off', maxlength: '80',
+      class: 'input', placeholder: t('密码提示(可选,最多 80 字)'), autocomplete: 'off', maxlength: '80',
     });
     hintIn.addEventListener('input', refreshHint);
 
     hintLine = el('div', { class: 'ss-hint' });
     refreshHint();
 
-    const mainBtn = el('button', { class: 'btn primary ss-main' }, state.reg ? '创建并登录' : '登录');
+    const mainBtn = el('button', { class: 'btn primary ss-main' }, state.reg ? t('创建并登录') : t('登录'));
     mainBtn.addEventListener('click', submit);
     [userInput, passIn, hintIn].forEach(i => i.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') submit();
@@ -135,7 +136,7 @@ function buildPanel() {
       type: 'button',
       class: 'btn ss-switch',
       onClick: () => { state.reg = !state.reg; redraw(); },
-    }, state.reg ? '已有账号?返回登录' : '注册新用户');
+    }, state.reg ? t('已有账号?返回登录') : t('注册新用户'));
 
     box.append(form);
     if (users.length || !state.reg) box.append(switchBtn);

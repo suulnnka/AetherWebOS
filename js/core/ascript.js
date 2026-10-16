@@ -12,6 +12,7 @@
  *
  * 编译错误(syntax)带 line/col 透传,编辑器据此跳转光标。
  * ============================================================ */
+import { t } from './i18n.js';
 
 const DEFAULT_TIMEOUT = 5000;   // 单次执行上限;超时 terminate
 
@@ -54,7 +55,7 @@ function spawn() {
     if (m.ok) p.resolve({ ok: true, value: m.value, ms: m.ms });
     else p.resolve({ ok: false, ms: m.ms ?? 0, error: { kind: m.kind, message: m.message, line: m.line ?? null, col: m.col ?? null } });
   };
-  w.onerror = () => { if (worker === w) kill('脚本 Worker 异常退出'); };
+  w.onerror = () => { if (worker === w) kill(t('脚本 Worker 异常退出')); };
 }
 
 /**
@@ -73,9 +74,9 @@ function request(msg, timeoutMs, killOnTimeout) {
     if (typeof timeoutMs === 'number' && timeoutMs > 0) {
       rec.timer = setTimeout(() => {
         pending.delete(id);
-        const reason = `执行超时(${timeoutMs / 1000}s),已强制终止 —— AetherJS 不设循环上限,死循环/长任务归脚本作者`;
+        const reason = t('执行超时({sec}s),已强制终止 —— AetherJS 不设循环上限,死循环/长任务归脚本作者', { sec: timeoutMs / 1000 });
         if (killOnTimeout) kill(reason);
-        resolve({ ok: false, ms: timeoutMs, error: { kind: 'limit', message: killOnTimeout ? reason : `编译超时(${timeoutMs}ms),本次检查已放弃(Worker 忙)` } });
+        resolve({ ok: false, ms: timeoutMs, error: { kind: 'limit', message: killOnTimeout ? reason : t('编译超时({ms}ms),本次检查已放弃(Worker 忙)', { ms: timeoutMs }) } });
       }, timeoutMs);
     }
     pending.set(id, rec);
@@ -102,7 +103,7 @@ export function checkAether(source, { timeoutMs = 1500 } = {}) {
 }
 
 /** Worker 终局清理(窗口关闭/测试收尾;未决调用以 limit 拒绝) */
-export function stopAetherWorker() { kill('Worker 已被宿主终止'); }
+export function stopAetherWorker() { kill(t('Worker 已被宿主终止')); }
 
 /* ---------- 展示格式化(编辑器输出面板的「→ 程序值」行) ---------- */
 
@@ -127,5 +128,5 @@ export function formatAetherValue(v, depth = 0) {
       .join(', ') + (keys.length > 12 ? ', …' : '');
     const s = '{' + body + '}';
     return s.length > 200 ? s.slice(0, 200) + '…}' : s;
-  } catch { return '(不可显示)'; }
+  } catch { return t('(不可显示)'); }
 }

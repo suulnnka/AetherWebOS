@@ -11,4 +11,5 @@ export default {
   order: 1.8,
   category: '社交',
   desc: '虚拟短信收件箱,全设备共享',
+  i18n: { en: { name: 'Messages', desc: 'Virtual SMS inbox shared across devices' } },
 };

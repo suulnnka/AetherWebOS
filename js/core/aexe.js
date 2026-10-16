@@ -15,6 +15,7 @@
  * 自动解包后走 core/ascript.js 的沙盒 Worker 运行。
  * ============================================================ */
 import { encryptText, decryptText } from './crypto.js';
+import { t } from './i18n.js';
 
 const MAGIC = 'AEXE1';
 const MASK = 'AetherEXE::obfuscation-mask::v1';
@@ -43,13 +44,13 @@ export async function packExe(source) {
 
 /** 解包:exe 文件内容 → 源码(自动解密;伪造/损坏抛错,消息面向用户) */
 export async function unpackExe(content) {
-  if (!isExe(content)) throw new Error('不是有效的 AEXE 可执行文件');
+  if (!isExe(content)) throw new Error(t('不是有效的 AEXE 可执行文件'));
   const rest = content.slice(MAGIC.length + 1);
   const sep = rest.indexOf(':');          // 密钥段是 base64,不含冒号
-  if (sep < 0) throw new Error('exe 文件已损坏(缺少密钥段)');
+  if (sep < 0) throw new Error(t('exe 文件已损坏(缺少密钥段)'));
   try {
     return await decryptText(rest.slice(sep + 1), unscramble(rest.slice(0, sep)));
   } catch (e) {
-    throw new Error(`解密失败:${e.message}(文件已损坏,或不是本系统打包的 exe)`);
+    throw new Error(t('解密失败:{msg}(文件已损坏,或不是本系统打包的 exe)', { msg: e.message }));
   }
 }

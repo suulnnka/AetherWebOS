@@ -7,12 +7,13 @@
  * 卡片体积也是包清单里的真实大小。本应用只做展示与编排。 */
 import { el } from '../../core/utils.js';
 import { icon, appTile } from '../../core/icons.js';
-import { register, list as listApps } from '../../core/registry.js';
+import { register, list as listApps, appName, appDesc, appSearchText } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './appstore.css';
 import * as wm from '../../core/wm.js';
 import { installApp, uninstallApp, isInstalled } from '../../core/install.js';
 import { loadCatalog, fmtBytes } from '../../core/pkg.js';
+import { t, localeTag } from '../../core/i18n.js';
 
 /* 氛围用伪元数据:评分 / 安装量由 id 哈希推导,每次打开都一致;
  * 包大小不在此列 —— 那是真实数据(pkgSizes,来自 apps.json) */
@@ -61,7 +62,7 @@ register({
         const line = node.querySelector('.st-line');
         const app = listApps().find(a => a.id === node.dataset.app);
         if (bytes != null && line && app) {
-          line.textContent = `${app.category || '系统'} · ${fmtBytes(bytes)}`;
+          line.textContent = `${t(app.category || '系统')} · ${fmtBytes(bytes)}`;
         }
       }
     }).catch((err) => console.warn('[appstore] 包清单不可用:', err));
@@ -75,12 +76,11 @@ register({
       if (cat) apps = apps.filter(a => (a.category || '系统') === cat);
       if (q) {
         const s = q.toLowerCase();
-        apps = apps.filter(a =>
-          `${a.name} ${a.desc || ''} ${a.category || ''}`.toLowerCase().includes(s));
+        apps = apps.filter(a => appSearchText(a.id).includes(s));   // 双语索引:zh 名 + en 译名 + 简介
       }
       if (view === 'store') {
         apps.sort((a, b) => (isInstalled(a.id) ? 1 : 0) - (isInstalled(b.id) ? 1 : 0)
-          || (a.order - b.order) || a.name.localeCompare(b.name, 'zh'));
+          || (a.order - b.order) || a.name.localeCompare(b.name, localeTag()));
       }
       return apps;
     }
@@ -90,7 +90,7 @@ register({
     /** 安装按钮 → 真实下载进度(字节级,来自 core/install 的 onProgress)
      *  → 落地 installApp。失败时安装标志不置位,重绘回「安装」可重试。 */
     function installFlow(app, btn) {
-      const prog = el('div', { class: 'st-prog', title: `正在下载 ${app.name} 的应用包` },
+      const prog = el('div', { class: 'st-prog', title: `正在下载 ${appName(app.id)} 的应用包` },
         el('div', { class: 'st-prog-bar' }, el('i')),
         el('span', { class: 'st-prog-t' }, '连接中…'));
       btn.replaceWith(prog);
@@ -112,7 +112,7 @@ register({
 
     async function uninstallFlow(app) {
       const ok = await dialogs.confirm({
-        title: `卸载「${app.name}」`,
+        title: `卸载「${appName(app.id)}」`,
         message: '将从开始菜单与桌面移除该应用;应用数据保留,重新安装后恢复。',
         okText: '卸载', danger: true,
       });
@@ -149,11 +149,11 @@ register({
         appTile(app, 48, 25),
         el('div', { class: 'st-info' },
           el('div', { class: 'st-name' },
-            app.name,
+            appName(app.id),
             inst ? el('span', { class: 'st-ok' }, app.store === true ? '已安装' : '系统应用') : null),
           el('div', { class: 'st-line' },
-            `${app.category || '系统'} · ${size != null ? fmtBytes(size) : '—'}`),
-          el('div', { class: 'st-desc' }, app.desc || ''),
+            `${t(app.category || '系统')} · ${size != null ? fmtBytes(size) : '—'}`),
+          el('div', { class: 'st-desc' }, appDesc(app.id)),
           el('div', { class: 'st-meta' }, `★${m.rating} · ${m.dl} 安装`),
         ),
         el('div', { class: 'st-act' }, ...cardBtns(app)),
@@ -201,7 +201,7 @@ register({
         { key: 'all', label: '发现', ico: 'store', n: storeCount(), on: view === 'store' && !cat },
         { key: 'mine', label: '我的应用', ico: 'grid', n: mineCount(), on: view === 'mine' },
         { sep: true },
-        ...CATS.map(([c, ico]) => ({ key: c, label: c, ico, n: catCount(c), on: view === 'store' && cat === c })),
+        ...CATS.map(([c, ico]) => ({ key: c, label: t(c), ico, n: catCount(c), on: view === 'store' && cat === c })),
       ];
       for (const it of items) {
         if (it.sep) { navBox.append(el('div', { class: 'st-nav-sep' })); continue; }

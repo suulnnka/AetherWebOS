@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '在一张图里猜出坐标的地理小游戏',
+  i18n: { en: { name: 'TuXun', desc: 'A geography mini-game: guess the spot from a map' } },
 };

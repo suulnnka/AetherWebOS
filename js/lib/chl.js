@@ -18,6 +18,14 @@
  * <style>/<script> 内嵌内容按对应语言着色。
  * ============================================================ */
 
+/* i18n:t 延迟绑定 —— core/i18n.js → store/utils 在模块顶层访问
+ * location/matchMedia,只能在浏览器加载;而本模块被 tools/chl-smoke.mjs
+ * 在 node 里直接运行,静态导入会让冒烟当场炸掉。浏览器侧(先加载的
+ * core chunk 同块解析)首个微任务换上真 t;node 侧恒等回落,zh 高亮
+ * 产物逐字节不变。 */
+let t = (key) => key;
+if (typeof document !== 'undefined') import('../core/i18n.js').then((m) => { t = m.t; }, () => {});
+
 /* ---------- 公共:扩展名 → 语言 ---------- */
 
 export const CODE_EXT_RE = /\.(ajs|js|css|html?|json)$/i;
@@ -124,31 +132,31 @@ function hlAjs(src, out) {
     AJS_TOKEN.lastIndex = i;
     const m = AJS_TOKEN.exec(src);
     if (!m || m.index > i) {                     // i 处是非法字符:标红一字符后继续
-      out.push('tk-err', src[i], AJS_ILLEGAL_HINT);
+      out.push('tk-err', src[i], t(AJS_ILLEGAL_HINT));
       i++;
       continue;
     }
-    const t = m[0];
-    i = m.index + t.length;
-    const c0 = t[0];
-    if (c0 === '/' && t.length > 1) { out.push('tk-com', t); continue; }        // 注释不动 lastSig
-    if (c0 === "'" || c0 === '"') { out.push('tk-str', t); lastSig = t; continue; }
-    if (/\d/.test(c0) || (c0 === '.' && /\d/.test(t[1] || ''))) { out.push('tk-num', t); lastSig = t; continue; }
+    const tok = m[0];
+    i = m.index + tok.length;
+    const c0 = tok[0];
+    if (c0 === '/' && tok.length > 1) { out.push('tk-com', tok); continue; }        // 注释不动 lastSig
+    if (c0 === "'" || c0 === '"') { out.push('tk-str', tok); lastSig = tok; continue; }
+    if (/\d/.test(c0) || (c0 === '.' && /\d/.test(tok[1] || ''))) { out.push('tk-num', tok); lastSig = tok; continue; }
     if (/[A-Za-z_]/.test(c0)) {
-      if (lastSig === '.') out.push('tk-prop', t);
-      else if (AJS_KEYWORDS.has(t)) out.push('tk-kw', t);
-      else if (AJS_LITERALS.has(t)) out.push('tk-lit', t);
-      else if (AJS_BUILTINS.has(t)) out.push('tk-bi', t);
-      else if (AJS_BANNED[t]) out.push('tk-err', t, `${AJS_BANNED[t]}(AetherJS 禁用)`);
-      else out.push(null, t);
-      lastSig = t;
+      if (lastSig === '.') out.push('tk-prop', tok);
+      else if (AJS_KEYWORDS.has(tok)) out.push('tk-kw', tok);
+      else if (AJS_LITERALS.has(tok)) out.push('tk-lit', tok);
+      else if (AJS_BUILTINS.has(tok)) out.push('tk-bi', tok);
+      else if (AJS_BANNED[tok]) out.push('tk-err', tok, `${t(AJS_BANNED[tok])}(${t('AetherJS 禁用')})`);
+      else out.push(null, tok);
+      lastSig = tok;
       continue;
     }
-    if (t === '==' || t === '!=') { out.push('tk-err', t, '禁止宽松相等:请用 === / !==(AetherJS 禁用)'); lastSig = t; continue; }
-    if (/^\s+$/.test(t)) { out.push(null, t); continue; }                        // 空白不动 lastSig
-    lastSig = t;
-    if ('(){}[];,'.includes(t) || t === '.') out.push(null, t);
-    else out.push('tk-op', t);
+    if (tok === '==' || tok === '!=') { out.push('tk-err', tok, t('禁止宽松相等:请用 === / !==(AetherJS 禁用)')); lastSig = tok; continue; }
+    if (/^\s+$/.test(tok)) { out.push(null, tok); continue; }                        // 空白不动 lastSig
+    lastSig = tok;
+    if ('(){}[];,'.includes(tok) || tok === '.') out.push(null, tok);
+    else out.push('tk-op', tok);
   }
 }
 
@@ -319,13 +327,13 @@ function hlJson(src, out) {
   let m, last = 0;
   while ((m = re.exec(src))) {
     if (m.index > last) out.push(null, src.slice(last, m.index));
-    const t = m[0];
-    if (t[0] === '"') {
+    const tok = m[0];
+    if (tok[0] === '"') {
       let j = re.lastIndex;
       while (j < src.length && /\s/.test(src[j])) j++;
-      out.push(src[j] === ':' ? 'tk-prop' : 'tk-str', t);
-    } else if (/[0-9]/.test(t[0])) out.push('tk-num', t);
-    else out.push('tk-lit', t);
+      out.push(src[j] === ':' ? 'tk-prop' : 'tk-str', tok);
+    } else if (/[0-9]/.test(tok[0])) out.push('tk-num', tok);
+    else out.push('tk-lit', tok);
     last = re.lastIndex;
   }
   if (last < src.length) out.push(null, src.slice(last));

@@ -11,4 +11,5 @@ export default {
   order: 2.6,
   category: '效率',
   desc: '纯表格编辑:列宽 / 单元格样式 / 列排序 / 缩放,存 .axl',
+  i18n: { en: { name: 'Spreadsheet', desc: 'Pure grid editing: column width / cell styles / column sort / zoom, saved as .axl' } },
 };

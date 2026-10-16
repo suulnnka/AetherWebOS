@@ -11,4 +11,5 @@ export default {
   order: 2,
   category: '效率',
   desc: '纯文本速记,支持多窗口',
+  i18n: { en: { name: 'Notepad', desc: 'Plain-text quick notes in multiple windows' } },
 };

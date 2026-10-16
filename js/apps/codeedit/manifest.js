@@ -11,4 +11,5 @@ export default {
   order: 2.6,
   category: '工具',
   desc: 'AetherJS / CSS / HTML / JSON 编辑器,自研高亮,一键运行 AetherJS',
+  i18n: { en: { name: 'Code Editor', desc: 'AetherJS / CSS / HTML / JSON editor with custom highlighting and one-click AetherJS run' } },
 };

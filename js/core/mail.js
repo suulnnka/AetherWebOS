@@ -20,6 +20,7 @@ import { accounts } from './accounts.js';
 import { settings } from './store.js';
 import { fsReady } from './fs.js';
 import { loadState, loadIdentityState, saveIdentityState } from './appdata.js';
+import { t } from './i18n.js';
 
 const KEY = 'webos.mail.v1';
 let activeMailbox = null;       // 当前邮箱地址(应用自有身份)
@@ -135,7 +136,7 @@ export function deliver(spec = {}) {
   if (msg.folder === 'inbox') {
     publish('sys:notify', {
       from: 'mail', type: 'notify',
-      payload: { title: `新邮件 · ${msg.fromName}`, body: msg.subject },
+      payload: { title: t('新邮件 · {fromName}', { fromName: msg.fromName }), body: msg.subject },
     });
   }
   return msg;

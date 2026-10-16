@@ -4,6 +4,7 @@
  * ============================================================ */
 
 import { el } from './utils.js';
+import { t } from './i18n.js';
 
 /**
  * modal(root, { title, body, input, confirmText, cancelText, danger })
@@ -20,16 +21,16 @@ export function modal(root, opts = {}) {
       style: { width: '100%', marginTop: '6px' },
     });
     const box = el('div', { class: 'modal-box' },
-      el('h3', {}, opts.title || '确认'),
+      el('h3', {}, opts.title || t('确认')),
       el('div', { class: 'm-body' },
         opts.body ?? '',
         opts.input ? input : null),
       el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onClick: done(null) }, opts.cancelText || '取消'),
+        el('button', { class: 'btn', onClick: done(null) }, opts.cancelText || t('取消')),
         el('button', {
           class: 'btn ' + (opts.danger ? 'danger' : 'primary'),
           onClick: done(() => (opts.input ? input.value : true)),
-        }, opts.confirmText || '确定')));
+        }, opts.confirmText || t('确定'))));
 
     const mask = el('div', { class: 'modal-mask' }, box);
 
@@ -53,7 +54,7 @@ export function modal(root, opts = {}) {
 }
 
 export const confirmBox = (root, title, body, danger = false) =>
-  modal(root, { title, body, danger, confirmText: danger ? '删除' : '确定' });
+  modal(root, { title, body, danger, confirmText: danger ? t('删除') : t('确定') });
 
 export const promptBox = (root, title, placeholder = '', value = '') =>
-  modal(root, { title, input: { placeholder, value }, confirmText: '确定' });
+  modal(root, { title, input: { placeholder, value }, confirmText: t('确定') });

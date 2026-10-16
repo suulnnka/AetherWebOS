@@ -12,4 +12,5 @@ export default {
   order: 0,
   category: '工具',
   desc: '多标签网页浏览器,内网站点与真实互联网自动分流,星标收藏随账号保存',
+  i18n: { en: { name: 'Browser', desc: 'Tabbed web browser; intranet sites and the real internet auto-routing, starred favorites saved per account' } },
 };

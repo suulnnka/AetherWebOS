@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '效率',
   desc: '按日书写,心情标记与单页加密',
+  i18n: { en: { name: 'Diary', desc: 'Journal by day with mood tags and per-page encryption' } },
 };

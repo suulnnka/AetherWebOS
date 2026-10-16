@@ -12,4 +12,5 @@ export default {
   order: 2.2,
   category: '系统',
   desc: '发现并安装新应用',
+  i18n: { en: { name: 'App Store', desc: 'Discover and install new apps' } },
 };

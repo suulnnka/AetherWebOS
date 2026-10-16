@@ -23,7 +23,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './todo.css';
 import { accounts } from '../../core/accounts.js';
-import { open, reopen } from '../../core/wm.js';
+import { open, reopen, taskList, get as getWin, focus as focusWin } from '../../core/wm.js';
 import { requireLogin } from '../../core/loginpanel.js';
 import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
 import fs from '../../core/fs.js';
@@ -73,6 +73,8 @@ function normalize(raw) {
             : { tasks: Array.isArray(b.tasks) ? b.tasks.map(task).filter(t => t.id && t.text) : [] }),
         } : null)
         .filter(Boolean),
+      // 全关那一刻仍开着的板(桌面图标在「一个都没开」时整组恢复)
+      lastOpen: Array.isArray(raw.lastOpen) ? raw.lastOpen.map(String).filter(Boolean) : [],
     };
   }
   if (Array.isArray(raw.tasks)) {
@@ -158,6 +160,34 @@ function dropBoard(boardId) {
   return writeQ;
 }
 
+/** 打开一块板的窗口;该板已有窗口则聚焦(含从最小化还原),不重复开 */
+function openBoardWin(boardId, type) {
+  for (const t of taskList()) {
+    if (t.appId !== 'todo') continue;
+    if (getWin(t.id)?.ctx?.params?.boardId === boardId) { focusWin(t.id); return; }
+  }
+  open('todo', { params: { boardId, type } });
+}
+
+/** 记录「全关前仍开着的一组板」(每个便签窗口关闭时刷新;全部关完后,
+ *  下一次桌面打开(无参)整组恢复它们) */
+function saveLastOpen(ids) {
+  const run = async () => {
+    const user = accounts.current();
+    if (!user) return;
+    let disk;
+    try { disk = normalize(await loadState('todo', user)); } catch { disk = null; }
+    disk = disk || (state?.boards?.length ? state : { seq: 1, boards: [] });
+    disk.lastOpen = ids;
+    disk.seq = Math.max(disk.seq || 0, (state?.seq || 0) + 1);
+    state = disk;
+    try { await saveState('todo', disk, user); await fs.flush(); }
+    catch (e) { console.warn('[todo] 持久化失败', e?.message || e); }
+  };
+  writeQ = writeQ.then(run, run);
+  return writeQ;
+}
+
 /** 新建一块板并开窗。窗口先行:板已推进内存 state(seq 已提升,不会被
  *  水合的旧盘面冲掉),新窗口水合直接命中;落盘转后台,读盘失败时自愈,
  *  不让存储异常拦住开窗(菜单点了没反应的根因)。 */
@@ -196,6 +226,24 @@ function showNoteMenu(anchor, items) {
   const pop = el('div', { class: 'todo-menu' });
   for (const it of items) {
     if (it.sep) { pop.append(el('div', { class: 'tm-sep' })); continue; }
+    if (it.boardList) {
+      // 「打开已有」:列出除当前外的全部板(待办/便签),点击开窗
+      pop.append(el('div', { class: 'tm-label' }, '打开已有'));
+      const box = el('div', { class: 'tm-boards' });
+      const others = (state?.boards || []).filter(b => b.id !== it.boardList);
+      if (!others.length) box.append(el('div', { class: 'tm-empty-hint' }, '没有其他便签'));
+      for (const b of others) {
+        const name = b.type === 'note'
+          ? ((b.text || '').split('\n').find(l => l.trim()) || '').trim().slice(0, 14) || '空便签'
+          : (((b.tasks.find(t => !t.done) || b.tasks[0])?.text || '').slice(0, 14) || '空待办');
+        box.append(el('button', {
+          class: 'tm-item tm-board-item',
+          onClick: () => { closeMenu(); openBoardWin(b.id, b.type); },   // 已开的板聚焦,不重复开
+        }, icon(b.type === 'note' ? 'pencil' : 'check', 13), el('span', {}, name)));
+      }
+      pop.append(box);
+      continue;
+    }
     if (it.colors) {
       pop.append(el('div', { class: 'tm-label' }, it.label || '背景颜色'));
       pop.append(el('div', { class: 'tm-colors' },
@@ -240,6 +288,8 @@ function boardMenuItems(board, ctx, { onColor, persist, isPinned }) {
   return [
     { label: '新建待办', ico: 'plus', fn: () => { createBoardWin('todo', isPinned()); } },
     { label: '新建便签', ico: 'pencil', fn: () => { createBoardWin('note', isPinned()); } },
+    { sep: true },
+    { boardList: board?.id },
     { sep: true },
     { label: '背景颜色', colors: board?.color || DEFAULT_BG, onPick: (c) => {
       if (board) { board.color = c === DEFAULT_BG ? '' : c; onColor(); persist(); }
@@ -291,10 +341,22 @@ function hydrate(ctx, ref, boardId, render) {
       if (!b) { ctx.close(); return; }   // 数据里没有这块板(他窗已删):关掉
       ref.board = b;
     } else {
-      // 无参:桌面图标 = 新开一张独立便签(不与已开窗口共享数据);
+      // 无参:桌面图标。一个便签窗口都没开时,整组恢复「上次全关前开着
+      // 的板」;已有窗口则新开一张独立空便签(不与已开窗口共享数据);
       // params.reuseFirst(登录重挂载)= 回到第一张待办板。
       // 盘上从来没有任何板才播种演示种子。回写 boardId:会话恢复原样开回这块板
       let b = ctx.params?.reuseFirst ? state.boards.find(x => x.type === 'todo') : null;
+      // 注意排除自身(水合回调时本窗已登记进窗口表)
+      if (!b && !ctx.params?.reuseFirst && !taskList().some(t => t.appId === 'todo' && t.id !== ctx.win.id)) {
+        const ids = (state.lastOpen || []).filter(id => boardOf(id));
+        if (ids.length) {
+          state.lastOpen = [];
+          saveLastOpen([]);
+          ids.forEach(id => openBoardWin(id, boardOf(id).type));
+          ctx.close();   // 关掉这个占位窗,让位给整组恢复
+          return;
+        }
+      }
       if (!b) {
         if (state.boards.length === 0) {
           b = ref.board;
@@ -446,7 +508,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
         class: 'todo-check' + (t.done ? ' on' : ''),
         title: t.done ? '标记为待办' : '标记完成',
         onClick: () => { t.done = !t.done; persist(); render(); },
-      }, t.done ? icon('check', 12) : ''),
+      }),
       el('div', { class: 'todo-t' }, t.text),
       el('button', {
         class: 'todo-del', title: '删除',
@@ -638,6 +700,13 @@ function mountMain(ctx, ref, boardId, startPinned) {
       window.removeEventListener('pointermove', onDragMove);
       window.removeEventListener('pointerup', onDragUp);
       document.removeEventListener('keydown', onKeyNew);
+      // 记录「此刻仍开着的一组板」(含自己):全部关完后,下次桌面打开整组恢复
+      try {
+        const ids = taskList().filter(t => t.appId === 'todo')
+          .map(t => getWin(t.id)?.ctx?.params?.boardId)
+          .filter(Boolean);
+        saveLastOpen(ids);
+      } catch { /* 忽略 */ }
       return true;
     },
   };
@@ -698,7 +767,16 @@ function mountNote(ctx, ref, boardId, startPinned) {
   const stopSync = hydrate(ctx, ref, boardId, render);
 
   return {
-    onClose() { stopSync(); closeMenu(); return true; },
+    onClose() {
+      stopSync(); closeMenu();
+      try {
+        const ids = taskList().filter(t => t.appId === 'todo')
+          .map(t => getWin(t.id)?.ctx?.params?.boardId)
+          .filter(Boolean);
+        saveLastOpen(ids);
+      } catch { /* 忽略 */ }
+      return true;
+    },
   };
 }
 

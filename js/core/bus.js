@@ -18,6 +18,19 @@ import { uuid } from './utils.js';
 
 const listeners = new Map(); // topic -> Set<fn>
 
+/* 频道静默(fs.batch 合并广播用):静默期间的 publish 不派发、不入消息
+ * 日志,载荷交给 collector 观察(可并入批末的合并事件)。 */
+const mutes = new Map();     // topic -> collector | null
+
+/** 静默频道:期间该频道的 publish 被吸收(collector 收到原始 fields) */
+export function muteTopic(topic, collector) {
+  mutes.set(topic, typeof collector === 'function' ? collector : null);
+}
+/** 解除静默( collector 停止观测) */
+export function unmuteTopic(topic) {
+  mutes.delete(topic);
+}
+
 /** 消息日志(环形缓冲,系统监视器展示用) */
 export const msgLog = [];
 const LOG_MAX = 400;
@@ -38,6 +51,12 @@ export function subscribe(topic, fn) {
  * fields: { from, to, type, payload, replyTopic }
  */
 export function publish(topic, fields = {}) {
+  if (mutes.has(topic)) {
+    // 静默期(如 fs.batch 批内):不派发不入日志,载荷留给 collector
+    const collector = mutes.get(topic);
+    try { collector?.(fields); } catch { /* 忽略 */ }
+    return null;
+  }
   const msg = {
     id: uuid(),
     ts: Date.now(),

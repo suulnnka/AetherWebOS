@@ -111,19 +111,23 @@
 .todo-item:active { cursor: grabbing; }
 .todo-item.dragging { opacity: 0.45; }
 
-/* 完成圆圈:颜色跟字体,无阴影;对齐任务首行 */
+/* 完成圆圈:空心描边,选中只在内里加一个浅点(不实心);颜色整体调浅 */
 .todo-check {
   flex: none; width: 18px; height: 18px; margin-top: 0.5px;
   border-radius: 50%;
-  border: 1.5px solid rgba(70, 61, 46, 0.45);
+  border: 1.5px solid rgba(70, 61, 46, 0.32);
   background: transparent; padding: 0;
   display: grid; place-items: center; color: transparent;
   outline: none; box-shadow: none;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: border-color 0.15s;
 }
-.todo-check:hover { border-color: rgba(70, 61, 46, 0.8); }
-.todo-check.on { background: #463d2e; border-color: #463d2e; color: var(--note-bg, #fef9e0); }
+.todo-check:hover { border-color: rgba(70, 61, 46, 0.55); }
+.todo-check.on { border-color: rgba(70, 61, 46, 0.42); }
+.todo-check.on::after {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(70, 61, 46, 0.48);
+}
 
 /* 任务文本:多行换行;完成后变淡 + 删除线 */
 .todo-t {
@@ -210,3 +214,8 @@
 }
 .tm-ball:hover { transform: scale(1.14); }
 .tm-ball.cur { box-shadow: 0 0 0 2px #fffdf3, 0 0 0 3.5px rgba(70, 61, 46, 0.55); }
+
+/* 「打开已有」板列表 */
+.tm-boards { display: flex; flex-direction: column; gap: 1px; max-height: 176px; overflow-y: auto; }
+.tm-board-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 148px; }
+.tm-empty-hint { padding: 5px 10px 6px; font-size: 11.5px; color: rgba(70, 61, 46, 0.4); }

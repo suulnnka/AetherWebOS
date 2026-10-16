@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '效率',
   desc: '卡片式笔记,支持加密与置顶',
+  i18n: { en: { name: 'Notes', desc: 'Card-style notes with encryption and pinning' } },
 };

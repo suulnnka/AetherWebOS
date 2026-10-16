@@ -11,6 +11,7 @@ import { fs } from './fs.js';
 import * as wm from './wm.js';
 import { publish } from './bus.js';
 import { openFs } from './openwith.js';
+import { t } from './i18n.js';
 
 /** 打开 markdown 链接;返回是否成功路由 */
 export function openMdLink(url, docPath = null) {
@@ -20,7 +21,7 @@ export function openMdLink(url, docPath = null) {
     return true;
   }
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(u)) {                // mailto: 等其他协议
-    publish('sys:notify', { from: 'mdopen', type: 'notify', payload: { title: '暂不支持该链接协议', body: u } });
+    publish('sys:notify', { from: 'mdopen', type: 'notify', payload: { title: t('暂不支持该链接协议'), body: u } });
     return false;
   }
   let p = u.split('#')[0].trim();
@@ -32,7 +33,7 @@ export function openMdLink(url, docPath = null) {
     p = fs.normPath(p);
   }
   if (!fs.exists(p)) {
-    publish('sys:notify', { from: 'mdopen', type: 'notify', payload: { title: '链接目标不存在', body: p } });
+    publish('sys:notify', { from: 'mdopen', type: 'notify', payload: { title: t('链接目标不存在'), body: p } });
     return false;
   }
   if (fs.isDir(p)) { wm.open('files', { params: { path: p } }); return true; }

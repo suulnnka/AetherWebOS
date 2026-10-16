@@ -51,6 +51,7 @@ export const DYNAMIC_WALLPAPERS = [
 export const WALLPAPERS = [...DYNAMIC_WALLPAPERS, ...STATIC_WALLPAPERS];
 
 const DEFAULTS = {
+  locale: 'zh-CN',          // 界面语言:zh-CN | en-US | auto(跟随浏览器;非 en 家族回落 zh-CN),切换经设置应用重启生效
   theme: 'auto',            // light | dark | auto
   style: 'neon',            // 默认风格皮肤:霓虹未来(modern | neon | mac | win31 | win98 | winxp | win7 | ubuntu)
   accent: '#5b6cff',

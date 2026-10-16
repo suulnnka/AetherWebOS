@@ -11,9 +11,10 @@
 
 import fs, { desktopPath } from './fs.js';
 import { publish, subscribe } from './bus.js';
-import { get, list, prefetchOnHover } from './registry.js';
+import { get, list, prefetchOnHover, appName } from './registry.js';
 import { accounts } from './accounts.js';
 import { isInstalled, CHESS_FOLDER } from './install.js';
+import { t } from './i18n.js';
 
 export const APPEXT = '.app';
 
@@ -65,7 +66,7 @@ export function sendAppToDesktop(appId) {
   if (!dir) return null;
   const p = createAppLink(dir, appId);
   if (p && app) {
-    publish('sys:notify', { from: 'applink', type: 'notify', payload: { title: '已发送到桌面', body: fs.basename(p) } });
+    publish('sys:notify', { from: 'applink', type: 'notify', payload: { title: t('已发送到桌面'), body: fs.basename(p) } });
   }
   return p;
 }
@@ -74,7 +75,7 @@ export function sendAppToDesktop(appId) {
 export function appLinkMenuItems(onPick) {
   return list()
     .filter(a => a.desktop !== false && isInstalled(a.id))
-    .map(a => ({ label: a.name, icon: a.icon, fn: () => onPick(a) }));
+    .map(a => ({ label: appName(a.id), icon: a.icon, fn: () => onPick(a) }));
 }
 
 /** 快捷方式与应用图标一样是启动入口:悬停即预读目标应用 chunk */
@@ -155,15 +156,17 @@ export function removeAppShortcuts(appId, user = accounts.current()) {
 }
 
 /* 登录 / 注册 / 建号 → 家目录就绪后立刻补桌面快捷方式
- * (旧版快捷方式的安装状态迁移由 install 模块订阅同一事件完成) */
+ * (旧版快捷方式的安装状态迁移由 install 模块订阅同一事件完成)。
+ * 走 fs.batch:与 fs.js 的兄弟订阅(同一次登录)并入同一批,
+ * 一次合并广播 + 一趟确定性落盘 */
 subscribe('accounts:changed', (payload, msg) => {
   const t = msg?.type;
   const u = payload?.user || accounts.current();
   if ((t === 'login' || t === 'register') && u) {
-    ensureDesktopShortcuts(u);
+    fs.batch(() => ensureDesktopShortcuts(u)).catch(() => {});
   }
   // 仅 createUser(未切会话)时也预播种,避免首次登录桌面空白
-  if (t === 'created' && u) ensureDesktopShortcuts(u);
+  if (t === 'created' && u) fs.batch(() => ensureDesktopShortcuts(u)).catch(() => {});
 });
 
 /* 安装/卸载联动(install 模块广播,按用户):安装(与旧版迁移)后补播种
@@ -172,7 +175,7 @@ subscribe('sys:apps-changed', (payload) => {
   const { action, id, user } = payload || {};
   const u = user || accounts.current();
   if (action === 'install' || action === 'reconcile') {
-    if (u) ensureDesktopShortcuts(u);
+    if (u) fs.batch(() => ensureDesktopShortcuts(u)).catch(() => {});
   } else if (action === 'uninstall' && id) {
     removeAppShortcuts(id, u);
   }

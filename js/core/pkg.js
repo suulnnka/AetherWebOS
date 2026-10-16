@@ -23,6 +23,7 @@
  * 避免环状依赖。
  * ============================================================ */
 import fs from './fs.js';
+import { t } from './i18n.js';
 
 /** 设备级应用包根目录(root 私有;种子模式见 fs.js freshRoot) */
 const PKG_ROOT = '/app';
@@ -141,7 +142,7 @@ export function normalizeAllModes() {
  */
 export async function ensureResources(id, opts = {}) {
   const pkg = await pkgInfo(id);
-  if (!pkg?.files?.length) throw new Error('包清单缺失');
+  if (!pkg?.files?.length) throw new Error(t('包清单缺失'));
   const total = pkg.bytes || 0;
   if (resourcesPresent(id, pkg.files)) {
     normalizeAllModes();
@@ -152,21 +153,24 @@ export async function ensureResources(id, opts = {}) {
   fs.chmod(PKG_ROOT, PKG_DIR_MODE, { as: 'root' });
   let loaded = 0;
   opts.onProgress?.({ loaded: 0, total, file: '' });
-  for (const file of pkg.files) {
-    const url = new URL(file, document.baseURI).href;
-    const data = await fetchFile(url, (n) => opts.onProgress?.({ loaded: loaded + n, total, file }));
-    const p = pkgPath(id, file);
-    /* 应用包目录逐个建(root 私有),不靠 fs.write 的自动补目录(默认世界可读) */
-    fs.mkdir(PKG_ROOT + '/' + id, { as: 'root', owner: 'root', mode: PKG_DIR_MODE, silent: true });
-    const content = TEXT_EXT.test(file) ? new TextDecoder().decode(data) : data;
-    if (!fs.write(p, content, { as: 'root', owner: 'root', mode: PKG_FILE_MODE })) {
-      throw new Error(`写入 ${p} 失败`);
+  /* 逐文件循环走 fs.batch:几十个写入合并为一条广播 + 批末一趟确定性
+   * 落盘(batch 会 await 该趟,语义强于原先的收尾 flush) */
+  await fs.batch(async () => {
+    for (const file of pkg.files) {
+      const url = new URL(file, document.baseURI).href;
+      const data = await fetchFile(url, (n) => opts.onProgress?.({ loaded: loaded + n, total, file }));
+      const p = pkgPath(id, file);
+      /* 应用包目录逐个建(root 私有),不靠 fs.write 的自动补目录(默认世界可读) */
+      fs.mkdir(PKG_ROOT + '/' + id, { as: 'root', owner: 'root', mode: PKG_DIR_MODE, silent: true });
+      const content = TEXT_EXT.test(file) ? new TextDecoder().decode(data) : data;
+      if (!fs.write(p, content, { as: 'root', owner: 'root', mode: PKG_FILE_MODE })) {
+        throw new Error(t('写入 {p} 失败', { p }));
+      }
+      loaded += data.length;
+      opts.onProgress?.({ loaded, total, file });
     }
-    loaded += data.length;
-    opts.onProgress?.({ loaded, total, file });
-  }
-  normalizeAllModes();           // 兜底:任何路径写进来的残留模式一并归一
-  fs.flush().catch(() => {});   // 下载完成即冲刷,防刷新后「复活」
+  });
+  normalizeAllModes();           // 兜底:任何路径写进来的残留模式一并归一(自带 flush)
   return { bytes: loaded, cached: false };
 }
 

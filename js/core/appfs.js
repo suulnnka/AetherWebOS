@@ -127,6 +127,8 @@ export function createAppFs(appId, user) {
     stats() { return fs.stats(); },
     /** 路径工具与核心一致 */
     ensureUserHome: (u) => fs.ensureUserHome(u),
+    /** 批量操作(解压等多文件写入):合并广播 + 一趟确定性落盘,见 core/fs.js */
+    batch: (fn) => fs.batch(fn),
   };
 
   return api;

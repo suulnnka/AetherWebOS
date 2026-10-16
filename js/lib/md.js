@@ -30,6 +30,14 @@
  * 的依赖约定,改动行区间语义前先看那边的注释。
  * ============================================================ */
 
+/* i18n:t 延迟绑定 —— core/i18n.js → store/utils 在模块顶层访问
+ * location/matchMedia,只能在浏览器加载;而本模块被 tools/md-smoke.mjs
+ * 在 node 里直接运行,静态导入会让冒烟当场炸掉。浏览器侧(先加载的
+ * core chunk 同块解析)首个微任务换上真 t;node 侧恒等回落,zh 渲染
+ * 产物逐字节不变。 */
+let t = (key) => key;
+if (typeof document !== 'undefined') import('../core/i18n.js').then((m) => { t = m.t; }, () => {});
+
 /* ---------- 基础工具 ---------- */
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
@@ -144,8 +152,8 @@ function parseBlocks(lines, base, defs) {
       const isDelim = L(i + 1).includes('-') && delim.length >= 1 && delim.every((c) => /^:?-+:?$/.test(c.trim()));
       if (isDelim && delim.length === head.length) {
         const align = delim.map((c) => {
-          const t = c.trim();
-          return t.startsWith(':') && t.endsWith(':') ? 'center' : t.endsWith(':') ? 'right' : t.startsWith(':') ? 'left' : '';
+          const tc = c.trim();
+          return tc.startsWith(':') && tc.endsWith(':') ? 'center' : tc.endsWith(':') ? 'right' : tc.startsWith(':') ? 'left' : '';
         });
         const rows = [];
         let j = i + 2;
@@ -293,10 +301,10 @@ function parseList(lines, i, base, defs) {
 
 /** 表格行拆分:去掉首尾定界竖线,按未转义的 | 切开(转义 \| 留给行内处理) */
 function splitRow(line) {
-  let t = line.trim();
-  if (t.startsWith('|')) t = t.slice(1);
-  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
-  return t.split(/(?<!\\)\|/).map((c) => c.trim());
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim());
 }
 
 /* ---------- 行内解析(分隔符栈,参照 CommonMark 附录算法简化) ---------- */
@@ -326,13 +334,13 @@ function linkHtml(inner, url, title, isImg, rich) {
   if (isImg) {
     if (/^https?:/i.test(u)) {
       const tip = esc(title ? `${title} — ${u}` : u);
-      return `<span class="md-img" data-src="${esc(u)}" data-alt="${esc(inner)}" title="${tip}">🖼 ${esc(inner || '图片')}</span>`;
+      return `<span class="md-img" data-src="${esc(u)}" data-alt="${esc(inner)}" title="${tip}">🖼 ${esc(inner || t('图片'))}</span>`;
     }
-    const t = title ? ` title="${esc(title)}"` : '';
-    return `<img src="${esc(u)}" alt="${esc(inner)}"${t} loading="lazy">`;
+    const ta = title ? ` title="${esc(title)}"` : '';
+    return `<img src="${esc(u)}" alt="${esc(inner)}"${ta} loading="lazy">`;
   }
-  const t = title ? ` title="${esc(title)}"` : '';
-  return `<a href="${esc(u)}"${t} target="_blank" rel="noopener">${rich ? inner : esc(inner)}</a>`;
+  const ta = title ? ` title="${esc(title)}"` : '';
+  return `<a href="${esc(u)}"${ta} target="_blank" rel="noopener">${rich ? inner : esc(inner)}</a>`;
 }
 
 /**

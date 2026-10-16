@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '娱乐',
   desc: '实况、12 小时与 7 日预报,历史天气可回溯',
+  i18n: { en: { name: 'Weather', desc: 'Current conditions, 12-hour and 7-day forecasts, historical lookback' } },
 };

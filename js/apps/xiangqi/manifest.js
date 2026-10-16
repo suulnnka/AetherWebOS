@@ -14,4 +14,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '中国象棋,自带 AI 引擎',
+  i18n: { en: { name: 'Chinese Chess', desc: 'Chinese chess (Xiangqi) with a built-in AI engine' } },
 };

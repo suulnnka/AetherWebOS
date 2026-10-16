@@ -14,4 +14,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '黑白棋,自带 AI 引擎',
+  i18n: { en: { name: 'Reversi', desc: 'Reversi with a built-in AI engine' } },
 };

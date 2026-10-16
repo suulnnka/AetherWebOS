@@ -15,6 +15,7 @@
 import { publish } from './bus.js';
 import { fsReady } from './fs.js';
 import { saveSharedState, adoptSharedState } from './appdata.js';
+import { t } from './i18n.js';
 
 const KEY = 'webos.sms.v1';
 let state = { chats: [] };
@@ -109,7 +110,7 @@ export function deliver(spec = {}) {
   publish('sms:new', { from: 'sms', type: 'new', payload: { addr, fromName: c.name, text: msg.text } });
   publish('sys:notify', {
     from: 'sms', type: 'notify',
-    payload: { title: `短信 · ${c.name}`, body: msg.text.slice(0, 60) },
+    payload: { title: t('短信 · {name}', { name: c.name }), body: msg.text.slice(0, 60) },
   });
   return msg;
 }

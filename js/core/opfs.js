@@ -142,6 +142,44 @@ export async function opfsFileSize(path) {
   }
 }
 
+/** 文件最近修改时间 ms(宿主时钟域);不存在 → null。
+ *  fs.writeTree 收尾回读刚写出的 fs.v2.json 采样 clockDelta 用 */
+export async function opfsFileMtime(path) {
+  try {
+    const fh = await fileHandle(path, false);
+    return (await fh.getFile()).lastModified;
+  } catch {
+    return null;
+  }
+}
+
+/** 取 webos/ 下多级目录句柄(默认不创建;不存在 → null)。
+ *  供携带父句柄的单次递归下降使用,避免逐文件重走全路径句柄链 */
+export async function opfsDirHandle(path, create = false) {
+  try {
+    let dir = await navigator.storage.getDirectory();
+    dir = await dir.getDirectoryHandle(DIR, { create });
+    for (const seg of String(path).split('/').filter(Boolean)) {
+      dir = await dir.getDirectoryHandle(seg, { create });
+    }
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
+/** 经父目录句柄取文件 { size, mtime }(宿主时钟域);不存在 → null。
+ *  与 opfsDirHandle 配对,是启动校准的递归下降读法 */
+export async function opfsStatIn(dirHandle, name) {
+  try {
+    const fh = await dirHandle.getFileHandle(name, { create: false });
+    const file = await fh.getFile();
+    return { size: file.size, mtime: file.lastModified };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 枚举 webos/ 下某目录的直接子项:返回 [{ name, dir }](dir=true 为子目录)。
  * 快照遮蔽层的垃圾回收用它扫 fsshadow/;目录不存在 → null。

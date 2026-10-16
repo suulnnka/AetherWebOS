@@ -12,4 +12,5 @@ export default {
   order: 1,
   category: '系统',
   desc: '文件管家:目录树、右键操作、压缩包与加密文件',
+  i18n: { en: { name: 'Files', desc: 'File manager: directory tree, context actions, archives and encrypted files' } },
 };

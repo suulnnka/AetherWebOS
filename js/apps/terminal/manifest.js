@@ -12,4 +12,5 @@ export default {
   order: 3,
   category: '系统',
   desc: 'Bash 风格终端,管道与重定向齐备',
+  i18n: { en: { name: 'Terminal', desc: 'Bash-style terminal with pipes and redirection' } },
 };

@@ -10,8 +10,9 @@ import fs from './fs.js';
 import * as wm from './wm.js';
 import { el } from './utils.js';
 import { icon } from './icons.js';
-import { get as getApp } from './registry.js';
+import { get as getApp, appName } from './registry.js';
 import { publish } from './bus.js';
+import { t } from './i18n.js';
 
 const KEY = 'webos.openwith.v1';
 
@@ -20,13 +21,14 @@ export const PREVIEW_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|mp3|wav|ogg|flac|m
 /** 代码编辑器语言(js/lib/chl.js CODE_EXT_RE 的同步副本:core 不引 lib,防高亮器进 core 包) */
 export const CODE_EXT = /\.(ajs|js|css|html?|json)$/i;
 
-/** 候选打开方式(顺序即菜单顺序;match 决定谁出现在选择器里) */
+/** 候选打开方式(顺序即菜单顺序;match 决定谁出现在选择器里)。
+ * label 直接用应用显示名(appName);desc 是本地化文案 */
 const OPENERS = [
-  { id: 'mdedit', label: 'Markdown 编辑器', desc: '所见即所得编辑 .md 文档', match: (n) => /\.(md|markdown)$/i.test(n) },
-  { id: 'sheet', label: '电子表格', desc: '编辑 .axl 表格(列宽 / 样式 / 缩放)', match: (n) => /\.axl$/i.test(n) },
-  { id: 'codeedit', label: '代码编辑器', desc: 'AetherJS / CSS / HTML / JSON 高亮与运行', match: (n) => CODE_EXT.test(n) },
-  { id: 'viewer', label: '文件预览', desc: '图片、音视频与 PDF', match: (n) => PREVIEW_EXT.test(n) },
-  { id: 'notes', label: '记事本', desc: '纯文本,任何文件都能看', match: () => true },
+  { id: 'mdedit', desc: '所见即所得编辑 .md 文档', match: (n) => /\.(md|markdown)$/i.test(n) },
+  { id: 'sheet', desc: '编辑 .axl 表格(列宽 / 样式 / 缩放)', match: (n) => /\.axl$/i.test(n) },
+  { id: 'codeedit', desc: 'AetherJS / CSS / HTML / JSON 高亮与运行', match: (n) => CODE_EXT.test(n) },
+  { id: 'viewer', desc: '图片、音视频与 PDF', match: (n) => PREVIEW_EXT.test(n) },
+  { id: 'notes', desc: '纯文本,任何文件都能看', match: () => true },
 ];
 
 /** 内置默认(无用户关联时):查不到再兜底记事本 */
@@ -101,7 +103,7 @@ export function askOpenWith(path) {
   const ext = extOf(name);
   const cur = defaultFor(name);
   return wm.popup({
-    title: '打开方式',
+    title: t('打开方式'),
     icon: 'external',
     width: 470,
     height: 420,
@@ -125,16 +127,16 @@ export function askOpenWith(path) {
         },
           ico,
           el('span', { class: 'ow-main' },
-            el('b', {}, op.label + (op.id === cur ? '(当前默认)' : '')),
-            el('span', { class: 'ow-desc' }, op.desc))));
+            el('b', {}, appName(op.id) + (op.id === cur ? t('(当前默认)') : '')),
+            el('span', { class: 'ow-desc' }, t(op.desc)))));
       }
       root.append(el('div', { class: 'ow' },
         el('div', { class: 'ow-head' },
           el('b', {}, '「' + name + '」'),
-          ext ? el('span', { class: 'dim' }, ` .${ext} 文件`) : null),
+          ext ? el('span', { class: 'dim' }, t(' .{ext} 文件', { ext })) : null),
         list,
         el('label', { class: 'ow-always' }, check,
-          ext ? `始终用选择的应用打开 .${ext} 文件` : '始终用选择的应用打开此类文件')));
+          ext ? t('始终用选择的应用打开 .{ext} 文件', { ext }) : t('始终用选择的应用打开此类文件'))));
     },
   }).promise;
 }

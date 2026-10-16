@@ -1,4 +1,5 @@
-import { $, el, clamp, fmtDate, fmtTime } from '../core/utils.js';
+import { $, el, clamp } from '../core/utils.js';
+import { t, fmtDate, fmtTime } from '../core/i18n.js';
 import { icon, svg } from '../core/icons.js';
 import { subscribe, publish } from '../core/bus.js';
 import { settings } from '../core/store.js';
@@ -58,7 +59,7 @@ export function paintVolIcon() {
 
 function buildVolumePanel() {
   const s = settings.get();
-  const pct = el('span', { class: 'pct' }, s.muted ? '静音' : s.volume + '%');
+  const pct = el('span', { class: 'pct' }, s.muted ? t('静音') : s.volume + '%');
   const range = el('input', { type: 'range', min: 0, max: 100, value: s.muted ? s.volume : s.volume });
   const paint = () => range.style.setProperty('--fill', range.value + '%');
   paint();
@@ -68,16 +69,16 @@ function buildVolumePanel() {
     pct.textContent = range.value + '%';
     paintVolIcon();
   });
-  const muteBtn = el('button', { class: 'icon-btn' + (s.muted ? ' on' : ''), title: '静音' });
+  const muteBtn = el('button', { class: 'icon-btn' + (s.muted ? ' on' : ''), title: t('静音') });
   const paintMute = () => { muteBtn.innerHTML = svg(s.muted ? 'volumeX' : 'volume2', 16); muteBtn.classList.toggle('on', settings.get().muted); };
   paintMute();
   muteBtn.addEventListener('click', () => {
     settings.set({ muted: !settings.get().muted });
-    pct.textContent = settings.get().muted ? '静音' : settings.get('volume') + '%';
+    pct.textContent = settings.get().muted ? t('静音') : settings.get('volume') + '%';
     paintMute(); paintVolIcon();
   });
   return el('div', { class: 'pop-volume' },
-    el('div', { class: 'row' }, el('b', { style: { fontSize: '13px', flex: 1 } }, '音量'), pct),
+    el('div', { class: 'row' }, el('b', { style: { fontSize: '13px', flex: 1 } }, t('音量')), pct),
     el('div', { class: 'row', style: { marginTop: '12px' } }, muteBtn, range));
 }
 
@@ -106,7 +107,7 @@ function buildCalendar() {
     while (cells.length % 7 !== 0) cells.push({ d: ++n, dim: true });                   // 下月
 
     const grid = el('div', { class: 'cal-grid' },
-      ...['一', '二', '三', '四', '五', '六', '日'].map(w => el('span', { class: 'wd' }, w)),
+      ...['一', '二', '三', '四', '五', '六', '日'].map(w => el('span', { class: 'wd' }, t(w))),
       ...cells.map(c => el('span', {
         class: 'day' + (c.dim ? ' dim' : '') +
           (!c.dim && c.d === now.getDate() && calM === now.getMonth() && calY === now.getFullYear() ? ' today' : ''),
@@ -115,7 +116,7 @@ function buildCalendar() {
     box.innerHTML = '';
     box.append(
       el('div', { class: 'cal-head' },
-        el('b', { class: 'cal-title' }, `${calY} 年 ${calM + 1} 月`),
+        el('b', { class: 'cal-title' }, t('{y} 年 {m} 月', { y: calY, m: calM + 1 })),
         el('span', { class: 'row' },
           el('button', { class: 'icon-btn', onClick: () => { calM--; if (calM < 0) { calM = 11; calY--; } redraw(); } }, icon('chevronL', 15)),
           el('button', { class: 'icon-btn', onClick: () => { calM++; if (calM > 11) { calM = 0; calY++; } redraw(); } }, icon('chevronR', 15)))),
@@ -162,7 +163,7 @@ function toast(payload) {
     icon('bell', 14));
   const t = el('div', { class: 'toast' }, icoBox,
     el('div', { style: { flex: 1, minWidth: 0 } },
-      el('div', { class: 'ni-title' }, title || '通知'),
+      el('div', { class: 'ni-title' }, title || t('通知')),
       body ? el('div', { class: 'ni-body' }, body) : null));
   const kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 220); };
   t.addEventListener('click', kill);
@@ -183,24 +184,24 @@ function buildNotiPanel() {
   paintBell();
   const list = el('div', { class: 'pn-list' });
   if (!notifications.length) {
-    list.append(el('div', { class: 'pn-empty' }, '暂无新通知'));
+    list.append(el('div', { class: 'pn-empty' }, t('暂无新通知')));
   } else {
     for (const n of notifications) {
       list.append(el('div', { class: 'noti-item' },
         el('span', { class: 'ni-ico', style: { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } }, icon('bell', 13)),
         el('div', { style: { flex: 1, minWidth: 0 } },
-          el('div', { class: 'ni-title' }, n.title || '通知'),
+          el('div', { class: 'ni-title' }, n.title || t('通知')),
           n.body ? el('div', { class: 'ni-body' }, n.body) : null),
         el('span', { class: 'ni-time' }, fmtTime(new Date(n.ts)))));
     }
   }
   return el('div', { class: 'pop-noti' },
     el('div', { class: 'pn-head' },
-      el('b', {}, '通知中心'),
+      el('b', {}, t('通知中心')),
       el('button', {
         class: 'btn', style: { height: '26px', padding: '0 10px', fontSize: '12px' },
         onClick: () => { notifications.length = 0; closePopover(); },
-      }, '全部清除')),
+      }, t('全部清除'))),
     list);
 }
 
@@ -220,12 +221,12 @@ export function powerAction(mode) {
   if (mode === 'reboot') {
     center.append(
       el('div', { class: 'spinner' }),
-      el('div', { class: 'sd-text' }, '正在重启…'));
+      el('div', { class: 'sd-text' }, t('正在重启…')));
     setTimeout(() => location.reload(), 1100);
   } else {
     center.append(
       el('div', { class: 'sd-ico', style: { color: '#5b6cff' } }, icon('power', 40, 1.6)),
-      el('div', { class: 'sd-text' }, '系统已关机'),
-      el('button', { class: 'sd-btn', onClick: () => location.reload() }, '开机'));
+      el('div', { class: 'sd-text' }, t('系统已关机')),
+      el('button', { class: 'sd-btn', onClick: () => location.reload() }, t('开机')));
   }
 }

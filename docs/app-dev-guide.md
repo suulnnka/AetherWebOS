@@ -162,7 +162,7 @@ bus.onSys(type, fn)                  // 订阅系统事件(见下表)
 
 | 事件 | 触发时机 |
 |---|---|
-| `fs-changed` | 任何文件变动,`payload: { action, path }` |
+| `fs-changed` | 任何文件变动,`payload: { action, path }`;批量合并事件带 `paths` 数组(逐路径判定请用 `paths`,`path` 是公共祖先仅供展示) |
 | `settings-changed` | `settings.set` 后,`payload: { changed, patch }` |
 | `theme-changed` | 亮/暗主题切换 |
 | `volume-changed` | 音量/静音变化 |

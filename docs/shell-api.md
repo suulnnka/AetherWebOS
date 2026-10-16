@@ -86,7 +86,7 @@ API:`wm.tile()` / `wm.cascade()` / `wm.focusCycle()` / `wm.focusedCount()`。
 | `sys:settings-changed` | `{ changed: [...keys], patch }` |
 | `sys:theme-changed` | `{ theme: 'light' \| 'dark' }` |
 | `sys:volume-changed` | `{ volume, muted }` |
-| `sys:fs-changed` | `{ action, path }` |
+| `sys:fs-changed` | `{ action, path }`;批量合并事件 `{ action: 'batch', path: 公共祖先, paths: [...] }`(播种/装包/解压/回收站等 `fs.batch` 批末只发一条,`path` 仅供展示,逐路径判定请用 `paths`) |
 | `sys:notify` | `{ title, body }` |
 | `sys:win-*` | `{ id, appId, title? }` |
 

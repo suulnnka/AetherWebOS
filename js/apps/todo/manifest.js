@@ -16,4 +16,5 @@ export default {
   order: 2.5,
   category: '效率',
   desc: '便签式待办与速记:清单 + 独立便签窗口,可置顶、换色',
+  i18n: { en: { name: 'Sticky Notes', desc: 'Sticky to-dos and quick notes: lists + standalone note windows, pinnable and recolorable' } },
 };

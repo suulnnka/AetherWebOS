@@ -13,10 +13,21 @@ import { accounts } from '../core/accounts.js';
 import { moveToTrash, trashCount, emptyTrash } from '../core/trash.js';
 import * as clip from '../core/clipboard.js';
 import { openFs, askOpenWith } from '../core/openwith.js';
+import { appNames, appName } from '../core/registry.js';
+import { t } from '../core/i18n.js';
 
 /** 桌面标签显示名:隐藏 .app 后缀(macOS 桌面式,仅桌面渲染使用;
- * 文件管家、终端与重命名编辑的仍是真实文件名) */
-const displayName = (name) => String(name).replace(/\.app$/i, '');
+ * 文件管家、终端与重命名编辑的仍是真实文件名)。
+ * .app 快捷方式:文件名(恒为 zh 规范名)去后缀后等于目标应用任一语言
+ * 默认名 = 未被用户改名 → 显示当前语言的 appName(docs/i18n.md §7) */
+const displayName = (name, path) => {
+  const base = String(name).replace(/\.app$/i, '');
+  if (path && isAppLink(name)) {
+    const app = appLinkApp(path);
+    if (app && appNames(app.id).includes(base)) return appName(app.id);
+  }
+  return base;
+};
 
 /* 桌面:壁纸 + 图标(桌面即 ~/desktop = /home/<user>/desktop:
  * 文件、文件夹与 .app 快捷方式;应用入口以快捷方式文件存在)*/
@@ -72,7 +83,7 @@ function desktopItems() {
   if (!dir) return [];
   return (fs.list(dir) || [])
     .map(f => ({ kind: 'fs', key: 'fs:' + f.path, path: f.path, name: f.name, dir: f.dir,
-      label: displayName(f.name),
+      label: displayName(f.name, f.path),
       ...fsTileMeta(f.name, f.dir, f.path) }));
 }
 
@@ -81,7 +92,7 @@ function openFsItem(item) {
   if (isAppLink(item.name)) {
     const app = appLinkApp(item.path);
     if (app) return wm.open(app.id);
-    dialogs.error({ title: '快捷方式失效', message: `「${item.name}」指向的应用不存在。` });
+    dialogs.error({ title: t('快捷方式失效'), message: t('「{name}」指向的应用不存在。', { name: item.name }) });
     return;
   }
   openFs(item.path);   // 打开方式路由:用户默认关联 > 内置默认(md/代码/预览/记事本)
@@ -97,8 +108,8 @@ async function desktopNew(kind) {
   const dir = DESKTOP_DIR();
   if (!dir) return;
   const name = await dialogs.prompt({
-    title: kind === 'dir' ? '新建文件夹' : '新建文本文档',
-    message: '名称:', value: kind === 'dir' ? '新建文件夹' : '新建文档.txt',
+    title: kind === 'dir' ? t('新建文件夹') : t('新建文本文档'),
+    message: t('名称:'), value: kind === 'dir' ? '新建文件夹' : '新建文档.txt',
   });
   if (name == null || !name.trim()) return;
   const p = fs.joinPath(dir, name.trim());
@@ -110,7 +121,7 @@ async function desktopNew(kind) {
 function desktopRename(item) {
   const label = document.querySelector(`.dicon[data-key="${CSS.escape(item.key)}"] .label`);
   if (!label) return;
-  inplaceRename(label, displayName(item.name), (next) => {
+  inplaceRename(label, displayName(item.name, item.path), (next) => {
     let name = next;
     if (isAppLink(item.name) && !/\.app$/i.test(name)) name += '.app';
     if (name === item.name) return;
@@ -122,7 +133,7 @@ function desktopRename(item) {
 function desktopDelete(paths) {
   const n = moveToTrash(paths);
   if (!n) {
-    dialogs.error({ title: '无法删除', message: '项目可能已被移动,或你没有删除它的权限。' });
+    dialogs.error({ title: t('无法删除'), message: t('项目可能已被移动,或你没有删除它的权限。') });
     return;
   }
   for (const p of paths) delete iconPos['fs:' + p];   // 位置簿记随条目清理
@@ -210,7 +221,7 @@ export function renderDesktopIcons() {
   hideTip();
   const items = desktopItems();
   // 回收站常驻图标:排在最后,默认钉在最后一列的底部(Windows 式右下角)
-  items.push({ kind: 'trash', key: 'trash', name: '回收站', label: '回收站',
+  items.push({ kind: 'trash', key: 'trash', name: '回收站', label: t('回收站'),
     icon: 'trash', color: 'linear-gradient(135deg,#64748b,#475569)' });
   const trashN = trashCount();
   const areaW = box.clientWidth, areaH = box.clientHeight;
@@ -231,7 +242,7 @@ export function renderDesktopIcons() {
       tile.append(el('span', { class: 'trash-badge' }, trashN > 99 ? '99+' : String(trashN)));
     }
 
-    const tipText = item.kind === 'trash' ? '回收站:删除的文件先进这里,可还原' : item.name;   // 悬停提示始终给真实文件名(含 .app)
+    const tipText = item.kind === 'trash' ? t('回收站:删除的文件先进这里,可还原') : item.name;   // 悬停提示始终给真实文件名(含 .app)
     const node = el('button', {
       class: 'dicon' + (item.kind === 'fs' && clip.isCut(item.path) ? ' cut' : ''),
       dataset: { key: item.key, kind: item.kind, ...(item.dir ? { dir: '1' } : {}), ...(item.kind === 'trash' ? { trash: '1' } : {}) },
@@ -306,11 +317,11 @@ export function renderDesktopIcons() {
       e.stopPropagation();
       if (item.kind === 'trash') {
         showMenu(e.clientX, e.clientY, [
-          { label: '打开回收站', icon: 'trash', fn: () => wm.open('trash') },
-          ...(trashN > 0 ? [{ label: `清空回收站(${trashN})`, icon: 'close', danger: true, fn: async () => {
+          { label: t('打开回收站'), icon: 'trash', fn: () => wm.open('trash') },
+          ...(trashN > 0 ? [{ label: t('清空回收站({n})', { n: trashN }), icon: 'close', danger: true, fn: async () => {
             const ok = await dialogs.confirm({
-              title: '清空回收站', danger: true, okText: '清空',
-              message: `将彻底删除回收站中的 ${trashN} 个项目,此操作不可恢复。确定继续吗?`,
+              title: t('清空回收站'), danger: true, okText: t('清空'),
+              message: t('将彻底删除回收站中的 {n} 个项目,此操作不可恢复。确定继续吗?', { n: trashN }),
             });
             if (ok) emptyTrash();
           } }] : []),
@@ -325,17 +336,17 @@ export function renderDesktopIcons() {
       const pinned = linkApp && pinnedApps().includes(linkApp.id);
       const selPaths = selectedItems().filter(s => s.kind === 'fs').map(s => s.path);
       showMenu(e.clientX, e.clientY, [
-        { label: item.dir ? '打开' : linkApp ? `打开「${linkApp.name}」` : '用记事本打开',
+        { label: item.dir ? t('打开') : linkApp ? t('打开「{name}」', { name: appName(linkApp.id) }) : t('用记事本打开'),
           icon: item.dir ? 'folderOpen' : linkApp ? linkApp.icon : 'fileText', fn: () => openFsItem(item) },
-        ...(item.dir ? [{ label: '在文件管家中打开', icon: 'folder', fn: () => wm.open('files', { params: { path: item.path } }) }] : []),
-        ...(linkApp ? [{ label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(linkApp.id) }] : []),
-        ...(!item.dir && !linkApp ? [{ label: '打开方式…', icon: 'external', fn: () => askOpenWith(item.path) }] : []),
+        ...(item.dir ? [{ label: t('在文件管家中打开'), icon: 'folder', fn: () => wm.open('files', { params: { path: item.path } }) }] : []),
+        ...(linkApp ? [{ label: pinned ? t('从任务栏取消固定') : t('固定到任务栏'), icon: 'check', fn: () => togglePin(linkApp.id) }] : []),
+        ...(!item.dir && !linkApp ? [{ label: t('打开方式…'), icon: 'external', fn: () => askOpenWith(item.path) }] : []),
         { sep: true },
-        { label: '复制(Ctrl+C)', icon: 'copy', fn: () => clip.setFiles('copy', selPaths) },
-        { label: '剪切(Ctrl+X)', icon: 'scissors', fn: () => clip.setFiles('cut', selPaths) },
+        { label: t('复制(Ctrl+C)'), icon: 'copy', fn: () => clip.setFiles('copy', selPaths) },
+        { label: t('剪切(Ctrl+X)'), icon: 'scissors', fn: () => clip.setFiles('cut', selPaths) },
         { sep: true },
-        { label: '重命名(F2)', icon: 'pencil', fn: () => desktopRename(item) },
-        { label: '删除(Del)', icon: 'trash', danger: true, fn: () => desktopDelete(selectedItems().map(s => s.path)) },
+        { label: t('重命名(F2)'), icon: 'pencil', fn: () => desktopRename(item) },
+        { label: t('删除(Del)'), icon: 'trash', danger: true, fn: () => desktopDelete(selectedItems().map(s => s.path)) },
       ]);
     });
 
@@ -343,10 +354,13 @@ export function renderDesktopIcons() {
   });
 }
 
-/* ---- 桌面文件系统联动:任何应用改写当前用户桌面都实时刷新 ---- */
+/* ---- 桌面文件系统联动:任何应用改写当前用户桌面都实时刷新 ----
+ * 普通事件带单个 path;fs.batch 合并事件带 paths 数组(其 path 字段是
+ * 公共祖先,过不了桌面前缀判定,必须逐路径判) */
 subscribe('sys:fs-changed', (p) => {
   const dir = DESKTOP_DIR();
-  if (dir && String(p?.path || '').startsWith(dir)) renderDesktopIcons();
+  const paths = p?.paths || (p?.path ? [p.path] : []);
+  if (dir && paths.some((x) => String(x).startsWith(dir))) renderDesktopIcons();
 });
 
 /* 回收站变化(删除入筒/还原/清空)刷新桌面:角标计数 + 条目增减 */
@@ -408,29 +422,29 @@ $('#desktop').addEventListener('contextmenu', (e) => {
   const cx = e.clientX, cy = e.clientY;
   const dir = DESKTOP_DIR();
   showMenu(cx, cy, [
-    { label: '新建文本文档', icon: 'filePlus', fn: () => desktopNew('file') },
-    { label: '新建文件夹', icon: 'folderPlus', fn: () => desktopNew('dir') },
-    { label: '新建应用快捷方式', icon: 'star',
+    { label: t('新建文本文档'), icon: 'filePlus', fn: () => desktopNew('file') },
+    { label: t('新建文件夹'), icon: 'folderPlus', fn: () => desktopNew('dir') },
+    { label: t('新建应用快捷方式'), icon: 'star',
       fn: () => {
         if (!dir) return;
         showMenu(cx, cy, appLinkMenuItems((a) => createAppLink(dir, a.id)));
       } },
-    ...(clip.hasFiles() ? [{ label: '粘贴(Ctrl+V)', icon: 'clipboard', fn: () => pasteOnDesktop() }] : []),
+    ...(clip.hasFiles() ? [{ label: t('粘贴(Ctrl+V)'), icon: 'clipboard', fn: () => pasteOnDesktop() }] : []),
     { sep: true },
     {
-      label: '排列图标', icon: 'grid', fn: () => {
+      label: t('排列图标'), icon: 'grid', fn: () => {
         for (const it of desktopItems()) delete iconPos[it.key];
         saveIconPos();
         renderDesktopIcons();
       },
     },
-    { label: '刷新', icon: 'refresh', fn: () => { renderDesktopIcons(); applyWallpaper(); } },
+    { label: t('刷新'), icon: 'refresh', fn: () => { renderDesktopIcons(); applyWallpaper(); } },
     { sep: true },
-    { label: '更换壁纸', icon: 'image', fn: () => wm.open('settings', { params: { section: 'wallpaper' } }) },
-    { label: '显示设置', icon: 'monitor', fn: () => wm.open('settings', { params: { section: 'display' } }) },
+    { label: t('更换壁纸'), icon: 'image', fn: () => wm.open('settings', { params: { section: 'wallpaper' } }) },
+    { label: t('显示设置'), icon: 'monitor', fn: () => wm.open('settings', { params: { section: 'display' } }) },
     { sep: true },
-    { label: '打开终端', icon: 'terminal', fn: () => wm.open('terminal') },
-    { label: '在此处打开文件管家', icon: 'folder', fn: () => {
+    { label: t('打开终端'), icon: 'terminal', fn: () => wm.open('terminal') },
+    { label: t('在此处打开文件管家'), icon: 'folder', fn: () => {
       if (dir) wm.open('files', { params: { path: dir } });
     } },
   ]);
@@ -441,7 +455,7 @@ async function pasteOnDesktop() {
   const dir = DESKTOP_DIR();
   if (!dir) return;
   const r = await clip.pasteInto(dir, accounts.current());
-  if (r.copied + r.moved === 0) dialogs.error({ title: '粘贴失败', message: '剪贴板里的项目可能已被移动或删除。' });
+  if (r.copied + r.moved === 0) dialogs.error({ title: t('粘贴失败'), message: t('剪贴板里的项目可能已被移动或删除。') });
 }
 
 /* ---- 桌面键盘操作:F2 重命名 / Delete 删除 / Enter 打开 / Ctrl+A 全选 ---- */

@@ -11,12 +11,20 @@
  * accounts.nameOf 反解;用户已删除的孤儿 uid 显示为 #<uid>。
  *
  * 落盘(inode 式拆分):
- *   · OPFS `webos/fs.v2.json` —— **仅元数据树**(无 d 字段,类似 inode 表)
+ *   · OPFS `webos/fs.v2.json` —— **仅元数据树**(无 d 字段,类似 inode 表;
+ *     根上另带可选 savedAt / clockDelta:懒写 crash 后 mtime 修复的哨兵与
+ *     时钟换算,见 calibrateOnBoot)
  *   · OPFS `webos/fsdata/<绝对路径>` —— 每个文件的真实内容
  *     例:fsdata/home/user/appdata/sms.awdb
  *   · OPFS 是硬性前提:无降级路径,不支持的浏览器由 system/boot.js
  *     启动门禁直接拒绝(本模块不再有 localStorage 分支)
  *   · 同步 API 读内存;fsReady 等待首次加载完成
+ *
+ * 落盘分层(见 docs/fs-writeback.md):
+ *   · 结构变更(新建/删除/改名/权限/文本内容)→ 30ms 微防抖;
+ *   · 仅 mtime/size 变化(writeAt 就地覆盖/追加)→ 懒写:搭结构趟便车
+ *     + pagehide + fs.flush() + 30s 兜底长计时;会话内读取全走内存态,
+ *     crash 后由启动校准(§ savedAt 哨兵)修复盘上树。
  *
  * 用户与目录绑定:
  *   /bin /app          系统目录(root 所有,预留给系统程序/应用包)
@@ -44,15 +52,16 @@
  *     未遮蔽引用索引;文本内容未分叉时直接读活跃 fsdata(必然一致)。
  * ============================================================ */
 
-import { publish, subscribe } from './bus.js';
-import { debounce } from './utils.js';
+import { publish, subscribe, muteTopic, unmuteTopic } from './bus.js';
 import { storageWiped, markStorageWiped } from './store.js';
+import { t } from './i18n.js';
 import { accounts } from './accounts.js';
 import {
   opfsReadText, opfsWriteText,
   opfsReadBytes, opfsWriteBytes,
   opfsReadSlice, opfsWriteAt, opfsFileSize,
   opfsRemovePath, opfsClearAll, opfsList,
+  opfsFileMtime, opfsDirHandle, opfsStatIn,
 } from './opfs.js';
 
 /** OPFS 中的文件名 */
@@ -270,7 +279,7 @@ function hasInlineContent(node) {
  * 二进制 inode 带 bin:true 且无 d → **不整文件加载**(随机读经 readAt);
  * 旧版 AWDBVFS1 字符串 → 解码、标 bin,并重写 OPFS 为原始字节。
  */
-async function hydrateContents(node, path) {
+async function hydrateContents(node, path, treeRoot = node) {
   if (node.t === 'f') {
     if (node.d != null) return;
     if (node.bin) return; // 内容仅在 OPFS,由 readAt 按需读取
@@ -287,6 +296,9 @@ async function hydrateContents(node, path) {
         node.bin = true;
         node.s = bytes.length;
         await opfsWriteBytes('fsdata' + path, bytes);
+        /* 迁移重写了字节:同步推进内存哨兵,防止本次启动的 mtime 校准
+         * 把这批文件一次性误修(校准判定用 savedAt,见 calibrateOnBoot) */
+        treeRoot.savedAt = Date.now();
         return;
       } catch { /* 落到当文本 */ }
     }
@@ -295,7 +307,7 @@ async function hydrateContents(node, path) {
   }
   if (!node.c) return;
   for (const [name, ch] of Object.entries(node.c)) {
-    await hydrateContents(ch, childPath(path, name));
+    await hydrateContents(ch, childPath(path, name), treeRoot);
   }
 }
 
@@ -304,7 +316,8 @@ let root = freshRoot();
 /** 首次加载(含 OPFS 迁移)完成前为 false;写盘在 ready 前会排队 */
 let fsBooted = false;
 const bootWaiters = [];
-/* 写盘队列:debounce 触发时若尚未 ready,挂到 ready 后再写 */
+/* 落盘队列:ready 前的调度只记账(pendingPersist),ready 后由 markBooted 冲刷;
+ * writeChain 串行化全部 writeTree 趟(链式续接,防并发重叠) */
 let pendingPersist = false;
 let writeChain = Promise.resolve();
 
@@ -413,6 +426,11 @@ async function cowGuard(path) {
   for (const { node } of refs) node.gen = gen;   // 先同步置位,防并发重复遮蔽
   unshadowedRefs.delete(path);
   snapsDirty = true;
+  /* 实际遮蔽(翻转了 gen、即将写遮蔽字节)→ 就地升结构趟,不论所在操作
+   * 原本归哪档:注册表必须紧随遮蔽字节落盘,否则强杀后盘上 fs.snaps.v1.json
+   * 仍说 gen=null,快照会读到被覆盖后的**新内容**(静默错数据,比丢失更糟)。
+   * 遮蔽是低频事件(仅存在快照且首次覆盖时发生),不引入写放大。 */
+  scheduleStruct();
   let src = null;
   for (const { node } of refs) {
     if (node.d != null && !(node.d instanceof Uint8Array && node.d.length === 0)) { src = node.d; break; }
@@ -509,7 +527,7 @@ async function gcShadows() {
  */
 async function writeTree() {
   const t0 = Date.now();
-  const meta = JSON.stringify(stripContents(root));
+  writeTreeCalls++;
   try {
     // 先内容后元数据;随机访问文件(bin 且无 d)内容已在 fsdata,只写元数据
     for (const { path, content, bin, m } of walkFiles(root, '/')) {
@@ -533,7 +551,19 @@ async function writeTree() {
         await opfsWriteText('fsdata' + path, content);
       }
     }
-    await opfsWriteText(OPFS_NAME, meta);
+    /* savedAt 哨兵(VFS 域):此刻本趟全部内容字节已写完、树 JSON 即将落盘
+     * —— 快照恢复/整树导入/copyFrom 等「保留旧 m 重写字节」都发生在哨兵
+     * 之前,天然豁免启动校准的 mtime 误修。取时在序列化前:哨兵必须随
+     * **本趟** JSON 落盘,若写成 JSON 之后才取,盘上值滞后一趟,强杀后
+     * 校准会把上一趟正常写入判成「字节比树新」而打爆 mtime。 */
+    root.savedAt = Date.now();
+    await opfsWriteText(OPFS_NAME, JSON.stringify(stripContents(root)));
+    /* clockDelta(VFS − 宿主,ms)随每次写树自采样:回读刚写出的 JSON,
+     * δ = now − lastModified。树 JSON 本来每趟都写,回读是一次浅层 getFile,
+     * 零额外写放大;同机两钟同源 OS 时钟 δ≈0,时钟跳变/将来引入虚拟时钟
+     * 由最近样本吸收。判定与修复统一换算到 VFS 域(见 calibrateOnBoot)。 */
+    const lm = await opfsFileMtime(OPFS_NAME);
+    if (lm != null) root.clockDelta = Date.now() - lm;
     /* 路径已被重建(rm 后同路径再建)时保留新内容,只清真正不存在的遗留;
      * 否则会把刚写好的 fsdata 当垃圾删掉(内存 inode 却还在 → 读到全零) */
     for (const gone of removedPaths) {
@@ -549,27 +579,159 @@ async function writeTree() {
     }
   } catch (e) {
     console.warn('[fs] OPFS 持久化失败:', e);
-    publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: '存储写入失败', body: '文件未能保存(OPFS 写入失败),稍后将自动重试。' } });
+    publish('sys:notify', { from: 'fs', type: 'notify', payload: { title: t('存储写入失败'), body: t('文件未能保存(OPFS 写入失败),稍后将自动重试。') } });
     return;   // 失败:保留脏簿记,下次再试
   }
   dirtyPaths.clear();
   removedPaths.clear();
   persistMark = t0;
+  metaDirty = false;   // 成功后清(失败保留,对齐 snapsDirty 的语义)
 }
 
-function schedulePersist() {
+/* ---------- 落盘调度:双档定时器(方案见 docs/fs-writeback.md §2) ----------
+ * 按变更类型分层定价,替换旧的单一 250ms 防抖:
+ *   · struct(结构档):新建节点/删除/改名/权限/内存驻留文本内容
+ *     → 30ms 微防抖。发往浏览器的写最终进入内核页缓存,进程死亡不丢
+ *      (真正边界是断电,接受);防抖的价值只剩省事务数 + 合并突发。
+ *   · meta(懒档):writeAt 对已存在文件的就地覆盖/追加(只动 m/s)
+ *     → 不设短计时。会话内所有读取(stat/list/fileSize/DB pageCount)
+ *       都走内存态(writeAt 同步刷新),陈旧只存在于盘上树 JSON;
+ *       搭结构趟便车 + pagehide + fs.flush() + 30s 兜底长计时,
+ *       crash 后由启动校准(calibrateOnBoot)修复。
+ * writeTree 仍写整棵内存树:任何一趟结构写都天然带上最新 m/s,
+ * 懒档不需要独立写路径,只是一个「不再主动调度」的标志。 */
+const STRUCT_MS = 30;              // 结构档微防抖(20~50 区间取中)
+const META_FALLBACK_MS = 30000;    // 懒档兜底长计时:纯卫生参数,不承担正确性(不建议低于 10s,否则写放大回归)
+let structTimer = null;            // 结构档微防抖定时器
+let metaTimer = null;              // 懒档 30s 兜底长计时
+let metaDirty = false;             // 仅 m/s 元数据脏(懒档标志)
+let metaPubTimer = null;           // meta 档广播合并窗(30ms)
+let metaPubLast = null;            // 窗口内最后一次载荷 { action, path }
+
+/* fs.batch 批内状态(§2.5):抑制 sys:fs-changed 逐次 publish,吸收进批末合并事件 */
+let batchDepth = 0;
+let batchPaths = null;
+
+/* e2e 探针(生产零消费):writeTree 调用计数,tools/e2e.mjs 分层落盘断言用 */
+let writeTreeCalls = 0;
+
+/** 结构档:30ms 微防抖调度一趟全树写(未 boot 则记账,ready 后由 markBooted 冲刷) */
+function scheduleStruct() {
   if (storageWiped()) return;
   pendingPersist = true;
-  const run = async () => {
+  if (!fsBooted) return;
+  if (structTimer != null) return;
+  structTimer = setTimeout(() => {
+    structTimer = null;
     if (storageWiped() || !pendingPersist) return;
     pendingPersist = false;
-    await writeTree();
-  };
-  if (!fsBooted) return;   // ready 后由 markBooted 冲刷
-  writeChain = writeChain.then(run, run);
+    writeChain = writeChain.then(writeTree, writeTree);
+  }, STRUCT_MS);
 }
 
-const persist = debounce(() => schedulePersist(), 250);
+/** 懒档:仅 m/s 脏,不开短计时;30s 兜底保证纯 DB 会话里盘上树别无限期滞后 */
+function markMetaDirty() {
+  if (storageWiped()) return;
+  metaDirty = true;
+  if (!fsBooted || metaTimer != null) return;
+  metaTimer = setTimeout(() => {
+    metaTimer = null;
+    if (!metaDirty || storageWiped() || !fsBooted) return;
+    writeChain = writeChain.then(writeTree, writeTree);
+  }, META_FALLBACK_MS);
+}
+
+/** meta 档广播:经同一 30ms 窗合并为一条(载荷取窗口内最后一次)。
+ *  消费方 files/trash/monitor 均为全量重渲染不挑路径;桌面路径不经 meta 档
+ *  (桌面文件均由 fs.write/mkdir/rm 产生,writeAt 随机写只落在 appdata 与 /app) */
+function publishMetaMerged(action, path) {
+  metaPubLast = { action, path };
+  if (metaPubTimer != null) return;
+  metaPubTimer = setTimeout(() => {
+    metaPubTimer = null;
+    const payload = metaPubLast;
+    metaPubLast = null;
+    if (payload) publish('sys:fs-changed', { from: 'fs', type: 'fs-changed', payload });
+  }, STRUCT_MS);
+}
+
+/** 排空悬置的 meta 合并广播:立即发出(fs.flush 用;batch 末走吸收不发出) */
+function flushMetaPublish() {
+  if (metaPubTimer == null) return;
+  clearTimeout(metaPubTimer);
+  metaPubTimer = null;
+  const payload = metaPubLast;
+  metaPubLast = null;
+  if (payload) publish('sys:fs-changed', { from: 'fs', type: 'fs-changed', payload });
+}
+
+function cancelStructTimer() {
+  if (structTimer == null) return;
+  clearTimeout(structTimer);
+  structTimer = null;
+}
+
+/** 强制一趟全树写(batch 末 / pagehide / flush:确定性,不依赖定时器) */
+function forceTrip() {
+  pendingPersist = false;
+  writeChain = writeChain.then(writeTree, writeTree);
+}
+
+/** 多路径公共祖先(batch 事件的 path 字段,仅展示用) */
+function commonAncestor(paths) {
+  if (!paths.length) return '/';
+  const segs = paths.map((p) => String(p).split('/').filter(Boolean));
+  const out = [];
+  for (let i = 0; i < segs[0].length; i++) {
+    if (!segs.every((s) => s[i] === segs[0][i])) break;
+    out.push(segs[0][i]);
+  }
+  return '/' + out.join('/');
+}
+
+/**
+ * 批量操作(播种/装包/解压/回收站):批内抑制 sys:fs-changed 频道的
+ * **所有**逐次 publish(含 applink 自发的 seed-shortcuts 广播,经 bus 的
+ * 频道静默吸收),批末发一条合并事件 `{action:'batch', path:公共祖先,
+ * paths:[...]}`;同时取消未决结构定时器,强制一趟确定性结构写(不双趟),
+ * 并 await 该趟 —— batch resolve 即批内变更已落盘。
+ * 抑制标志 finally 恢复(回调抛错不泄漏);嵌套 batch 复用外层;
+ * 同步派发的兄弟订阅(例如一次登录触发 fs/applink 两个订阅方)
+ * 会自然并入第一个未收尾的 batch。异步窗口内被折叠进来的无关事件
+ * 属可接受(paths 全量携带,消费方均为全量或前缀判定)。
+ */
+async function runBatch(fn) {
+  if (!fsBooted) await fsReady();
+  if (batchDepth > 0) return fn(fs);
+  const paths = new Set();
+  batchPaths = paths;
+  batchDepth = 1;
+  muteTopic('sys:fs-changed', (fields) => {
+    const p = fields?.payload?.path;
+    if (p) paths.add(normPath(p));
+  });
+  try {
+    return await fn(fs);
+  } finally {
+    unmuteTopic('sys:fs-changed');
+    batchDepth = 0;
+    batchPaths = null;
+    // 悬置的 meta 合并广播一并吸收(不发出,防批末多一条)
+    if (metaPubTimer != null) { clearTimeout(metaPubTimer); metaPubTimer = null; }
+    if (metaPubLast) { paths.add(metaPubLast.path); metaPubLast = null; }
+    cancelStructTimer();
+    const dirty = pendingPersist || metaDirty || snapsDirty
+      || dirtyPaths.size > 0 || removedPaths.size > 0;
+    if (dirty && !storageWiped()) forceTrip();
+    if (paths.size) {
+      publish('sys:fs-changed', {
+        from: 'fs', type: 'fs-changed',
+        payload: { action: 'batch', path: commonAncestor([...paths]), paths: [...paths] },
+      });
+    }
+    if (dirty && !storageWiped()) await writeChain;
+  }
+}
 
 /** 装入树并按需从 fsdata/ 水合内容 */
 async function adoptTree(tree) {
@@ -639,6 +801,55 @@ function migrateXToManage(n) {
   if (n.c) for (const ch of Object.values(n.c)) migrateXToManage(ch);
 }
 
+/**
+ * 启动校准(懒写方案的写侧前提,与 readAt 不按 inode.s 截断配套):
+ *  · size:对**所有 bin 随机访问文件**(n.bin && n.d == null)按实际字节
+ *    数校准 n.s —— AetherWebDatabase 开库以 fs.fileSize()(优先 inode.s)
+ *    算页数,懒写 + 强杀后树内 s 陈旧会让后续写页落在错误偏移。会话内
+ *    n.s 由 writeAt 同步刷新,只有 crash+reload 暴露。
+ *  · mtime:**savedAt 哨兵 + clockDelta 换算,判定与修复都在 VFS 域**:
+ *    仅当 t_vfs = lastModified + δ > savedAt(字节写于最后一次树落盘
+ *    之后 = 懒写窗口内 crash)才判 m 陈旧并修 n.m = t_vfs。不能裸取
+ *    max / 裸搬 lastModified:那是宿主物理落盘时刻,而树里的 m 是 VFS
+ *    逻辑 mtime,两钟不保证一致;快照恢复 / 整树导入都是「保留旧 m 却
+ *    重写字节」,裸搬会把历史时间戳打爆。旧树无 savedAt → 保守跳过
+ *    m 修复;无 clockDelta → δ=0(同机缺省无损)。
+ *  · 缺失判定:backing 不存在或「实际 0 字节且树内 s>0」视为缺失
+ *    (系统无 truncate 路径,bin 文件不会合法缩到 0),保留树内值并告警;
+ *    只校准、不删孤儿字节。
+ * 实现:携带父目录句柄的单次递归下降(子目录复用父句柄)。不要逐文件
+ * 调 opfsFileSize —— 它每次从 OPFS 根重走全路径句柄链,N 文件 × 深度
+ * 的句柄查找放大才是启动耗时主因。
+ */
+async function calibrateOnBoot() {
+  const savedAt = typeof root.savedAt === 'number' ? root.savedAt : null;
+  const delta = typeof root.clockDelta === 'number' ? root.clockDelta : 0;
+  const top = await opfsDirHandle('fsdata', false);
+  if (!top) return;
+  const walk = async (n, dirH, name, path) => {
+    if (n.t === 'd') {
+      let child = null;
+      try { child = await dirH.getDirectoryHandle(name); } catch { return; }
+      for (const [k, ch] of Object.entries(n.c || {})) {
+        await walk(ch, child, k, childPath(path, k));
+      }
+      return;
+    }
+    if (!n.bin || n.d != null) return;   // 文本内容驻留内存,按内容计算,不管
+    const st = await opfsStatIn(dirH, name);
+    if (st == null || (st.size === 0 && (n.s || 0) > 0)) {
+      if (n.s) console.warn(`[fs] 启动校准:${path} 的 fsdata backing 缺失,保留树内 ${n.s}B`);
+      return;
+    }
+    n.s = st.size;
+    const tVfs = st.mtime + delta;
+    if (savedAt != null && tVfs > savedAt) n.m = tVfs;
+  };
+  for (const [k, ch] of Object.entries(root.c || {})) {
+    await walk(ch, top, k, '/' + k);
+  }
+}
+
 /** 首次启动:OPFS 元数据 → 空则默认树;损坏(有字节解析不了)整体清空 */
 async function bootLoad() {
   // 1) OPFS 唯一数据源
@@ -648,6 +859,7 @@ async function bootLoad() {
     await adoptTree(fromOpfs);
     await loadSnaps();         // 快照注册表(树装载后再读:遮蔽索引要建在最终树上)
     await gcShadows().catch(() => {});   // 回收崩溃残留的孤儿遮蔽文件
+    await calibrateOnBoot().catch(() => {});   // 懒写配套:bin 文件 size/mtime 启动校准
     persistMark = Date.now();   // 已与 OPFS 一致:此后只写变化过的文件
     markBooted();
     if (pendingPersist) {
@@ -692,12 +904,14 @@ bootLoad().catch((e) => {
   markBooted();
 });
 
-/* 关页/导航前尽力冲刷(防抖窗口内的最后机会;异步写能完成多少算多少) */
+/* 关页/导航前尽力冲刷(最后机会;异步写能完成多少算多少)。
+ * 触发条件覆盖两档(含未决结构定时器与懒档脏标志);链式续接 writeChain
+ * —— 替换式赋值会与在途趟并发重叠,强制趟变频繁后更易撞上 */
 addEventListener('pagehide', () => {
   if (!fsBooted || storageWiped()) return;
-  if (pendingPersist || dirtyPaths.size || removedPaths.size) {
-    pendingPersist = false;
-    writeChain = writeTree();
+  if (pendingPersist || dirtyPaths.size || removedPaths.size || structTimer != null || metaDirty) {
+    cancelStructTimer();
+    forceTrip();
   }
 });
 
@@ -740,9 +954,18 @@ function node(p) {
   return n;
 }
 
-function emit(action, path) {
-  persist();
-  publish('sys:fs-changed', { from: 'fs', type: 'fs-changed', payload: { action, path: normPath(path) } });
+/**
+ * 变更出口:调度落盘 + 广播。
+ * kind: 'struct'(缺省,结构变更 → 30ms 微防抖 + 即时广播)
+ *      | 'meta'(仅 m/s 变化 → 懒写 + 30ms 窗合并广播)。
+ * 批内(batchDepth > 0)两类都只收路径不发事件,吸收进批末合并广播。 */
+function emit(action, path, kind = 'struct') {
+  const p = normPath(path);
+  if (kind === 'meta') markMetaDirty();
+  else scheduleStruct();
+  if (batchDepth > 0) { batchPaths?.add(p); return; }
+  if (kind === 'meta') { publishMetaMerged(action, p); return; }
+  publish('sys:fs-changed', { from: 'fs', type: 'fs-changed', payload: { action, path: p } });
 }
 
 /* ---------- 权限 ---------- */
@@ -924,11 +1147,15 @@ export function ensureUserHome(user) {
   return true;
 }
 
-/* 登录 / 注册 / 系统建号 → 自动准备家目录;改登录名 → 家目录目录名跟随 */
+/* 登录 / 注册 / 系统建号 → 自动准备家目录;改登录名 → 家目录目录名跟随。
+ * 播种走 fs.batch:与 applink 的兄弟订阅(同一次登录事件)并入同一批,
+ * 一次合并广播 + 一趟确定性落盘 */
 subscribe('accounts:changed', (payload, msg) => {
   const t = msg?.type;
   const u = payload?.user || accounts.current();
-  if ((t === 'login' || t === 'created' || t === 'register') && u) ensureUserHome(u);
+  if ((t === 'login' || t === 'created' || t === 'register') && u) {
+    fs.batch(() => ensureUserHome(u)).catch(() => {});
+  }
   if (t === 'renamed' && payload?.from && payload?.to) {
     const run = () => {
       const oldHome = node(`/home/${payload.from}`);
@@ -960,6 +1187,13 @@ export const fs = {
   ready: fsReady,
   /** 存储后端(OPFS 唯一,无降级;保留接口供监视器/设置展示) */
   storageBackend: () => 'opfs',
+
+  /**
+   * 批量操作(播种/装包/解压/回收站):批内抑制逐次 sys:fs-changed 广播
+   * 并吸收为批末一条合并事件(带 paths);批末强制一趟确定性结构写。
+   * 详见 runBatch 的文档。回调收到的就是本 fs 对象。
+   */
+  batch: runBatch,
 
   exists: (p) => !!node(p),
   isDir: (p) => node(p)?.t === 'd',
@@ -1074,6 +1308,7 @@ export const fs = {
 
     let n = node(p);
     if (n && n.t === 'd') return false;
+    const created = !n;          // 新建节点路径必须归结构档(漏判=首写走懒档=强杀丢文件)
     if (!n) {
       const parPath = parentPath(p);
       // 穿越免费:在父目录里新建只需父目录 w
@@ -1101,7 +1336,8 @@ export const fs = {
     n.d = undefined;           // 随机写文件不驻留整份内容
     n.s = Math.max(n.s || 0, off + bytes.length);
     n.m = Date.now();
-    emit('write', p);
+    // 已存在文件的就地覆盖/追加只动 m/s → 懒档(会话内读取走内存态,crash 后启动校准修复盘上树)
+    emit('write', p, created ? 'struct' : 'meta');
     return true;
   },
 
@@ -1174,6 +1410,7 @@ export const fs = {
     const segs = normPath(p).split('/').filter(Boolean);
     if (!segs.length) return root;
     let n = root;
+    let createdAny = false;
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i];
       if (n.t !== 'd') return null;
@@ -1187,11 +1424,15 @@ export const fs = {
           mode || (owner && isLast ? HOME_MODE : DIR_MODE),
         );
         n.m = Date.now();
+        createdAny = true;
         if (!silent) emit('mkdir', p);
       }
       n = n.c[seg];
     }
-    persist();
+    // 收尾兜底:只在确有新建时调度 —— 覆盖 silent 路径(writeAt/write 自动
+    // 补父目录不经 emit);旧实现是 250ms 防抖的裸 persist()。对已存在目录
+    // 的 silent mkdir 常见于纯 meta 的随机写,无新建时不得触发结构趟
+    if (createdAny) scheduleStruct();
     return n;
   },
 
@@ -1462,13 +1703,26 @@ export const fs = {
     }
     return false;
   },
-  /** 立即落盘(测试 / 关页前);返回 Promise */
+  /**
+   * 立即落盘(测试 / 关页前 / 装包完成):排空两档 —— 取消未决结构定时器
+   * 与 meta 合并广播(立即发出)+ 一次 writeTree 全带走(含 metaDirty、
+   * snapsDirty)。批内调用为 no-op(批末强制趟统一收口)。返回 Promise。
+   */
   async flush() {
-    pendingPersist = true;
     if (!fsBooted) await fsReady();
+    if (batchDepth > 0) return;
+    cancelStructTimer();
+    flushMetaPublish();
+    if (metaTimer != null) { clearTimeout(metaTimer); metaTimer = null; }
     pendingPersist = false;
     writeChain = writeChain.then(writeTree, writeTree);
     await writeChain;
+  },
+
+  /* e2e 探针(生产零消费):writeTree 调用计数,tools/e2e.mjs 分层落盘断言用 */
+  __probe: {
+    get writeTreeCalls() { return writeTreeCalls; },
+    reset() { writeTreeCalls = 0; },
   },
 };
 

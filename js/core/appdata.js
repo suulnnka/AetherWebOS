@@ -19,6 +19,7 @@
 import { open, createFileBackend, FILE_MAGIC } from '../../vendor/AetherWebDatabase/src/index.js';
 import fs, { fsReady } from './fs.js';
 import { accounts } from './accounts.js';
+import { t } from './i18n.js';
 
 const KEY_PREFIX = 'webos.appdata.key::';
 const EXT = '.awdb';
@@ -118,9 +119,9 @@ function getBackend(path, user) {
  * @returns {Promise<import('../../vendor/AetherWebDatabase/src/database.js').Database>}
  */
 export async function openAppData(app, user = accounts.current()) {
-  if (!user) throw new Error('未登录,无法打开应用数据');
+  if (!user) throw new Error(t('未登录,无法打开应用数据'));
   await fsReady();
-  if (!ensureAppDataDir(user)) throw new Error('无法创建 appdata 目录');
+  if (!ensureAppDataDir(user)) throw new Error(t('无法创建 appdata 目录'));
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(appDataPath(app, user), user);
   const db = await openDerived(base, backend, dbPassword(user));
@@ -179,7 +180,7 @@ function ensureSharedDir() {
 
 export async function openSharedAppData(app) {
   await fsReady();
-  if (!ensureSharedDir()) throw new Error('无法创建共享 appdata 目录');
+  if (!ensureSharedDir()) throw new Error(t('无法创建共享 appdata 目录'));
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(sharedAppDataPath(app), 'root');
   /* 无账号应用:以设备身份(SHARED_USER 的密钥材料)按同一规则派生 */
@@ -225,7 +226,7 @@ export function identityAppDataPath(app, identity) {
 /** 应用自有账号体系:按应用内身份(邮箱地址/QQ 号码…)独立成库 */
 export async function openIdentityAppData(app, identity) {
   await fsReady();
-  if (!ensureSharedDir()) throw new Error('无法创建 appdata 目录');
+  if (!ensureSharedDir()) throw new Error(t('无法创建 appdata 目录'));
   const base = String(app).endsWith(EXT) ? String(app).slice(0, -EXT.length) : String(app);
   const backend = getBackend(identityAppDataPath(app, identity), 'root');
   /* 密钥材料按「应用:身份」独立生成 —— 不同身份互不可解 */

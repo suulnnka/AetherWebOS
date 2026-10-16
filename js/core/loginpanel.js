@@ -8,6 +8,7 @@
 import { el } from './utils.js';
 import { icon } from './icons.js';
 import { accounts } from './accounts.js';
+import { t } from './i18n.js';
 
 /**
  * 在 root 渲染登录面板。返回 true 表示已登录(无需渲染),
@@ -21,19 +22,19 @@ export function requireLogin(root, appName, onLogin) {
   const mode = { reg: false };
 
   const title = el('h2', {}, appName);
-  const sub = el('div', { class: 'dim acc-sub' }, '此应用需要登录后使用(数据按账号隔离)');
-  const userIn = el('input', { class: 'input', placeholder: '用户名', autocomplete: 'username', spellcheck: 'false' });
-  const passIn = el('input', { class: 'input', type: 'password', placeholder: '密码', autocomplete: 'current-password' });
+  const sub = el('div', { class: 'dim acc-sub' }, t('此应用需要登录后使用(数据按账号隔离)'));
+  const userIn = el('input', { class: 'input', placeholder: t('用户名'), autocomplete: 'username', spellcheck: 'false' });
+  const passIn = el('input', { class: 'input', type: 'password', placeholder: t('密码'), autocomplete: 'current-password' });
   const hintLine = el('div', { class: 'acc-hint dim' });
   const refreshHint = () => {
     if (mode.reg) { hintLine.textContent = ''; return; }
     const name = userIn.value.trim();
     const h = name ? accounts.passwordHint(name) : null;
-    hintLine.textContent = h ? `密码提示:${h}` : '';
+    hintLine.textContent = h ? t('密码提示:{h}', { h }) : '';
   };
   userIn.addEventListener('input', refreshHint);
   const errEl = el('div', { class: 'acc-error' });
-  const mainBtn = el('button', { class: 'btn primary acc-main-btn' }, '登录');
+  const mainBtn = el('button', { class: 'btn primary acc-main-btn' }, t('登录'));
   // 默认聚焦上次登录用户
   const last = accounts.lastUser();
   if (last && accounts.list().some(u => u.name === last)) userIn.value = last;
@@ -43,13 +44,13 @@ export function requireLogin(root, appName, onLogin) {
     class: 'btn acc-switch',
     onClick: () => {
       mode.reg = !mode.reg;
-      title.textContent = mode.reg ? `注册 — ${appName}` : appName;
-      mainBtn.textContent = mode.reg ? '注册并登录' : '登录';
-      switchLink.textContent = mode.reg ? '已有账号?去登录' : '没有账号?注册一个';
+      title.textContent = mode.reg ? t('注册 — {appName}', { appName }) : appName;
+      mainBtn.textContent = mode.reg ? t('注册并登录') : t('登录');
+      switchLink.textContent = mode.reg ? t('已有账号?去登录') : t('没有账号?注册一个');
       errEl.textContent = '';
       refreshHint();
     },
-  }, '没有账号?注册一个');
+  }, t('没有账号?注册一个'));
 
   async function submit() {
     errEl.textContent = '';
@@ -87,7 +88,7 @@ export function requireLogin(root, appName, onLogin) {
 export function logoutButton(onLogout) {
   const user = accounts.current();
   return el('button', {
-    class: 'btn acc-logout', title: `退出 ${user}`,
+    class: 'btn acc-logout', title: t('退出 {user}', { user }),
     onClick: () => { accounts.logout(); onLogout?.(); },
-  }, icon('power', 12), user || '未登录');
+  }, icon('power', 12), user || t('未登录'));
 }

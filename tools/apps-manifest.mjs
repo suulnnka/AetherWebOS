@@ -71,8 +71,9 @@ export function sourceCatalog(appsDir = APPS_DIR) {
  *  产物里的引用是相对 chunk 目录的裸文件名(new URL("app-worker-x.js",
  *  import.meta.url)),提取 token 后与 dist/assets 实际清单求交集 */
 const TOKEN = /[A-Za-z0-9._-]+\.(?:js|css|aewn|wasm|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|otf|json|txt|html)\b/g;
-/** 平台公共块:属于操作系统本体,不入应用包 */
-const PLATFORM = /^(?:core|index)-[A-Za-z0-9_-]+\.(?:js|css)$/;
+/** 平台公共块:属于操作系统本体,不入应用包(en-* = i18n 单元字典 chunk,
+ *  boot 期仅 en 动态加载,与 core 同属平台) */
+const PLATFORM = /^(?:core|index|en)-[A-Za-z0-9_-]+\.(?:js|css)$/;
 /** 平台级 worker 标签:由 core 引用、多应用共用的 Worker(ascript =
  *  AetherJS 运行时,终端 node 与代码编辑器共用;dbsql = SQL 引擎,数据库
  *  应用消费)—— 按内容标签归因为平台,不进任何单个应用包 */

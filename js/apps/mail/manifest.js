@@ -11,4 +11,5 @@ export default {
   order: 1.7,
   category: '效率',
   desc: '收发邮件,每个邮箱地址独立成库',
+  i18n: { en: { name: 'Mail', desc: 'Send and receive mail; each address keeps its own store' } },
 };

@@ -11,4 +11,5 @@ export default {
   order: 5,
   category: '系统',
   desc: '主题、壁纸、账号与系统状态',
+  i18n: { en: { name: 'Settings', desc: 'Theme, wallpaper, accounts and system status' } },
 };

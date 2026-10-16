@@ -29,7 +29,11 @@
  *
  * 惰性加载:js/apps/index.js 通过 registerLazy 只注册清单元数据,
  * 应用代码(index.js + CSS)作为独立 chunk 在首次打开时加载。
+ *
+ * i18n:manifest 可带 i18n: { en: { name, desc } } 存各语言译名;
+ * 消费统一走 appName(id)/appDesc(id)(中文即默认,零成本回落)。
  * ============================================================ */
+import { localeTag } from './i18n.js';
 
 const apps = new Map();
 
@@ -115,6 +119,44 @@ export function prefetchOnHover(id) {
 
 export const get = (id) => apps.get(id);
 
+/* ---- 清单显示名的本地化消费点(docs/i18n.md §7) ---- */
+
+/** 取清单 i18n 字段里匹配当前语言的值(先精确 tag,再语言前缀) */
+function i18nField(m, field) {
+  const tag = localeTag();
+  const lut = m?.i18n;
+  if (!lut) return null;
+  return lut[tag]?.[field] ?? lut[String(tag).split('-')[0]]?.[field] ?? null;
+}
+
+/** 应用显示名(经 manifest.i18n 翻译):wm 标题 / 任务栏 / 开始菜单 / 商店 / applink 菜单统一消费 */
+export function appName(id) {
+  const m = get(id);
+  return (m && i18nField(m, 'name')) || m?.name || '';
+}
+
+/** 应用一句话简介(经 manifest.i18n 翻译):商店卡片 */
+export function appDesc(id) {
+  const m = get(id);
+  return (m && i18nField(m, 'desc')) || m?.desc || '';
+}
+
+/** 应用在任一语言下的默认显示名(含 zh):桌面快捷方式的「规范名」集合,
+ * 文件名命中其中之一即视为未被用户改名,显示层可本地化(docs/i18n.md §7) */
+export function appNames(id) {
+  const m = get(id);
+  if (!m) return [];
+  return [m.name, ...Object.values(m.i18n || {}).map(v => v?.name).filter(Boolean)];
+}
+
+/** 搜索索引文本:zh 名 + 各语言译名 + id(小写),开始菜单 / 商店共用 */
+export function appSearchText(id) {
+  const m = get(id);
+  if (!m) return '';
+  return [m.name, ...Object.values(m.i18n || {}).flatMap(v => [v?.name, v?.desc]), m.id]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+
 export function list() {
-  return [...apps.values()].sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'zh'));
+  return [...apps.values()].sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, localeTag()));
 }

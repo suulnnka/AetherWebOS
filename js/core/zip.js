@@ -9,6 +9,7 @@
  *   - data 为 string 时按 UTF-8 编码;压缩用 deflate-raw
  *   - 超大内容或不支持 CompressionStream 时自动回退 STORE
  * ============================================================ */
+import { t } from './i18n.js';
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -19,13 +20,13 @@ const p16 = (b, o, v) => { b[o] = v & 255; b[o + 1] = (v >>> 8) & 255; };
 const p32 = (b, o, v) => { b[o] = v & 255; b[o + 1] = (v >>> 8) & 255; b[o + 2] = (v >>> 16) & 255; b[o + 3] = (v >>> 24) & 255; };
 
 const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
+  const tbl = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
     let c = n;
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
+    tbl[n] = c >>> 0;
   }
-  return t;
+  return tbl;
 })();
 function crc32(data) {
   let c = 0xffffffff;
@@ -61,13 +62,13 @@ export function listEntries(u8) {
   for (let i = u8.length - 22; i >= min; i--) {
     if (u32(u8, i) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error('不是有效的 ZIP 文件(找不到目录结尾)');
+  if (eocd < 0) throw new Error(t('不是有效的 ZIP 文件(找不到目录结尾)'));
   const count = u16(u8, eocd + 10);
   let offset = u32(u8, eocd + 16);
 
   const entries = [];
   for (let i = 0; i < count; i++) {
-    if (u32(u8, offset) !== 0x02014b50) throw new Error('ZIP 目录损坏');
+    if (u32(u8, offset) !== 0x02014b50) throw new Error(t('ZIP 目录损坏'));
     const method = u16(u8, offset + 10);
     const crc = u32(u8, offset + 16);
     const compressedSize = u32(u8, offset + 20);
@@ -93,7 +94,7 @@ export async function extract(u8, entry) {
   const raw = u8.subarray(entry.dataStart, entry.dataStart + entry.compressedSize);
   if (entry.method === 0) return raw;
   if (entry.method === 8) return inflateRaw(raw);
-  throw new Error(`不支持的压缩方法:${entry.method}`);
+  throw new Error(t('不支持的压缩方法:{method}', { method: entry.method }));
 }
 
 /** 解析 + 全部解压(文本内容自动解码为 string) */

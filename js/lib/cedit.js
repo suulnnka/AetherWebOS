@@ -17,6 +17,7 @@
  *    修改经 execCommand('insertText') 落盘,原生撤销栈不破。
  * ============================================================ */
 import { highlight } from './chl.js';
+import { t } from '../core/i18n.js';
 
 const LH = 20;        // 行高(px,与 CSS 严格一致)
 const PAD_TOP = 8;    // 顶部内边距(px,与 CSS 严格一致)
@@ -41,7 +42,7 @@ export function createCodeEditor(opts = {}) {
 
   const ta = nl('textarea', 'cedit-ta', {
     wrap: 'off', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off',
-    autocorrect: 'off', 'aria-label': '代码编辑区',
+    autocorrect: 'off', 'aria-label': t('代码编辑区'),
   });
   ta.placeholder = opts.placeholder || '';
   const hl = nl('pre', 'cedit-hl');

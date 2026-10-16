@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '纸牌接龙,自动收牌',
+  i18n: { en: { name: 'Solitaire', desc: 'Klondike solitaire with auto-collect' } },
 };

@@ -37,6 +37,7 @@
  *   accounts.onChange(fn)                   登录状态变化订阅 → 返回退订
  * ============================================================ */
 import { publish, subscribe } from './bus.js';
+import { t } from './i18n.js';
 
 const DB_KEY = 'webos.accounts.v1';
 const SESSION_KEY = 'webos.account-session.v1';
@@ -113,15 +114,15 @@ const saveDB = (db) => {
 };
 
 function validateUsername(username) {
-  if (!username || username.length < 2) return '用户名至少 2 个字符';
-  if (username.length > 20) return '用户名最多 20 个字符';
-  if (!/^[\w一-龥.-]+$/.test(username)) return '用户名只能包含字母、数字、汉字、_ - .';
-  if (SYSTEM_USERS.has(username)) return '该用户名为系统保留';
+  if (!username || username.length < 2) return t('用户名至少 2 个字符');
+  if (username.length > 20) return t('用户名最多 20 个字符');
+  if (!/^[\w一-龥.-]+$/.test(username)) return t('用户名只能包含字母、数字、汉字、_ - .');
+  if (SYSTEM_USERS.has(username)) return t('该用户名为系统保留');
   return null;
 }
 function validatePassword(password) {
-  if (!password || password.length < 4) return '密码至少 4 位';
-  if (password.length > 64) return '密码最多 64 位';
+  if (!password || password.length < 4) return t('密码至少 4 位');
+  if (password.length > 64) return t('密码最多 64 位');
   return null;
 }
 
@@ -151,7 +152,7 @@ const accounts = {
     const errP = validatePassword(password);
     if (errP) return { ok: false, error: errP };
     const db = loadDB();
-    if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
+    if (db.users[name]) return { ok: false, error: t('该用户名已被注册') };
     db.users[name] = await buildUser(name, password, profile, db);
     saveDB(db);
     this._startSession(name);
@@ -167,7 +168,7 @@ const accounts = {
     const errP = validatePassword(password);
     if (errP) return { ok: false, error: errP };
     const db = loadDB();
-    if (db.users[name]) return { ok: false, error: '该用户名已被注册' };
+    if (db.users[name]) return { ok: false, error: t('该用户名已被注册') };
     db.users[name] = await buildUser(name, password, profile, db);
     saveDB(db);
     publish('accounts:changed', { from: 'accounts', type: 'created', payload: { user: name } });
@@ -206,15 +207,15 @@ const accounts = {
   /** 登录:空密码 / 系统账号 / 口令不符一律失败 */
   async login(username, password) {
     const name = String(username || '').trim();
-    if (!password) return { ok: false, error: '密码不能为空' };
-    if (SYSTEM_USERS.has(name)) return { ok: false, error: '该账号仅供系统使用,无法登录' };
+    if (!password) return { ok: false, error: t('密码不能为空') };
+    if (SYSTEM_USERS.has(name)) return { ok: false, error: t('该账号仅供系统使用,无法登录') };
     const db = loadDB();
     const rec = db.users[name];
-    if (!rec || rec.profile?.system) return { ok: false, error: '用户不存在' };
-    if (!rec.salt || !rec.hash) return { ok: false, error: '该账号仅供系统使用,无法登录' };
+    if (!rec || rec.profile?.system) return { ok: false, error: t('用户不存在') };
+    if (!rec.salt || !rec.hash) return { ok: false, error: t('该账号仅供系统使用,无法登录') };
     const salt = new Uint8Array(atob(rec.salt).split('').map(c => c.charCodeAt(0)));
     const hash = await hashPassword(password, salt);
-    if (hash !== rec.hash) return { ok: false, error: '密码错误' };
+    if (hash !== rec.hash) return { ok: false, error: t('密码错误') };
     this._startSession(name);
     publish('accounts:changed', { from: 'accounts', type: 'login', payload: { user: name } });
     return { ok: true, user: name };
@@ -291,16 +292,16 @@ const accounts = {
   async rename(oldName, newName, password) {
     const from = String(oldName || '').trim();
     const to = String(newName || '').trim();
-    if (!from) return { ok: false, error: '缺少原用户名' };
-    if (from === to) return { ok: false, error: '新用户名与当前相同' };
+    if (!from) return { ok: false, error: t('缺少原用户名') };
+    if (from === to) return { ok: false, error: t('新用户名与当前相同') };
     const errU = validateUsername(to);
     if (errU) return { ok: false, error: errU };
     const db = loadDB();
     const rec = db.users[from];
-    if (!rec) return { ok: false, error: '用户不存在' };
-    if (db.users[to]) return { ok: false, error: '该用户名已被注册' };
+    if (!rec) return { ok: false, error: t('用户不存在') };
+    if (db.users[to]) return { ok: false, error: t('该用户名已被注册') };
     if (!(await this.verify(from, password))) {
-      return { ok: false, error: password ? '密码错误' : '请输入密码以确认改名' };
+      return { ok: false, error: password ? t('密码错误') : t('请输入密码以确认改名') };
     }
 
     // 1) 账号表换键(uid 留在 rec 上不动)
@@ -364,7 +365,7 @@ const accounts = {
   setDisplayName(username, displayName) {
     const db = loadDB();
     const rec = db.users[username];
-    if (!rec) return { ok: false, error: '用户不存在' };
+    if (!rec) return { ok: false, error: t('用户不存在') };
     const name = String(displayName || '').trim() || username;
     rec.profile = { ...(rec.profile || {}), displayName: name };
     saveDB(db);
@@ -376,7 +377,7 @@ const accounts = {
   setPasswordHint(username, hint) {
     const db = loadDB();
     const rec = db.users[username];
-    if (!rec) return { ok: false, error: '用户不存在' };
+    if (!rec) return { ok: false, error: t('用户不存在') };
     const text = String(hint || '').trim().slice(0, 80);
     rec.profile = { ...(rec.profile || {}), passwordHint: text };
     saveDB(db);
@@ -386,10 +387,10 @@ const accounts = {
 
   /** 删除用户:需校验该用户密码;系统账号不可删;删当前用户时同时注销 */
   async remove(username, password) {
-    if (SYSTEM_USERS.has(username)) return { ok: false, error: '系统账号不可删除' };
+    if (SYSTEM_USERS.has(username)) return { ok: false, error: t('系统账号不可删除') };
     const db = loadDB();
-    if (!db.users[username]) return { ok: false, error: '用户不存在' };
-    if (!(await this.verify(username, password))) return { ok: false, error: '密码错误' };
+    if (!db.users[username]) return { ok: false, error: t('用户不存在') };
+    if (!(await this.verify(username, password))) return { ok: false, error: t('密码错误') };
     delete db.users[username];
     saveDB(db);
     const wasCurrent = this.current() === username;

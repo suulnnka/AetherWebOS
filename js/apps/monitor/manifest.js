@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '系统',
   desc: 'IPC 流量与系统资源观测台',
+  i18n: { en: { name: 'System Monitor', desc: 'IPC traffic and system resource dashboard' } },
 };

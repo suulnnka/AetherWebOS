@@ -11,4 +11,5 @@ export default {
   order: 4,
   category: '工具',
   desc: '简单易用的计算器',
+  i18n: { en: { name: 'Calculator', desc: 'A simple, easy-to-use calculator' } },
 };

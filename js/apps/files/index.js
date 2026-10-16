@@ -173,17 +173,20 @@ register({
       await extractZip(item, item.name.replace(/\.zip$/i, ''));
     }
 
-    /** 解压 ZIP 到目录(按包内路径重建结构) */
+    /** 解压 ZIP 到目录(按包内路径重建结构);逐条目走 fs.batch:
+     *  一次合并广播 + 一趟确定性落盘 */
     async function extractZip(item, destName) {
       const dest = fs.joinPath(cwd, destName || item.name.replace(/\.zip$/i, ''));
       const data = await blobFromText(fs.read(item.path));
       try {
         const items = await unzip(data, { asText: true });
-        for (const it of items) {
-          const p = fs.joinPath(dest, it.name);
-          if (it.dir) fs.mkdir(p);
-          else fs.write(p, it.text ?? '');
-        }
+        await fs.batch(async () => {
+          for (const it of items) {
+            const p = fs.joinPath(dest, it.name);
+            if (it.dir) fs.mkdir(p);
+            else fs.write(p, it.text ?? '');
+          }
+        });
         bus.notify('解压完成', `${items.length} 个条目 → ${dest}`);
       } catch (e) {
         dialogs.error({ title: '解压失败', message: String(e.message) });

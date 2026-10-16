@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '工具',
   desc: '任意 .awdb 库的只读 SQL 查询器',
+  i18n: { en: { name: 'Database', desc: 'Read-only SQL query console for any .awdb database' } },
 };

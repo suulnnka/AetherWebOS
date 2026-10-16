@@ -14,5 +14,6 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '19 路围棋,自研神经网络引擎(KataGo 系)对弈',
+  i18n: { en: { name: 'Go', desc: '19x19 Go against a homegrown neural engine (KataGo lineage)' } },
   hoverPrefetch: false,  // 引擎 chunk + 1.1MB 模型权重都不小,不做悬停预读(引擎本就首次使用时才经 Worker 加载)
 };

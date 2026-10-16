@@ -18,6 +18,7 @@
  * 键盘导航、矢量编辑 —— 两个应用都没用到。
  * ============================================================ */
 import './minimap.css';
+import { t } from '../core/i18n.js';
 
 const TILE = 256;
 const MAX_LAT = 85.0511287798;      // Mercator 能表示的纬度上限,超过会算成 ±∞
@@ -39,8 +40,8 @@ const svgEl = (tag) => document.createElementNS('http://www.w3.org/2000/svg', ta
  * 把后续指针事件抢走——按钮的 click 被重定向而失效,popup 上的点击会
  * 穿透到地图、滚轮会误缩放。等价于 Leaflet 的 disableClickPropagation */
 const isolate = (el) => {
-  for (const t of ['pointerdown', 'click', 'dblclick', 'contextmenu', 'wheel']) {
-    el.addEventListener(t, (e) => e.stopPropagation());
+  for (const type of ['pointerdown', 'click', 'dblclick', 'contextmenu', 'wheel']) {
+    el.addEventListener(type, (e) => e.stopPropagation());
   }
 };
 
@@ -768,8 +769,8 @@ class ZoomControl extends Control {
       b.addEventListener('click', () => map.setZoom(map.getZoom() + delta));
       this._el.appendChild(b);
     };
-    mk('+', 1, '放大');
-    mk('−', -1, '缩小');
+    mk('+', 1, t('放大'));
+    mk('−', -1, t('缩小'));
   }
   onRemove() { this._el?.remove(); }
 }
@@ -793,7 +794,7 @@ class ScaleControl extends Control {
     let best = SCALE_STEPS[0];
     for (const m of SCALE_STEPS) if (m / mpp <= 150) best = m;
     this._bar.style.width = `${Math.round(best / mpp)}px`;
-    this._label.textContent = best < 1000 ? `${best} 米` : `${best / 1000} 公里`;
+    this._label.textContent = best < 1000 ? t('{n} 米', { n: best }) : t('{n} 公里', { n: best / 1000 });
   }
 }
 

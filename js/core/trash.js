@@ -62,7 +62,8 @@ export function isTrashPath(p, user = accounts.current()) {
 
 /**
  * 把若干路径移入回收站(rename 语义,零内容拷贝)。
- * @returns {number} 成功移入的条数
+ * 批量搬移走 fs.batch:一次合并广播 + 一趟确定性落盘(同步主体在批内
+ * 完成,收尾异步落定)。@returns {number} 成功移入的条数
  */
 export function moveToTrash(paths, user = accounts.current()) {
   if (!user || !Array.isArray(paths)) return 0;
@@ -70,19 +71,19 @@ export function moveToTrash(paths, user = accounts.current()) {
   if (!itemsDir) return 0;
   const meta = loadMeta(user);
   let n = 0;
-  for (const p of paths) {
-    if (!p || isTrashPath(p, user)) continue;
-    const st = fs.stat(p, { as: user });
-    if (!st) continue;
-    const key = 't' + (meta.seq++);
-    if (!fs.rename(p, fs.joinPath(itemsDir, key), { as: user })) continue;
-    meta.items[key] = { name: st.name, orig: st.path, at: Date.now(), dir: st.dir };
-    n++;
-  }
-  if (n) {
-    saveMeta(user, meta);
-    changed(user, 'add');
-  }
+  fs.batch(() => {
+    for (const p of paths) {
+      if (!p || isTrashPath(p, user)) continue;
+      const st = fs.stat(p, { as: user });
+      if (!st) continue;
+      const key = 't' + (meta.seq++);
+      if (!fs.rename(p, fs.joinPath(itemsDir, key), { as: user })) continue;
+      meta.items[key] = { name: st.name, orig: st.path, at: Date.now(), dir: st.dir };
+      n++;
+    }
+    if (n) saveMeta(user, meta);
+  }).catch(() => {});
+  if (n) changed(user, 'add');
   return n;
 }
 
@@ -132,6 +133,7 @@ function uniqueName(dir, name) {
 
 /**
  * 还原条目:回原路径;原父目录没了 → 落家目录;重名 → 避让名。
+ * 循环走 fs.batch(一次合并广播 + 一趟确定性落盘)。
  * @returns {boolean} 是否全部成功
  */
 export function restoreItems(keys, user = accounts.current()) {
@@ -140,17 +142,19 @@ export function restoreItems(keys, user = accounts.current()) {
   if (!itemsDir) return false;
   const meta = loadMeta(user);
   let ok = true;
-  for (const key of keys) {
-    const info = meta.items[key];
-    const src = fs.joinPath(itemsDir, key);
-    if (!info || !fs.exists(src)) { delete meta.items[key]; ok = false; continue; }
-    let destDir = fs.parentPath(info.orig || '');
-    if (!destDir || !fs.isDir(destDir)) destDir = homePath(user) || '/home/' + user;
-    const dest = fs.joinPath(destDir, uniqueName(destDir, info.name || fs.basename(src)));
-    if (fs.rename(src, dest, { as: user })) delete meta.items[key];
-    else ok = false;
-  }
-  saveMeta(user, meta);
+  fs.batch(() => {
+    for (const key of keys) {
+      const info = meta.items[key];
+      const src = fs.joinPath(itemsDir, key);
+      if (!info || !fs.exists(src)) { delete meta.items[key]; ok = false; continue; }
+      let destDir = fs.parentPath(info.orig || '');
+      if (!destDir || !fs.isDir(destDir)) destDir = homePath(user) || '/home/' + user;
+      const dest = fs.joinPath(destDir, uniqueName(destDir, info.name || fs.basename(src)));
+      if (fs.rename(src, dest, { as: user })) delete meta.items[key];
+      else ok = false;
+    }
+    saveMeta(user, meta);
+  }).catch(() => {});
   changed(user, 'restore');
   return ok;
 }
@@ -161,12 +165,14 @@ export function purgeItems(keys, user = accounts.current()) {
   const itemsDir = ensureDirs(user);
   if (!itemsDir) return false;
   const meta = loadMeta(user);
-  for (const key of keys) {
-    const p = fs.joinPath(itemsDir, key);
-    if (!fs.rm(p, { as: user })) fs.rm(p, { as: 'root' });   // 回收站代管区:清空是属主显式意图
-    delete meta.items[key];
-  }
-  saveMeta(user, meta);
+  fs.batch(() => {
+    for (const key of keys) {
+      const p = fs.joinPath(itemsDir, key);
+      if (!fs.rm(p, { as: user })) fs.rm(p, { as: 'root' });   // 回收站代管区:清空是属主显式意图
+      delete meta.items[key];
+    }
+    saveMeta(user, meta);
+  }).catch(() => {});
   changed(user, 'purge');
   return true;
 }

@@ -1860,18 +1860,21 @@ group('T27', '便签(Todo)应用', async () => {
   };
   t('T27.1 添加任务(回车→列表+持久化)', td1.added && td1.store, JSON.stringify(td1));
 
-  // 完成与取消完成(圆圈点击 → 划线;再点 → 还原)
+  // 完成与取消完成(圆圈点击 → 划线;再点 → 还原);选中态 = 空心 + 内点(非实心)
   const td2 = await ev(`(async () => {
     const row = () => [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('写周报'));
     row().querySelector('.todo-check').click();
     await new Promise(r => setTimeout(r, 150));
+    const cs = getComputedStyle(row().querySelector('.todo-check'));
+    const af = getComputedStyle(row().querySelector('.todo-check'), '::after');
+    const dot = cs.backgroundColor === 'rgba(0, 0, 0, 0)' && af.content === '""';
     const done = !!row()?.classList.contains('done');
     row().querySelector('.todo-check').click();
     await new Promise(r => setTimeout(r, 150));
     const undone = !row()?.classList.contains('done');
-    return { done, undone };
+    return { done, undone, dot };
   })()`);
-  t('T27.2 点击完成/取消完成', td2.done && td2.undone, JSON.stringify(td2));
+  t('T27.2 点击完成/取消完成(选中=空心点)', td2.done && td2.undone && td2.dot, JSON.stringify(td2));
 
   // 双击编辑任务文本(Enter 保存)—— 双击打在文字上(真实手势的 target,
   // 回归:文字被行内编辑替换出 DOM 后,空白双击监听曾误判并顶掉编辑器)
@@ -2002,6 +2005,24 @@ group('T27', '便签(Todo)应用', async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
     return ((s?.boards || []).some(b => b.type === 'note' && b.text === '便签内容测试'));
   })()`);
+  // ☰菜单「打开已有」列出其他板(刚建的便签应在列);点击已开的板 = 聚焦不重复开
+  const listed = await ev(`(() => {
+    document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
+    const names = [...document.querySelectorAll('.todo-menu .tm-board-item')].map(b => b.textContent.trim());
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    return names;
+  })()`);
+  await sleep(200);
+  const noDup = await ev(`(async () => {
+    const before = document.querySelectorAll('.win[data-app=todo]').length;
+    document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
+    const item = [...document.querySelectorAll('.todo-menu .tm-board-item')]
+      .find(b => b.textContent.includes('便签内容测试'));
+    if (!item) return { noItem: true };
+    item.click();   // 这块板的窗口正开着 → 应聚焦而非新开
+    await new Promise(r => setTimeout(r, 500));
+    return { before, after: document.querySelectorAll('.win[data-app=todo]').length };
+  })()`);
   await ev(`(() => {
     const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
     n.querySelector('.todo-menu-btn').click();
@@ -2016,10 +2037,12 @@ group('T27', '便签(Todo)应用', async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
     return (s?.boards || []).filter(b => b.type === 'note').length;
   })()`);
-  t('T27.5b 创建/删除便签窗口(速记+持久化)',
+  t('T27.5b 创建/删除便签窗口(速记+持久化+菜单列板/已开聚焦)',
     note0.count === 2 && !note0.hasInput && !note0.hasCheck && note0.ta === 'TEXTAREA'
-      && noteStore === true && noteGone.winGone && noteGone.mainAlive && noteStoreGone === 0,
-    JSON.stringify({ note0, noteStore, noteGone, noteStoreGone }));
+      && noteStore === true && listed.length >= 1 && listed.some(n => n.includes('便签内容测试'))
+      && noDup.after === noDup.before
+      && noteGone.winGone && noteGone.mainAlive && noteStoreGone === 0,
+    JSON.stringify({ note0, noteStore, listed, noDup, noteGone, noteStoreGone }));
 
   // 窗口自动增高:连加 30 条 → 窗口长高并封顶(不超桌面),列表内部出现滚动
   const h0 = await ev(`document.querySelector('.win[data-app=todo]').offsetHeight`);
@@ -2156,7 +2179,8 @@ group('T27', '便签(Todo)应用', async () => {
     inherit.newPinned && inherit.mainPinned && inherit.newZ > inherit.mainZ,
     JSON.stringify(inherit));
 
-  // 持久化:刷新后任务仍在
+  // 持久化:刷新后任务仍在(会话恢复在 e2e 模式被刻意禁用,恢复链路以
+  // 真实浏览器手动验证:窗口清单带 boardId,restoreIfSaved 按 params 原样开回)
   await fresh();
   const td10 = await ev(`(async () => {
     const { loadState } = WebOS.appdata;
@@ -2168,7 +2192,12 @@ group('T27', '便签(Todo)应用', async () => {
   t('T27.10 持久化(刷新后任务保留)', td10.n === 5, `tasks=${td10.n}`);
 
   // 桌面再次打开 = 新开一张独立空便签(不共享已开窗口数据);菜单「新建待办」
-  // 同样独立;「删除待办」只删本板(断言用增量,不受会话恢复时机影响)
+  // 同样独立;「删除待办」只删本板(断言用增量,不受会话恢复时机影响)。
+  // 先清 lastOpen:否则「一个没开 + 上次全关记录」会走整组恢复而非新开空便签
+  await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    if (s && (s.lastOpen || []).length) { s.lastOpen = []; s.seq = (s.seq || 0) + 1; await WebOS.appdata.saveState('todo', s, WebOS.accounts.current()); }
+  })()`);
   const before = await ev(`document.querySelectorAll('.win[data-app=todo]').length`);
   await ev(`WebOS.wm.open('todo')`);
   await sleep(700);
@@ -2243,12 +2272,34 @@ group('T27', '便签(Todo)应用', async () => {
   })()`);
   await sleep(400);
 
-  // 自绘关闭按钮(顶栏黑色 ✕)
+  // 自绘关闭按钮(顶栏黑色 ✕)。先清 lastOpen 并提升 seq(内存态才会采纳),
+  // 让这里的桌面打开走「新开空便签」而非整组恢复
+  await ev(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    if (s) { s.lastOpen = []; s.seq = (s.seq || 0) + 1; await WebOS.appdata.saveState('todo', s, WebOS.accounts.current()); }
+  })()`);
   await ev(`WebOS.wm.open('todo')`);
+  await sleep(700);
+  await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=todo] .todo-input');
+    inp.value = '关闭前任务';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
   await sleep(600);
   await ev(`document.querySelector('.win[data-app=todo] .todo-close').click()`);
   await sleep(400);
   t('T27.11 自绘关闭按钮', await ev(`!document.querySelector('.win[data-app=todo]')`) === true);
+
+  // 全关后桌面打开 = 整组恢复刚才关掉的那组板(内容原样回来)
+  await ev(`WebOS.wm.open('todo')`);
+  await sleep(900);
+  const regrp = await ev(`(() => ({
+    count: document.querySelectorAll('.win[data-app=todo]').length,
+    restored: [...document.querySelectorAll('.todo-t')].some(x => x.textContent === '关闭前任务'),
+  }))()`);
+  t('T27.11b 全关后桌面打开整组恢复', regrp.count === 1 && regrp.restored, JSON.stringify(regrp));
+  await ev(`[...document.querySelectorAll('.win[data-app=todo]')].forEach(w => WebOS.wm.close(w.dataset.id))`);
+  await sleep(300);
 
   const errs27 = await ev(`window.__errs.length`);
   t('T27.12 全程无错误', errs27 === 0, `errs=${errs27}`);
@@ -7294,6 +7345,357 @@ group('T62', '任务栏收缩与同时任务上限(按钮收窄 / 藏头留尾 /
   t('T62.4 同时任务上限 60(第 61 个被拒 + toast;对话框豁免;关一个后可开)',
     cap.n0 === 60 && cap.refused && cap.toastHasCap && cap.dlg && cap.filesOk, JSON.stringify(cap));
   await c.shot('t62-limit');
+});
+
+/* ---- T63 落盘分层(fs-writeback 方案,docs/fs-writeback.md §5)----
+ * 结构档 30ms 微防抖 / writeAt 分类 / 懒档写放大 / fs.batch 合并广播 /
+ * savedAt+clockDelta 启动校准 / cowGuard 遮蔽注册表及时落盘。
+ * 「强杀近似」的判别力都落在 reload 前的盘上状态断言(pagehide 会兜底
+ * 冲刷,只看 reload 后结果会误归 meta 也通过)。 ---- */
+group('T63', '落盘分层(结构档微防抖 / 懒档写放大 / batch 合并 / 启动校准 / 遮蔽及时落盘)', async () => {
+  await fresh();
+  for (let i = 0; i < 10 && (await ev(`!window.WebOS`)); i++) await sleep(500);
+
+  /* 页内直读/直写 webos/fs.v2.json:校准用例手工构造「懒写未刷」的盘上状态 */
+  const treeIO = `
+    async function readTree() {
+      const root = await navigator.storage.getDirectory();
+      const dh = await root.getDirectoryHandle('webos');
+      const fh = await dh.getFileHandle('fs.v2.json');
+      return JSON.parse(await (await fh.getFile()).text());
+    }
+    async function writeTreeJSON(t) {
+      const root = await navigator.storage.getDirectory();
+      const dh = await root.getDirectoryHandle('webos', { create: true });
+      const fh = await dh.getFileHandle('fs.v2.json', { create: true });
+      const w = await fh.createWritable();
+      await w.write(JSON.stringify(t));
+      await w.close();
+    }
+    function nodeAt(t, p) {
+      let n = t;
+      for (const s of p.slice(1).split('/')) { n = n.c?.[s]; if (!n) return null; }
+      return n;
+    }`;
+
+  // T-新1 播种批量:注册(登录播种:家目录 + 桌面快捷方式)放进 fs.batch
+  //   → 一条 batch 合并广播、≤2 趟写树
+  const seeded = await ev(`(async () => {
+    const fs = WebOS.fs;
+    await fs.ready();
+    const name = 'fswb' + (Date.now() % 100000);
+    let broadcasts = 0, last = null;
+    const off = WebOS.bus.subscribe('sys:fs-changed', (p) => { broadcasts++; last = p; });
+    fs.__probe.reset();
+    const reg = await fs.batch(() => WebOS.accounts.register(name, 'fswbpass1'));
+    await new Promise(r => setTimeout(r, 80));   // 等尾随窗彻底落定
+    const calls = fs.__probe.writeTreeCalls;
+    off();
+    return { ok: !!reg?.ok, broadcasts, calls, action: last?.action,
+      paths: last?.paths?.length || 0,
+      homeSeeded: fs.isDir('/home/' + name),
+      shortcuts: (fs.list('/home/' + name + '/desktop', { as: 'root' }) || []).length };
+  })()`);
+  t('T63.1 播种批量(batch 内登录播种:合并为 1 条广播、≤2 趟写树、家目录与快捷方式齐备)',
+    seeded.ok && seeded.broadcasts === 1 && seeded.calls <= 2
+    && seeded.action === 'batch' && seeded.paths >= 2
+    && seeded.homeSeeded && seeded.shortcuts >= 2,
+    JSON.stringify(seeded));
+
+  // T-新2 size/mtime 启动校准:flush 落齐后手工把树 JSON 改回旧 s/旧 m/旧
+  //   savedAt(模拟「懒写窗口内强杀」的盘上状态)→ reload → 校准修复
+  const calibPrep = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const p = '/home/' + WebOS.accounts.current() + '/appdata/calib.dat';
+    await fs.writeAt(p, 0, new Uint8Array(16), { as: 'root' });    // 首写(结构档)
+    await new Promise(r => setTimeout(r, 80));                     // 过结构窗:盘上树已带初始 s=16
+    await fs.writeAt(p, 16, new Uint8Array(16), { as: 'root' });  // 追加 16B(懒档,盘上树不追)
+    const tWrite = Date.now();
+    await fs.flush();                                              // 落齐(拿到含新 s 的树)
+    ${treeIO}
+    const tree = await readTree();
+    const n = nodeAt(tree, p);
+    n.s = 16; n.m = tWrite - 3600000;      // 旧 s / 旧 m(一小时前)
+    tree.savedAt = tWrite - 60000;         // 旧哨兵(字节写入前一分钟)
+    await writeTreeJSON(tree);
+    return { tWrite, p };
+  })()`);
+  await fresh();   // reload → 启动校准
+  const calib = await ev(`(async () => {
+    await WebOS.fs.ready();
+    const fs = WebOS.fs;
+    const p = ${JSON.stringify(calibPrep.p)};
+    const size = await fs.fileSize(p, { as: 'root' });
+    const mtime = fs.stat(p, { as: 'root' })?.mtime;
+    const head = Array.from((await fs.readAt(p, 0, 4, { as: 'root' })) || []);
+    return { size, mtime, head };
+  })()`);
+  t('T63.2 启动校准(size 修到实际 32B / mtime 修到实际写入时刻 / readAt 全程可读)',
+    calib.size === 32
+    && calib.mtime >= calibPrep.tWrite - 2000 && calib.mtime <= Date.now()
+    && calib.head.length === 4,
+    JSON.stringify({ tWrite: calibPrep.tWrite, calib }));
+
+  // T-新2 反向哨兵:快照 → 改动 → 恢复 → reload → mtime 仍为快照时刻
+  //   (校准不得打爆恢复保留的旧 mtime,防 naive max / 哨兵误修)
+  const snapPrep = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const p = '/home/' + WebOS.accounts.current() + '/documents/mtime-guard.txt';
+    fs.write(p, 'v1', { as: 'root' });
+    await fs.flush();
+    const m0 = fs.stat(p, { as: 'root' }).mtime;
+    const snap = await fs.snapshots.create(fs.parentPath(p), { as: 'root', name: 'mtime-guard' });
+    fs.write(p, 'v2-改动', { as: 'root' });
+    await fs.snapshots.restore(snap.id, { as: 'root' });
+    await fs.flush();
+    return { m0, p };
+  })()`);
+  await fresh();
+  const snapAfter = await ev(`(async () => {
+    await WebOS.fs.ready();
+    const fs = WebOS.fs;
+    const p = ${JSON.stringify(snapPrep.p)};
+    return { mtime: fs.stat(p, { as: 'root' })?.mtime, content: fs.read(p, { as: 'root' }) };
+  })()`);
+  t('T63.3 反向哨兵(恢复保留原 mtime:reload 后仍为快照时刻,校准不误修)',
+    snapAfter.content === 'v1' && snapAfter.mtime === snapPrep.m0,
+    JSON.stringify({ m0: snapPrep.m0, after: snapAfter.mtime }));
+
+  // T-新3 结构档判别(强杀近似):新建文件(首写 writeAt 高危分支 / fs.write)
+  //   不 flush、sleep 120ms → 判别点在「盘上树已含新节点」(reload 前断言,
+  //   pagehide 兜底不背书);reload 后存在且可读
+  const mkFiles = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const u = WebOS.accounts.current();
+    await fs.writeAt('/home/' + u + '/tnew3a.dat', 0, new Uint8Array([1, 2, 3, 4]), { as: 'root' });
+    fs.write('/home/' + u + '/tnew3b.txt', 'text3', { as: 'root' });
+    return { a: '/home/' + u + '/tnew3a.dat', b: '/home/' + u + '/tnew3b.txt' };
+  })()`);
+  await sleep(120);
+  const diskTree = await ev(`(async () => {
+    ${treeIO}
+    const t = await readTree();
+    return { a: !!nodeAt(t, ${JSON.stringify(mkFiles.a)}), b: !!nodeAt(t, ${JSON.stringify(mkFiles.b)}) };
+  })()`);
+  await fresh();
+  const survived = await ev(`(async () => {
+    await WebOS.fs.ready();
+    const fs = WebOS.fs;
+    const a = ${JSON.stringify(mkFiles.a)}, b = ${JSON.stringify(mkFiles.b)};
+    const bin = Array.from((await fs.readAt(a, 0, 4, { as: 'root' })) || []);
+    return { hasA: fs.exists(a), hasB: fs.exists(b), bin, txt: fs.read(b, { as: 'root' }) };
+  })()`);
+  t('T63.4 结构档判别(新建即结构趟:120ms 内盘上树已含节点;reload 后存在且可读)',
+    diskTree.a && diskTree.b && survived.hasA && survived.hasB
+    && JSON.stringify(survived.bin) === JSON.stringify([1, 2, 3, 4]) && survived.txt === 'text3',
+    JSON.stringify({ diskTree, survived }));
+
+  // T-新4 懒档行为:已存在文件连续 10 次就地覆盖 writeAt → sleep 120ms
+  //   (不等待直接计数则合并窗未响,断言恒真)→ 0 趟写树、广播合并;
+  //   flush 后盘上树 m/s 为最新
+  const lazy = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const p = '/home/' + WebOS.accounts.current() + '/tnew4.dat';
+    await fs.writeAt(p, 0, new Uint8Array(8), { as: 'root' });   // 新建(结构档)
+    await fs.flush();                                            // 干净起点(结构趟已落定)
+    const t0 = Date.now();
+    fs.__probe.reset();
+    let broadcasts = 0;
+    const off = WebOS.bus.subscribe('sys:fs-changed', () => broadcasts++);
+    for (let i = 0; i < 10; i++) {
+      await fs.writeAt(p, 0, new Uint8Array([i & 255, 1, 2, 3]), { as: 'root' });   // 纯就地覆盖
+    }
+    await new Promise(r => setTimeout(r, 120));   // > 30ms 合并窗落定;< 30s,metaTimer 不串场
+    const calls = fs.__probe.writeTreeCalls;
+    off();
+    await fs.flush();                             // 懒档搭 flush 便车落盘
+    ${treeIO}
+    const n = nodeAt(await readTree(), p);
+    return { broadcasts, calls, t0, s: n.s, m: n.m };
+  })()`);
+  t('T63.5 懒档行为(纯就地覆盖 0 趟写树 / 广播合并 ≤2 条 / flush 后盘上 s=8、m≥首次覆盖)',
+    lazy.calls === 0 && lazy.broadcasts >= 1 && lazy.broadcasts <= 2
+    && lazy.s === 8 && lazy.m >= lazy.t0 - 1000,
+    JSON.stringify(lazy));
+
+  // T-新5 快照遮蔽注册表及时落盘:建快照 → flush(注册表落盘,gen=null)
+  //   → writeAt 覆盖(触发 cowGuard 遮蔽)→ 不 flush,sleep 120ms → reload
+  //   → 快照读覆盖前旧内容(注册表必须已随遮蔽字节落盘)
+  const shadowPrep = await ev(`(async () => {
+    const fs = WebOS.fs;
+    const dir = '/home/' + WebOS.accounts.current() + '/documents';
+    const enc = (s) => new TextEncoder().encode(s);
+    await fs.writeAt(dir + '/shadow.bin', 0, enc('OLD'), { as: 'root' });
+    const snap = await fs.snapshots.create(dir, { as: 'root', name: 'shadow-guard' });
+    await fs.flush();
+    await fs.writeAt(dir + '/shadow.bin', 0, enc('NEW'), { as: 'root' });   // 遮蔽 + 覆盖
+    return { dir };
+  })()`);
+  await sleep(120);   // 不 flush
+  // 判别点在 reload 前:盘上注册表须已带 gen(pagehide 兜底不背书)
+  const regDisk = await ev(`(async () => {
+    const root = await navigator.storage.getDirectory();
+    const dh = await root.getDirectoryHandle('webos');
+    const raw = await (await dh.getFileHandle('fs.snaps.v1.json')).getFile().then(f => f.text());
+    const reg = JSON.parse(raw);
+    const it = (reg.items || []).find(x => x.name === 'shadow-guard');
+    const n = it && it.tree && it.tree.c && it.tree.c['shadow.bin'];
+    return { gen: n ? n.gen : undefined };
+  })()`);
+  await fresh();
+  const shadowAfter = await ev(`(async () => {
+    await WebOS.fs.ready();
+    const fs = WebOS.fs;
+    const dir = ${JSON.stringify(shadowPrep.dir)};
+    const it = fs.snapshots.list({ as: 'root' }).find(x => x.name === 'shadow-guard');
+    if (!it) return { fail: 'no-snap' };
+    const bin = await fs.snapshots.readFile(it.id, 'shadow.bin', { as: 'root' });
+    const live = new TextDecoder().decode((await fs.readAt(dir + '/shadow.bin', 0, 3, { as: 'root' })) || new Uint8Array());
+    return { snap: bin ? new TextDecoder().decode(bin) : null, live };
+  })()`);
+  t('T63.6 遮蔽注册表及时落盘(120ms 内盘上已带 gen;reload 后快照读覆盖前旧内容,活跃文件为新内容)',
+    regDisk.gen != null && shadowAfter.fail === undefined
+    && shadowAfter.snap === 'OLD' && shadowAfter.live === 'NEW',
+    JSON.stringify({ regDisk, shadowAfter }));
+
+  // 收尾清理:本组造的快照与测试文件(root 身份,幂等)
+  await ev(`(async () => {
+    const fs = WebOS.fs;
+    await fs.ready();
+    for (const it of fs.snapshots.list({ as: 'root' })) {
+      if (it.name === 'mtime-guard' || it.name === 'shadow-guard') await fs.snapshots.remove(it.id, { as: 'root' });
+    }
+    const u = WebOS.accounts.current();
+    for (const p of [
+      '/home/' + u + '/appdata/calib.dat',
+      '/home/' + u + '/tnew3a.dat', '/home/' + u + '/tnew3b.txt',
+      '/home/' + u + '/tnew4.dat',
+      '/home/' + u + '/documents/mtime-guard.txt',
+      '/home/' + u + '/documents/shadow.bin',
+    ]) fs.rm(p, { as: 'root' });
+    await fs.flush();
+    return true;
+  })()`);
+});
+
+/* ---- T64 界面语言 i18n P0(docs/i18n.md §6/§11):设置 locale + 重启式切换,
+ * zh 逐字节基线 / en 外壳全英(开始菜单 / 桌面标签 / 窗口与任务栏标题 /
+ * 托盘日期 / 设置「系统」节语言行)/ 商店卡片与分类英译 / 双语搜索索引 /
+ * 切回 zh 恢复。切换走 WebOS.settings.set(等价设置应用确认后的路径)。 ---- */
+group('T64', '界面语言(locale 设置 / 重启切换 / en 外壳与商店 / 双语搜索 / 切回)', async () => {
+  await fresh();
+
+  /* 1) zh 基线:lang 属性 + 开始菜单中文名(保证 zh 与现状逐像素一致) */
+  const zhBase = await ev(`(() => ({
+    lang: document.documentElement.lang,
+  }))()`);
+  await ev(`document.getElementById('start-btn').click()`);
+  await waitFor(`document.querySelectorAll('.sm-item').length > 0`, 5000);
+  const zhMenu = await ev(`[...document.querySelectorAll('.sm-item .name')].map(n => n.textContent)`);
+  await ev(`document.getElementById('start-btn').click()`);
+  t('T64.1 zh 基线(lang=zh-CN + 开始菜单中文名)',
+    zhBase.lang === 'zh-CN' && zhMenu.includes('文件管家') && zhMenu.includes('记事本') && zhMenu.includes('终端'),
+    JSON.stringify({ lang: zhBase.lang, sample: zhMenu.slice(0, 6) }));
+
+  /* 2) 切 en(settings.set → reload,与设置应用确认路径等价) */
+  await ev(`WebOS.settings.set({ locale: 'en-US' })`);
+  await sleep(400);   // 设置防抖落盘(150ms)后再重载
+  await fresh();
+  const enBoot = await ev(`(() => ({
+    lang: document.documentElement.lang,
+    startTitle: document.getElementById('start-btn').title,
+    smPlaceholder: document.getElementById('sm-input').placeholder,
+  }))()`);
+  t('T64.2 切 en 后 lang / 静态文案(index.html 随语言同步)',
+    enBoot.lang === 'en-US' && enBoot.startTitle === 'Start menu' && enBoot.smPlaceholder === 'Search apps…',
+    JSON.stringify(enBoot));
+
+  /* 3) 外壳显示名:桌面标签 / 开始菜单 / 窗口标题 / 任务栏按钮 */
+  const desk = await ev(`[...document.querySelectorAll('.dicon .label')].map(n => n.textContent)`);
+  await ev(`document.getElementById('start-btn').click()`);
+  await waitFor(`document.querySelectorAll('.sm-item').length > 0`, 5000);
+  const enMenu = await ev(`[...document.querySelectorAll('.sm-item .name')].map(n => n.textContent)`);
+  /* 双语搜索索引:输入英文 terminal 命中「终端」 */
+  await ev(`(() => {
+    const i = document.getElementById('sm-input');
+    i.value = 'terminal';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  const searchHit = await ev(`(() => {
+    const first = document.querySelector('.sm-item:not(.hide)');
+    const hit = first ? first.querySelector('.name').textContent : '';
+    document.getElementById('start-btn').click();
+    return hit;
+  })()`);
+  await ev(`WebOS.wm.open('calc')`);
+  await waitFor(`!!document.querySelector('.win[data-app=calc]')`, 5000);
+  const winTitle = await ev(`(() => ({
+    title: document.querySelector('.win[data-app=calc] .win-title')?.textContent || '',
+    task: [...document.querySelectorAll('#tb-tasks .t-title')].map(n => n.textContent),
+    pinned: [...document.querySelectorAll('#tb-pinned .tbtn')].map(b => b.title),
+  }))()`);
+  await ev(`WebOS.wm.close(WebOS.wm.taskList()[0].id)`);
+  const deskDbg = desk.includes('Files') ? null : await ev(`(() => {
+    const n = [...document.querySelectorAll('.dicon .label')].find(x => x.textContent === '文件管家' || x.textContent === '终端');
+    const path = n ? n.closest('.dicon').dataset.key.slice(3) : null;
+    return { path, content: path ? WebOS.fs.read(path) : null, user: WebOS.accounts.current(),
+             installedFiles: WebOS.apps.isInstalled('files'), lang: document.documentElement.lang };
+  })()`);
+  t('T64.3 外壳显示名英译(桌面标签 / 开始菜单 / 窗口与任务栏标题 / 双语搜索)',
+    desk.includes('Files') && desk.includes('Recycle Bin') && !desk.includes('回收站')
+    && enMenu.includes('Files') && enMenu.includes('Terminal') && !enMenu.includes('文件管家')
+    && searchHit === 'Terminal'
+    && winTitle.title === 'Calculator' && winTitle.task.includes('Calculator') && winTitle.pinned.includes('Files'),
+    JSON.stringify({ desk, menu: enMenu.slice(0, 6), searchHit, winTitle, deskDbg }));
+
+  /* 4) 设置应用「系统」节:界面语言行(下拉当前值 + 文案)与工具栏日期 */
+  await ev(`WebOS.wm.open('settings', { params: { section: 'system' } })`);
+  await waitFor(`!!document.querySelector('.win[data-app=settings] .set-body')`, 5000);
+  const setRow = await ev(`(() => {
+    const sel = document.querySelector('.win[data-app=settings] select.input');
+    const labels = [...document.querySelectorAll('.win[data-app=settings] .set-body .s-label')].map(n => n.textContent);
+    return { value: sel ? sel.value : null, opts: sel ? [...sel.options].map(o => o.textContent) : [],
+             hasLangRow: labels.includes('Interface language'), toolDate: document.querySelector('.win[data-app=settings] .app-toolbar .dim')?.textContent || '' };
+  })()`);
+  await ev(`WebOS.wm.close(WebOS.wm.taskList()[0].id)`);
+  t('T64.4 设置「系统」节界面语言行(英文文案 + 下拉 en-US + 日期英文星期)',
+    setRow.value === 'en-US' && setRow.hasLangRow && setRow.opts.includes('Follow browser')
+    && /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{4}\/\d{2}\/\d{2}$/.test(setRow.toolDate.trim()),
+    JSON.stringify(setRow));
+  await c.shot('t64-en-settings');
+
+  /* 5) 软件商店:卡片名 / 简介 / 分类走 manifest.i18n 与 category 字典 */
+  await ev(`WebOS.wm.open('appstore')`);
+  await waitFor(`!!document.querySelector('.st-card[data-app=memo]')`, 8000);
+  const card = await ev(`(() => {
+    const c = document.querySelector('.st-card[data-app=memo]');
+    return { name: c.querySelector('.st-name').childNodes[0].textContent, desc: c.querySelector('.st-desc').textContent,
+             line: c.querySelector('.st-line').textContent,
+             cats: [...document.querySelectorAll('.st-nav .nav-item .st-nav-label')].map(n => n.textContent) };
+  })()`);
+  await ev(`WebOS.wm.close(WebOS.wm.taskList()[0].id)`);
+  t('T64.5 商店卡片英译(名字 / 简介 / 分类侧栏)',
+    card.name === 'Notes' && card.desc === 'Card-style notes with encryption and pinning'
+    && card.line.includes('Productivity') && card.cats.includes('Games') && !card.cats.includes('游戏'),
+    JSON.stringify(card));
+  await c.shot('t64-en-store');
+
+  /* 6) 切回 zh:恢复中文(含 lang 与开始菜单) */
+  await ev(`WebOS.settings.set({ locale: 'zh-CN' })`);
+  await sleep(400);
+  await fresh();
+  const back = await ev(`(() => ({
+    lang: document.documentElement.lang,
+    smPlaceholder: document.getElementById('sm-input').placeholder,
+  }))()`);
+  await ev(`document.getElementById('start-btn').click()`);
+  await waitFor(`document.querySelectorAll('.sm-item').length > 0`, 5000);
+  const backMenu = await ev(`[...document.querySelectorAll('.sm-item .name')].map(n => n.textContent)`);
+  await ev(`document.getElementById('start-btn').click()`);
+  t('T64.6 切回 zh 恢复(lang / 开始菜单中文名 / 静态文案)',
+    back.lang === 'zh-CN' && back.smPlaceholder === '搜索应用…'
+    && backMenu.includes('文件管家') && !backMenu.includes('Files'),
+    JSON.stringify({ back, sample: backMenu.slice(0, 6) }));
 });
 
 /* ---------- 用例筛选 ---------- */

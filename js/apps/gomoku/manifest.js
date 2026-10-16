@@ -14,4 +14,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '游戏',
   desc: '五子棋(连珠规则可选),自带 AI',
+  i18n: { en: { name: 'Gomoku', desc: 'Gomoku (optional renju rules) with built-in AI' } },
 };

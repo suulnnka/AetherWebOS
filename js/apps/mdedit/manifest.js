@@ -11,4 +11,5 @@ export default {
   order: 2.5,
   category: '工具',
   desc: 'Typora 式所见即所得 Markdown 编辑器',
+  i18n: { en: { name: 'Markdown Editor', desc: 'Typora-style WYSIWYG Markdown editor' } },
 };

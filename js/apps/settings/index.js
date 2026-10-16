@@ -1,9 +1,10 @@
 /* ============ 应用:系统设置 ============ */
-import { el, fmtDate, formatBytes } from '../../core/utils.js';
+import { el, formatBytes } from '../../core/utils.js';
 import { icon } from '../../core/icons.js';
 import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './settings.css';
+import './i18n/en.js';
 import { settings, ACCENTS, STATIC_WALLPAPERS, DYNAMIC_WALLPAPERS, pickWallpaper, STYLES } from '../../core/store.js';
 import { subscribe } from '../../core/bus.js';
 import { accounts } from '../../core/accounts.js';
@@ -15,6 +16,7 @@ import { openConfigPopup, openGamePopup } from './popup-demo.js';
 import coreFs from '../../core/fs.js';
 import { associations, setDefault } from '../../core/openwith.js';
 import { get as getApp } from '../../core/registry.js';
+import { t, currentLocale, fmtDate } from '../../core/i18n.js';
 
 /* 应用内弹框走应用绑定实例(与 mount ctx 的 ctx.dialogs 完全同语义):
  * 默认二级 · 应用模态,owner=settings,只锁设置自己的窗口;
@@ -362,7 +364,31 @@ function renderSection(root, sec, bus) {
 
   else if (sec === 'system') {
     const stats = fsStats();
+
+    /* ---- 界面语言(v1 重启式切换,docs/i18n.md §6) ---- */
+    const LOCALES = [
+      ['auto', t('跟随浏览器')],
+      ['zh-CN', t('简体中文')],
+      ['en-US', 'English'],
+    ];
+    const localeSel = el('select', { class: 'input', style: { width: '150px' } },
+      ...LOCALES.map(([v, name]) => el('option', { value: v, ...(v === (s.locale || 'zh-CN') ? { selected: '' } : {}) }, name)));
+    localeSel.addEventListener('change', async () => {
+      const v = localeSel.value;
+      if (v === (settings.get('locale') || 'zh-CN')) return;
+      const ok = await dialogs.confirm({
+        title: t('切换界面语言'),
+        message: t('要立即重启系统以应用新的界面语言吗?'),
+        okText: t('立即重启'),
+        cancelText: t('暂不重启'),
+      });
+      if (!ok) { localeSel.value = settings.get('locale') || 'zh-CN'; return; }
+      settings.set({ locale: v });   // 与 F5 等价:会话恢复开回窗口,应用数据有防抖落盘
+      location.reload();
+    });
+
     root.append(el('div', { class: 'set-body' }, title,
+      row(t('界面语言'), t('切换界面语言后需要重启系统才会生效'), localeSel),
       el('div', { class: 'card', style: { marginBottom: '16px' } },
         el('div', { class: 'card-title' }, icon('info', 15), '关于本系统'),
         el('div', { class: 'row', style: { justifyContent: 'space-between', padding: '4px 0' } }, '系统名称', el('b', {}, 'WebOS')),

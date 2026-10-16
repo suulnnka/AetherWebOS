@@ -3,7 +3,8 @@ import { icon, svg, paintTile } from '../core/icons.js';
 import { subscribe } from '../core/bus.js';
 import { settings } from '../core/store.js';
 import { accounts } from '../core/accounts.js';
-import { list as listApps, prefetchOnHover } from '../core/registry.js';
+import { list as listApps, prefetchOnHover, appName, appSearchText } from '../core/registry.js';
+import { t } from '../core/i18n.js';
 import { isInstalled } from '../core/install.js';
 import { sendAppToDesktop } from '../core/applink.js';
 import * as wm from '../core/wm.js';
@@ -30,9 +31,9 @@ export function renderStartMenu() {
     paintTile(tile, app);
     tile.append(icon(app.icon, 21));
     const item = el('button', {
-      class: 'sm-item', 'data-search': (app.name + ' ' + app.id).toLowerCase(),
+      class: 'sm-item', 'data-search': appSearchText(app.id),
       onClick: () => { toggleStartMenu(false); wm.open(app.id); },
-    }, tile, el('span', { class: 'name' }, app.name));
+    }, tile, el('span', { class: 'name' }, appName(app.id)));
     // 悬停预读 chunk,点击时秒开(hoverPrefetch: false 的应用内部跳过)
     item.addEventListener('mouseenter', () => prefetchOnHover(app.id));
     // 开始菜单右键:打开 / 新窗口 / 发送到桌面 / 固定到任务栏
@@ -41,11 +42,11 @@ export function renderStartMenu() {
       e.stopPropagation();
       const pinned = pinnedApps().includes(app.id);
       showMenu(e.clientX, e.clientY, [
-        { label: '打开', icon: 'chevronR', fn: () => { toggleStartMenu(false); wm.open(app.id); } },
-        ...(app.singleton ? [] : [{ label: '打开新窗口', icon: 'plus', fn: () => { toggleStartMenu(false); wm.open(app.id); } }]),
+        { label: t('打开'), icon: 'chevronR', fn: () => { toggleStartMenu(false); wm.open(app.id); } },
+        ...(app.singleton ? [] : [{ label: t('打开新窗口'), icon: 'plus', fn: () => { toggleStartMenu(false); wm.open(app.id); } }]),
         { sep: true },
-        { label: '发送到桌面', icon: 'monitor', fn: () => { toggleStartMenu(false); sendAppToDesktop(app.id); } },
-        { label: pinned ? '从任务栏取消固定' : '固定到任务栏', icon: 'check', fn: () => togglePin(app.id) },
+        { label: t('发送到桌面'), icon: 'monitor', fn: () => { toggleStartMenu(false); sendAppToDesktop(app.id); } },
+        { label: pinned ? t('从任务栏取消固定') : t('固定到任务栏'), icon: 'check', fn: () => togglePin(app.id) },
       ]);
     });
     grid.append(item);
@@ -62,7 +63,7 @@ function filterStartMenu() {
   });
   const empty = $('#sm-empty');
   if (!first && !empty && q) {
-    $('#sm-grid').append(el('div', { class: 'sm-empty', id: 'sm-empty' }, `没有找到「${q}」相关应用`));
+    $('#sm-grid').append(el('div', { class: 'sm-empty', id: 'sm-empty' }, t('没有找到「{q}」相关应用', { q })));
   } else if (empty && first) empty.remove();
 }
 
@@ -98,7 +99,7 @@ export function renderStartUser() {
   const name = user ? (accounts.displayName() || user) : settings.get('username');
   $('#sm-username').textContent = name;
   $('#sm-avatar').textContent = (name[0] || 'A').toUpperCase();
-  $('#sm-user').title = user ? `已登录:${user}` : '未登录 — 点击管理用户';
+  $('#sm-user').title = user ? t('已登录:{user}', { user }) : t('未登录 — 点击管理用户');
 }
 subscribe('accounts:changed', renderStartUser);
 subscribe('sys:settings-changed', (p) => {
@@ -121,11 +122,11 @@ $('#sm-power').addEventListener('click', (e) => {
   // 开始菜单贴底(或 Ubuntu 顶栏贴顶)时,菜单跟按钮对齐弹出,避免写死偏移错位
   showMenuAnchored(e.currentTarget, [
     {
-      label: loggedIn ? '注销' : '登录 / 切换用户', icon: loggedIn ? 'logout' : 'user',
+      label: loggedIn ? t('注销') : t('登录 / 切换用户'), icon: loggedIn ? 'logout' : 'user',
       fn: () => { toggleStartMenu(false); logoutSession(); },
     },
     { sep: true },
-    { label: '重启', icon: 'refresh', fn: () => powerAction('reboot') },
-    { label: '关机', icon: 'power', danger: true, fn: () => powerAction('shutdown') },
+    { label: t('重启'), icon: 'refresh', fn: () => powerAction('reboot') },
+    { label: t('关机'), icon: 'power', danger: true, fn: () => powerAction('shutdown') },
   ]);
 });

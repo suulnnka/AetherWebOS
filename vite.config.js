@@ -61,6 +61,10 @@ export default defineConfig({
          * 引擎同款通道) */
         manualChunks(id) {
           if (id.includes('ascript-worker') || id.includes('dbsql-worker')) return;
+          // 单元字典(core/lib 的 i18n/en.js)豁免稳定 chunk:boot 期仅 en 动态
+          // 加载,并进 'core' 会让 zh 用户也下载且失去惰性(js/system、js/game
+          // 本就不匹配任何规则,一并写上只为统一口径)
+          if (/[\\/]js[\\/](core|lib|system|game)[\\/]i18n[\\/]/.test(id)) return;
           if (/[\\/]js[\\/](core|lib)[\\/]/.test(id)) return 'core';
           if (/[\\/]apps[\\/]\w+[\\/]manifest\.js/.test(id)) return 'core';
           if (/[\\/]system[\\/]session\.js/.test(id)) return 'core';

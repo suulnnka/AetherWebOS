@@ -30,6 +30,7 @@ import { settings } from './store.js';
 import { accounts } from './accounts.js';
 import fs, { desktopPath } from './fs.js';
 import { ensureResources, removeResources, fmtBytes } from './pkg.js';
+import { t } from './i18n.js';
 
 const KEY = 'webos.installed.v2';
 const LEGACY_KEY = 'webos.installed.v1';   // 设备级旧版(数组):启动时一次性按用户拆分
@@ -141,7 +142,7 @@ export async function installApp(id, opts = {}) {
     res = await dl;
   } catch (err) {
     console.warn(`[install] 「${id}」资源下载失败:`, err);
-    if (!opts.silent) notify('安装失败', `「${m.name}」资源下载失败,请检查网络后重试`);
+    if (!opts.silent) notify(t('安装失败'), t('「{name}」资源下载失败,请检查网络后重试', { name: m.name }));
     return false;
   }
 
@@ -150,9 +151,9 @@ export async function installApp(id, opts = {}) {
   announce('install', id, user);
   settle();
   if (!opts.silent) {
-    notify('安装完成', res.cached
-      ? `「${m.name}」资源已就位,已添加到开始菜单与桌面`
-      : `「${m.name}」已下载 ${fmtBytes(res.bytes)},添加到开始菜单与桌面`);
+    notify(t('安装完成'), res.cached
+      ? t('「{name}」资源已就位,已添加到开始菜单与桌面', { name: m.name })
+      : t('「{name}」已下载 {size},添加到开始菜单与桌面', { name: m.name, size: fmtBytes(res.bytes) }));
   }
   return true;
 }
@@ -175,7 +176,7 @@ export async function uninstallApp(id, opts = {}) {
   settle();
   if (last) removeResources(id);
   if (!opts.silent) {
-    notify('已卸载', `「${m.name}」已移出开始菜单与桌面(数据保留${last ? ',包资源已回收' : ''})`);
+    notify(t('已卸载'), t('「{name}」已移出开始菜单与桌面(数据保留{extra})', { name: m.name, extra: last ? t(',包资源已回收') : '' }));
   }
   return true;
 }
@@ -239,9 +240,9 @@ export function reconcileLegacyShortcuts() {
  * 迁移结果经 reconcile 广播,applink 会顺势补桌面快捷方式)。
  * 改登录名:accounts 已改写 webos.installed.v2,这里同步内存 byUser 的键。 */
 subscribe('accounts:changed', (payload, msg) => {
-  const t = msg?.type;
-  if (t === 'login' || t === 'register') reconcileLegacyShortcuts();
-  if (t === 'renamed' && payload?.from && payload?.to && payload.from !== payload.to) {
+  const msgType = msg?.type;
+  if (msgType === 'login' || msgType === 'register') reconcileLegacyShortcuts();
+  if (msgType === 'renamed' && payload?.from && payload?.to && payload.from !== payload.to) {
     if (byUser[payload.from] != null && byUser[payload.to] == null) {
       byUser[payload.to] = byUser[payload.from];
       delete byUser[payload.from];

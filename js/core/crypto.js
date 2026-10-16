@@ -7,6 +7,7 @@
  *   - 密钥由密码经 PBKDF2(SHA-256, 150000 次迭代)派生
  * 加密后的文件:内容不可读;删除/重命名等元操作不受影响。
  * ============================================================ */
+import { t } from './i18n.js';
 
 const MAGIC = 'WEOS1';
 const ITER = 150000;
@@ -43,14 +44,14 @@ export async function encryptText(plain, password) {
 /** 解密 WEOS1 内容;密码错误/数据损坏时抛错 */
 export async function decryptText(content, password) {
   const parts = content.split(':');
-  if (parts[0] !== MAGIC || parts.length !== 4) throw new Error('不是有效的加密文件');
+  if (parts[0] !== MAGIC || parts.length !== 4) throw new Error(t('不是有效的加密文件'));
   const [, saltB, ivB, dataB] = parts;
   const key = await deriveKey(password, unb64(saltB));
   let plain;
   try {
     plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(ivB) }, key, unb64(dataB));
   } catch {
-    throw new Error('密码错误或文件已损坏');
+    throw new Error(t('密码错误或文件已损坏'));
   }
   return td.decode(plain);
 }

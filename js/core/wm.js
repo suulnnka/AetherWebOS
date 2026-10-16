@@ -12,9 +12,10 @@
 import { el, clamp } from './utils.js';
 import { icon, paintTile } from './icons.js';
 import { publish, subscribe } from './bus.js';
-import { ensureLoaded, get as getApp } from './registry.js';
+import { ensureLoaded, get as getApp, appName } from './registry.js';
 import { createAppBus } from './bus.js';
 import { settings } from './store.js';
+import { t } from './i18n.js';
 import fs from './fs.js';
 import { createAppFs } from './appfs.js';
 import { accounts } from './accounts.js';
@@ -187,10 +188,10 @@ layerEl().addEventListener('contextmenu', (e) => {
   const sel = selectionAt(e.target);
   if (sel) {
     if (menu.length) menu.push({ sep: true });
-    menu.push({ label: '复制', icon: 'copy', fn: () => copyText(sel) });
+    menu.push({ label: t('复制'), icon: 'copy', fn: () => copyText(sel) });
   } else {
     const field = e.target.closest?.('input, textarea');
-    if (field) menu.push({ label: '全选', icon: 'textCursor', fn: () => field.select() });
+    if (field) menu.push({ label: t('全选'), icon: 'textCursor', fn: () => field.select() });
   }
   if (menu.length) showMenu(e.clientX, e.clientY, menu);
 });
@@ -210,9 +211,9 @@ export async function open(appId, { params, level, owner } = {}) {
   // 安装门禁:商店应用(store:true)未安装时拒绝打开,引导去软件商店
   if (!isInstalled(appId)) {
     dialogs.confirm({
-      title: '应用未安装',
-      message: `「${m.name}」需要先在软件商店安装。`,
-      okText: '打开软件商店',
+      title: t('应用未安装'),
+      message: t('「{name}」需要先在软件商店安装。', { name: appName(m.id) }),
+      okText: t('打开软件商店'),
     }).then((go) => { if (go) open('appstore', { params: { focus: appId } }); });
     return null;
   }
@@ -236,8 +237,8 @@ export async function open(appId, { params, level, owner } = {}) {
   if (!m.dialog && wins.size >= MAX_WINS) {
     console.warn(`[wm] 已达同时窗口上限(${MAX_WINS}),拒绝打开:`, appId);
     publish('sys:notify', { from: 'wm', type: 'notify', payload: {
-      title: '窗口已达上限',
-      body: `最多同时运行 ${MAX_WINS} 个窗口,请先关闭一些窗口。`,
+      title: t('窗口已达上限'),
+      body: t('最多同时运行 {n} 个窗口,请先关闭一些窗口。', { n: MAX_WINS }),
     } });
     return null;
   }
@@ -277,7 +278,7 @@ function mountSkeleton({ root }) {
 function mountFailed(w, err) {
   console.error(`[wm] 窗口 "${w.app.id}" 挂载失败:`, err);
   w.body.append(el('div', { class: 'win-error' },
-    el('b', {}, '应用启动失败'),
+    el('b', {}, t('应用启动失败')),
     el('div', { class: 'mono' }, String(err?.message || err))));
 }
 
@@ -296,7 +297,8 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     ? Math.max(6, Math.round((a.height - height) / 2) - 30)
     : clamp(Math.round((a.height - height) / 2) + k * 24 - 84, 6, Math.max(6, a.height - height - 6));
 
-  const titleEl = el('span', { class: 'win-title' }, app.name);
+  // 注册应用取经 i18n 的显示名;popup 等合成清单不在注册表,appName 查不到回落清单 name
+  const titleEl = el('span', { class: 'win-title' }, appName(app.id) || app.name);
 
   // 无边框窗口(frameless,如便签类应用):不创建系统窗头与窗口按钮,
   // 应用自绘顶栏(拖动区用 [data-windrag] 标注,关闭等按钮自理);
@@ -309,11 +311,11 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
       icon(app.icon, 13));
     paintTile(icoEl, app);
 
-    const btnMin = el('button', { class: 'wbtn mn', title: '最小化' }, icon('minus', 14));
-    const btnMax = el('button', { class: 'wbtn mx', title: '最大化 / 还原' },
+    const btnMin = el('button', { class: 'wbtn mn', title: t('最小化') }, icon('minus', 14));
+    const btnMax = el('button', { class: 'wbtn mx', title: t('最大化 / 还原') },
       el('span', { class: 'i-max' }, icon('max', 13)),
       el('span', { class: 'i-restore' }, icon('restore', 13)));
-    const btnClose = el('button', { class: 'wbtn close', title: '关闭' }, icon('close', 14));
+    const btnClose = el('button', { class: 'wbtn close', title: t('关闭') }, icon('close', 14));
     if (!app.dialog) {
       btnMin.addEventListener('click', () => minimize(id));
       btnMax.addEventListener('click', () => toggleMax(id));
@@ -402,8 +404,8 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
     /** 应用自定义右键:fn({ x, y, target }) 返回菜单项数组(可含 {sep:true});
         返回 null/undefined 时走系统默认(选中文字 → 复制,表单控件 → 全选) */
     onContextMenu: (fn) => { w.ctxMenu = fn; },
-    setTitle: (t) => {
-      titleEl.textContent = t ?? app.name;
+    setTitle: (title) => {
+      titleEl.textContent = title ?? (appName(app.id) || app.name);
       emit('title', { id, appId: app.id, title: titleEl.textContent });
     },
     close: () => close(id),
@@ -479,7 +481,7 @@ function spawnWindow(app, { params = {}, level, owner, mount } = {}) {
  *
  * 返回 { id, win, promise, close(value) }。 */
 export function popup({
-  title = '弹窗', icon: ic = 'sliders',
+  title = t('弹窗'), icon: ic = 'sliders',
   width = 560, height = 420, min,
   resizable = true,
   chrome = 'dialog',

@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '效率',
   desc: '节点式笔记:便签节点连成线索图,双击编辑',
+  i18n: { en: { name: 'Clues', desc: 'Node-based notes: sticky nodes linked into a clue map, double-click to edit' } },
 };

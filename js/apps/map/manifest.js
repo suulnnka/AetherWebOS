@@ -12,4 +12,5 @@ export default {
   store: true,          // 商店应用:需经软件商店安装
   category: '工具',
   desc: '自研矢量地图内核,缩放漫游',
+  i18n: { en: { name: 'Maps', desc: 'Homegrown vector map engine with zoom and pan' } },
 };
