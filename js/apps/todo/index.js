@@ -376,8 +376,19 @@ function mountMain(ctx, ref, boardId, startPinned) {
     render();
     input.focus();
   };
+  // 输入法组合中的按键(回车上屏 / Esc 取消候选)归输入法,不进快捷键
+  let composing = false;
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', () => { composing = false; });
+  const imeBusy = (e) => e.isComposing || e.keyCode === 229 || composing;
   input.addEventListener('keydown', (e) => {
+    if (imeBusy(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(); }
+    else if (e.key === 'Escape') {
+      // 无文字:退回收窄的正常态;有文字:filled 保持展开(文字不清)
+      bar.classList.remove('editing');
+      input.blur();
+    }
   });
   // 输入内容后 ✓ 出现、输入框保持展开;无内容失焦时收窄
   const syncInput = () => {
@@ -388,7 +399,9 @@ function mountMain(ctx, ref, boardId, startPinned) {
   // 聚类驱动样式(editing):展开输入框 + 隐藏 最小化/锁/☰
   input.addEventListener('focus', () => { bar.classList.add('editing'); syncInput(); });
   input.addEventListener('blur', () => { bar.classList.remove('editing'); });
-  addBtn.addEventListener('click', add);
+  // ✓ 用 pointerdown + preventDefault:按下即添加,先于输入框失焦引发的
+  // 收窄回流(此前 click 常被按钮位移吞掉,表现为「第一次点没反应」)
+  addBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); add(); });
   minBtn.addEventListener('click', () => ctx.minimize());
   lockBtn.addEventListener('click', () => {
     pinned = !pinned;
@@ -402,9 +415,11 @@ function mountMain(ctx, ref, boardId, startPinned) {
     ctx.setPinned(true);   // 挂载期窗口尚未登记,focus 为 no-op;spawn 末尾的 focus 按置顶档抬到最前
   }
   closeBtn.addEventListener('click', () => ctx.close());
-  // 弹性占位:把图标组钉在右上角,不受输入框宽度影响;也是主要拖动区
+  // 弹性占位:把图标组钉在右上角,不受输入框宽度影响;也是主要拖动区;
+  // 图标收进紧密小组(组内间距 2px),不再跟着顶栏的大间距散开
   const spacer = el('span', { class: 'todo-bar-spacer' });
-  bar.append(input, spacer, addBtn, minBtn, lockBtn, menuBtn, closeBtn);
+  const btnGroup = el('div', { class: 'todo-bar-btns' }, addBtn, minBtn, lockBtn, menuBtn, closeBtn);
+  bar.append(input, spacer, btnGroup);
 
   menuBtn.addEventListener('click', () => showNoteMenu(menuBtn, boardMenuItems(ref.board, ctx, {
     persist, onColor: applyColor, isPinned: () => pinned,
@@ -447,7 +462,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
     if (!label) return;                       // 草稿行走自己的提交逻辑
     const t = ref.board.tasks.find(x => x.id === row.dataset.id);
     if (!t || row.querySelector('.todo-edit')) return;
-    const ed = el('textarea', { class: 'todo-edit', spellcheck: 'false' });
+    const ed = el('textarea', { class: 'todo-edit', rows: 1, spellcheck: 'false' });
     ed.value = t.text;
     row.draggable = false;                    // 编辑期间不启动行拖拽
     label.replaceWith(ed);
@@ -463,6 +478,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
       render();
     };
     ed.addEventListener('keydown', (e2) => {
+      if (e2.isComposing || e2.keyCode === 229) return;   // 输入法组合中的回车/Esc 归输入法
       if (e2.key === 'Enter' && !e2.shiftKey) { e2.preventDefault(); commit(true); }
       else if (e2.key === 'Escape') { e2.preventDefault(); commit(false); }
     });
@@ -478,7 +494,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
     if (existed) { existed.focus(); return; }
     list.querySelector('.todo-empty')?.remove();
     const row = el('div', { class: 'todo-item todo-draft' });
-    const ed = el('textarea', { class: 'todo-edit', placeholder: '新任务,回车创建…', spellcheck: 'false' });
+    const ed = el('textarea', { class: 'todo-edit', rows: 1, placeholder: '新任务,回车创建…', spellcheck: 'false' });
     row.append(ed);
     list.append(row);
     listBox.scrollTop = listBox.scrollHeight;
@@ -497,6 +513,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
       render();
     };
     ed.addEventListener('keydown', (e2) => {
+      if (e2.isComposing || e2.keyCode === 229) return;   // 输入法组合中的回车/Esc 归输入法
       if (e2.key === 'Enter' && !e2.shiftKey) { e2.preventDefault(); commit(true); }
       else if (e2.key === 'Escape') { e2.preventDefault(); commit(false); }
     });
@@ -505,8 +522,13 @@ function mountMain(ctx, ref, boardId, startPinned) {
     ed.addEventListener('focusout', () => commit(!!ed.value.trim()));
     ed.addEventListener('input', () => { autoGrow(ed); fitHeight(); });
   }
-  // 双击空白建任务:监听挂在应用根 —— 列表空白、底部预留区都算数
+  // 双击空白建任务:监听挂在应用根 —— 列表空白、底部预留区都算数。
+  // isConnected 守卫:行内编辑(在 list 监听器里先行执行)会把双击的目标
+  // .todo-t 替换出 DOM,游离节点上 closest 恒为 null,会被误判成「双击了
+  // 空白」而抢焦点建草稿、把刚开的编辑器瞬间顶掉(真实双击打在文字上,
+  // 表现为双击编辑几乎永远失败)
   app.addEventListener('dblclick', (e) => {
+    if (!e.target.isConnected) return;            // 目标刚被行内编辑替换:不是空白
     if (e.target.closest('.todo-item')) return;   // 任务行:走行内编辑
     if (e.target.closest('.todo-bar')) return;    // 顶栏:不建(输入框等)
     startNewDraft();
@@ -517,6 +539,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
   // 按事件源判而不是 activeElement —— 草稿提交的回车会冒泡到此处)
   const onKeyNew = (e) => {
     if (e.key !== 'Enter') return;
+    if (e.isComposing || e.keyCode === 229) return;   // 输入法组合中的回车归输入法
     if (!winEl.classList.contains('focused')) return;
     if (e.target?.closest?.('input, textarea, button, select, [contenteditable="true"]')) return;
     if (e.target !== document.body && e.target !== document && !app.contains(e.target)) return;
@@ -631,10 +654,11 @@ function mountNote(ctx, ref, boardId, startPinned) {
 
   const bar = el('div', { class: 'todo-bar todo-bar-note', dataset: { windrag: '' } },
     el('span', { style: { flex: 1 } }),
-    el('button', { class: 'todo-bar-btn todo-min', title: '最小化' }, icon('minus', 14)),
-    el('button', { class: 'todo-bar-btn todo-lock', title: '置顶' }, icon('lock', 14)),
-    el('button', { class: 'todo-bar-btn todo-menu-btn', title: '更多设置' }, icon('menu', 15)),
-    el('button', { class: 'todo-bar-btn todo-close', title: '关闭' }, icon('close', 14)));
+    el('div', { class: 'todo-bar-btns' },
+      el('button', { class: 'todo-bar-btn todo-min', title: '最小化' }, icon('minus', 14)),
+      el('button', { class: 'todo-bar-btn todo-lock', title: '置顶' }, icon('lock', 14)),
+      el('button', { class: 'todo-bar-btn todo-menu-btn', title: '更多设置' }, icon('menu', 15)),
+      el('button', { class: 'todo-bar-btn todo-close', title: '关闭' }, icon('close', 14))));
   const ta = el('textarea', { class: 'todo-note-text', placeholder: '写点什么…', spellcheck: 'false' });
   const app = el('div', { class: 'app todo-app todo-note-app' }, bar, ta);
   root.append(app);

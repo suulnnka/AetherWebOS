@@ -51,11 +51,13 @@
 .todo-bar { flex: none; display: flex; align-items: flex-start; gap: 5px; padding: 9px 2px 0 0; }
 .todo-bar-gate, .todo-bar-note { padding: 9px 9px 0; }   /* 无输入框的顶栏 */
 .todo-bar-spacer { flex: 1 1 0; min-width: 14px; }
+/* 图标小组:组内紧密排列(2px),不跟顶栏大间距 */
+.todo-bar-btns { flex: none; display: flex; align-items: flex-start; gap: 2px; }
 
-/* 输入框:平时窄条、无底色 */
+/* 输入框:平时窄条、无底色(收窄态也吃掉过半行宽,右侧留少量拖动区) */
 .todo-input {
   flex: 0 1 auto; min-width: 0;
-  max-width: min(150px, 42%);
+  max-width: min(260px, 55%);
   resize: none; border: none; outline: none;
   background: transparent;
   border-radius: 8px;
@@ -80,7 +82,7 @@
 
 /* 顶栏图标钮:无任何按钮装饰,只是图标;颜色统一跟字体色 */
 .todo-bar-btn {
-  flex: none; width: 25px; height: 25px; margin-top: 3px;   /* 与输入首行居中对齐 */
+  flex: none; width: 23px; height: 23px; margin-top: 4px;   /* 与输入首行居中对齐 */
   border: none; background: none; padding: 0;
   display: grid; place-items: center;
   color: rgba(70, 61, 46, 0.62);
@@ -147,7 +149,7 @@
 .todo-del:hover { color: #8f3d33; }
 
 /* 行内编辑框(双击任务 / 双击空白新建草稿):原地编辑,无内嵌白盒 ——
- * 透明底、零内边距对齐原文位置,仅一条虚线下划线示意可编辑 */
+ * 透明底、零内边距对齐原文位置,不加任何边饰(下划线会把行撑长) */
 .todo-edit {
   flex: 1; min-width: 0;
   resize: none; border: none; outline: none;
@@ -155,8 +157,6 @@
   padding: 0;
   font: inherit; line-height: 19px; color: inherit;
   max-height: 107px; overflow-y: auto;
-  border-bottom: 1px dashed rgba(70, 61, 46, 0.35);
-  margin-bottom: -1px;   /* 下划线不撑高行 */
 }
 .todo-edit::placeholder {
   color: rgba(70, 61, 46, 0.40);

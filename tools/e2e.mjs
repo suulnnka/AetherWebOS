@@ -1780,7 +1780,7 @@ group('T27', '便签(Todo)应用', async () => {
   })()`);
   t('T27 便签结构(顶栏:输入收窄/图标组右对齐,最小化/锁/☰/✕,种子 1 条)',
     td0.items === 1 && !td0.head && td0.bar && td0.input === 'TEXTAREA' && td0.min && td0.lock
-      && td0.menuBtn && td0.close && td0.inputCollapsed && td0.spacerW > 40 && td0.rightAligned
+      && td0.menuBtn && td0.close && td0.inputCollapsed && td0.spacerW > 20 && td0.rightAligned
       && td0.bg === 'rgb(254, 249, 224)',
     JSON.stringify(td0));
 
@@ -1815,6 +1815,34 @@ group('T27', '便签(Todo)应用', async () => {
       && es.after.editing && es.after.narrow && es.after.minVisible && es.after.lockVisible && es.after.menuVisible,
     JSON.stringify(es));
 
+  // ✓ 首击即成(pointerdown 先于失焦回流,回归:click 曾被按钮位移吞掉);
+  // Esc 空文退回收窄态。用完即删,不动后续计数
+  const ok = await ev(`(async () => {
+    const w = document.querySelector('.win[data-app=todo]');
+    const bar = w.querySelector('.todo-bar');
+    const inp = w.querySelector('.todo-input');
+    inp.dispatchEvent(new Event('focus'));
+    inp.value = '对号首击任务';
+    inp.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 200));
+    w.querySelector('.todo-add-btn').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 200));
+    const added = [...document.querySelectorAll('.todo-t')].some(x => x.textContent === '对号首击任务');
+    if (added) {
+      const row = [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('对号首击任务'));
+      row.querySelector('.todo-del').click();
+      await new Promise(r => setTimeout(r, 150));
+    }
+    inp.dispatchEvent(new Event('focus'));
+    inp.value = '';
+    inp.dispatchEvent(new Event('input'));
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    const collapsed = !bar.classList.contains('editing') && !inp.classList.contains('filled');
+    return { added, collapsed };
+  })()`);
+  t('T27.0c ✓ 首击即成 / Esc 空文收回', ok.added && ok.collapsed, JSON.stringify(ok));
+
   // 添加任务(输入 → 回车 → 列表 + 持久化)
   await ev(`(() => {
     const inp = document.querySelector('.win[data-app=todo] .todo-input');
@@ -1845,10 +1873,11 @@ group('T27', '便签(Todo)应用', async () => {
   })()`);
   t('T27.2 点击完成/取消完成', td2.done && td2.undone, JSON.stringify(td2));
 
-  // 双击编辑任务文本(Enter 保存)—— 编辑种子行「未完成任务」
+  // 双击编辑任务文本(Enter 保存)—— 双击打在文字上(真实手势的 target,
+  // 回归:文字被行内编辑替换出 DOM 后,空白双击监听曾误判并顶掉编辑器)
   const td3 = await ev(`(async () => {
     const row = [...document.querySelectorAll('.todo-item')].find(i => i.textContent.includes('未完成任务'));
-    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    row.querySelector('.todo-t').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
     const ed = row.querySelector('.todo-edit');
     if (!ed) return { noEdit: true };
     ed.value = '未完成任务(已编辑)';
