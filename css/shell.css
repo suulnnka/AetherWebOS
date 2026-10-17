@@ -338,19 +338,22 @@ html[data-style="neon"] .tbtn.active:hover {
 }
 #tip[hidden] { display: none !important; }
 
-input[type="range"] {
+/* 滑杆(.range 专用类):双色填充段由 JS 设 --fill 百分比。
+ * 原来写成全局 input[type=range],越权覆盖了所有滑杆(含便签透明度
+ * 滑杆),收窄为类,使用者显式挂 .range */
+.range {
   -webkit-appearance: none; appearance: none;
   flex: 1; height: 4px; border-radius: 2px;
   background: linear-gradient(to right, var(--accent) var(--fill, 50%), color-mix(in srgb, var(--text-2) 30%, transparent) var(--fill, 50%));
   cursor: pointer;
 }
-input[type="range"]::-webkit-slider-thumb {
+.range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 15px; height: 15px; border-radius: 50%;
   background: #fff; border: 4px solid var(--accent);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
-input[type="range"]::-moz-range-thumb {
+.range::-moz-range-thumb {
   width: 8px; height: 8px; border-radius: 50%;
   background: #fff; border: 4px solid var(--accent);
 }

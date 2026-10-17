@@ -54,7 +54,7 @@ function switchBox(get, set) {
 /** 滑杆(带数值) */
 function slider(min, max, get, set, unit = '') {
   const paint = (r) => { r.style.setProperty('--fill', ((r.value - min) / (max - min) * 100) + '%'); };
-  const range = el('input', { type: 'range', min, max, value: get() });
+  const range = el('input', { class: 'range', type: 'range', min, max, value: get() });
   paint(range);
   range.addEventListener('input', () => { paint(range); set(+range.value); });
   return range;

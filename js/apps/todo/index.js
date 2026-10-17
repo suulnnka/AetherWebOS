@@ -73,6 +73,8 @@ function normalize(raw) {
             : { tasks: Array.isArray(b.tasks) ? b.tasks.map(task).filter(t => t.id && t.text) : [] }),
         } : null)
         .filter(Boolean),
+      // 全局透明度(便签共用,15%~100%)
+      opacity: Number.isFinite(+raw.opacity) ? Math.min(1, Math.max(0.15, +raw.opacity)) : 0.6,
     };
   }
   if (Array.isArray(raw.tasks)) {
@@ -117,6 +119,7 @@ function flushBoard(board) {
       console.warn('[todo] 读盘失败,以内存数据整体覆写自愈:', e?.message || e);
     }
     disk = disk || (state?.boards?.length ? state : { seq: 1, boards: [] });
+    disk.opacity = state?.opacity ?? 0.6;   // 全局字段以内存为准:读盘合并别冲掉滑杆刚设的透明度(时序竞争)
     board.seq = (board.seq || 0) + 1;
     const i = disk.boards.findIndex(b => b.id === board.id);
     if (i >= 0) disk.boards[i] = board;
@@ -145,6 +148,7 @@ function dropBoard(boardId) {
       console.warn('[todo] 读盘失败,以内存数据整体覆写自愈:', e?.message || e);
     }
     disk = disk || (state?.boards?.length ? state : { seq: 1, boards: [] });
+    disk.opacity = state?.opacity ?? 0.6;   // 全局字段以内存为准:读盘合并别冲掉滑杆刚设的透明度(时序竞争)
     disk.boards = disk.boards.filter(b => b.id !== boardId);
     disk.seq = (disk.seq || 0) + 1;
     state = disk;
@@ -223,6 +227,17 @@ function showNoteMenu(anchor, items) {
       pop.append(box);
       continue;
     }
+    if (it.opacity != null) {
+      // 透明度滑杆(15%~100%):拖动即时生效,所有便签窗口一起变
+      const lab = el('div', { class: 'tm-label' }, `透明度 ${Math.round(it.opacity * 100)}%`);
+      const rng = el('input', { class: 'tm-range', type: 'range', min: 15, max: 100, step: 1, value: Math.round(it.opacity * 100) });
+      rng.addEventListener('input', () => {
+        lab.textContent = `透明度 ${rng.value}%`;
+        it.onPick(rng.value / 100);
+      });
+      pop.append(lab, rng);
+      continue;
+    }
     if (it.colors) {
       pop.append(el('div', { class: 'tm-label' }, it.label || '背景颜色'));
       pop.append(el('div', { class: 'tm-colors' },
@@ -230,7 +245,7 @@ function showNoteMenu(anchor, items) {
           class: 'tm-ball' + (p.c === it.colors ? ' cur' : ''),
           style: { background: p.c },
           title: p.name,
-          onClick: () => { it.onPick(p.c); closeMenu(); },
+          onClick: () => { it.onPick(p.c); pop.style.setProperty('--note-bg', p.c); },   // 选色不关菜单,可连续试色
         }))));
       continue;
     }
@@ -242,6 +257,9 @@ function showNoteMenu(anchor, items) {
       el('span', {}, it.label)));
   }
   document.body.append(pop);
+  // 菜单底色跟便签当前颜色
+  const hostBg = getComputedStyle(anchor.closest('.win') || document.documentElement).getPropertyValue('--note-bg').trim();
+  if (hostBg) pop.style.setProperty('--note-bg', hostBg);
   const r = anchor.getBoundingClientRect();
   const left = Math.max(8, Math.min(r.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 8));
   let top = r.bottom + 6;
@@ -260,7 +278,8 @@ function showNoteMenu(anchor, items) {
   };
 }
 
-/* 菜单公共段:新建待办 / 新建便签 / 背景颜色(取色于 board)/ 删除本板。
+/* 菜单公共段:新建待办 / 新建便签 / 打开已有 / 背景颜色 / 透明度(全局,
+ * 拖动即时同步所有便签窗口)/ 删除本板。
  * persist 由各视图注入:防抖落盘「当前板」(板对象可能被同步采纳换过引用);
  * isPinned:创建者当前置顶态 —— 新建的板/窗继承它 */
 function boardMenuItems(board, ctx, { onColor, persist, isPinned }) {
@@ -273,6 +292,7 @@ function boardMenuItems(board, ctx, { onColor, persist, isPinned }) {
     { label: '背景颜色', colors: board?.color || DEFAULT_BG, onPick: (c) => {
       if (board) { board.color = c === DEFAULT_BG ? '' : c; onColor(); persist(); }
     } },
+    { opacity: state?.opacity ?? 1, onPick: setOpacityAll },
     { sep: true },
     { label: board?.type === 'note' ? '删除便签' : '删除待办', ico: 'trash', danger: true, fn: async () => {
       await dropBoard(board?.id);
@@ -280,6 +300,33 @@ function boardMenuItems(board, ctx, { onColor, persist, isPinned }) {
     } },
   ];
 }
+
+/** 全局透明度(15%~100%):同一页面里的全部便签窗口即时同步,防抖落盘 */
+function setOpacityAll(v) {
+  state.opacity = Math.min(1, Math.max(0.15, v));
+  for (const t of taskList()) {
+    if (t.appId !== 'todo') continue;
+    getWin(t.id)?.el.style.setProperty('--note-alpha', state.opacity);
+  }
+  clearTimeout(globT);
+  globT = setTimeout(() => {
+    const run = async () => {
+      const user = accounts.current();
+      if (!user) return;
+      let disk;
+      try { disk = normalize(await loadState('todo', user)); } catch { disk = null; }
+      disk = disk || (state?.boards?.length ? state : { seq: 1, boards: [] });
+      disk.opacity = state.opacity ?? 0.6;
+      disk.seq = Math.max(disk.seq || 0, (state?.seq || 0) + 1);
+      state = disk;
+      try { await saveState('todo', disk, user); await fs.flush(); }
+      catch (e) { console.warn('[todo] 持久化失败', e?.message || e); }
+    };
+    writeQ = writeQ.then(run, run);
+  }, 300);
+}
+let globT = 0;
+const applyOpacity = (winEl) => winEl?.style.setProperty('--note-alpha', state?.opacity ?? 0.6);
 
 register({
   ...manifest,
@@ -667,9 +714,10 @@ function mountMain(ctx, ref, boardId, startPinned) {
   /* ---- 背景色 ---- */
   function applyColor() { winEl?.style.setProperty('--note-bg', ref.board?.color || DEFAULT_BG); }
   applyColor();
+  applyOpacity(winEl);
 
   render();
-  const stopSync = hydrate(ctx, ref, boardId, () => { applyColor(); render(); });
+  const stopSync = hydrate(ctx, ref, boardId, () => { applyColor(); applyOpacity(winEl); render(); });
 
   return {
     // 尺寸真的变了才是用户操作:主题切换等触发的 relayout 不改尺寸,不算
@@ -738,6 +786,7 @@ function mountNote(ctx, ref, boardId, startPinned) {
   function render() {
     if (document.activeElement !== ta) ta.value = ref.board?.text || '';
     applyColor();
+    applyOpacity(winEl);
   }
   render();
   const stopSync = hydrate(ctx, ref, boardId, render);

@@ -636,6 +636,61 @@ group('T27', '便签(Todo)应用', async () => {
     inherit.newPinned && inherit.mainPinned && inherit.newZ > inherit.mainZ,
     JSON.stringify(inherit));
 
+  // 透明度滑杆(仅作用于非激活态;激活窗口恒不透明):拖到 40% → 各窗
+  // --note-alpha=0.4,新窗继承,持久化;失焦后底色按 0.4 半透明。
+  // 先 pointerdown 主窗恢复焦点(9c 关便签后焦点随被关窗消失)
+  await ev(`(() => {
+    const w = document.querySelector('.win[data-app=todo]');
+    w.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    w.querySelector('.todo-menu-btn').click();
+    const rng = document.querySelector('.todo-menu .tm-range');
+    rng.value = 40;
+    rng.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(450);   // 底色过渡 0.22s 走完再读
+  const opFocused = await ev(`(() => ({
+    bg: getComputedStyle(document.querySelector('.win[data-app=todo]')).backgroundColor,
+    inputHit: getComputedStyle(document.querySelector('.todo-input')).pointerEvents,   // 激活态可交互
+  }))()`);
+  await ev(`(() => {
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('新建便签')).click();
+  })()`);
+  await sleep(700);
+  const opNew = await ev(`(() => ({
+    count: document.querySelectorAll('.win[data-app=todo]').length,
+    allVar: [...document.querySelectorAll('.win[data-app=todo]')].every(w => w.style.getPropertyValue('--note-alpha') === '0.4'),
+  }))()`);
+  await sleep(600);   // 防抖 300ms + 落盘
+  const opStore = await ev(`(async () => (await WebOS.appdata.loadState('todo', WebOS.accounts.current()))?.opacity)()`);
+  await ev(`WebOS.wm.open('calc')`);
+  await sleep(500);
+  const opInactive = await ev(`(() => ({
+    bg: getComputedStyle(document.querySelector('.win[data-app=todo]')).backgroundColor,
+    inputHit: getComputedStyle(document.querySelector('.todo-input')).pointerEvents,   // 失焦态不可点(点击落回顶栏)
+  }))()`);
+  await ev(`WebOS.wm.close(document.querySelector('.win[data-app=calc]').dataset.id)`);
+  await sleep(300);
+  // 复位 100 并删掉测试便签(菜单经便签窗打开)
+  await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    n.querySelector('.todo-menu-btn').click();
+    const rng = document.querySelector('.todo-menu .tm-range');
+    rng.value = 100;
+    rng.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(200);
+  await ev(`(() => {
+    const n = [...document.querySelectorAll('.win[data-app=todo]')].find(w => w.querySelector('.todo-note-text'));
+    n.querySelector('.todo-menu-btn').click();
+    [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('删除便签')).click();
+  })()`);
+  await sleep(500);
+  t('T27.9d 透明度滑杆(仅非激活态/新窗继承/持久化)',
+    opFocused.bg === 'rgb(254, 249, 224)' && opFocused.inputHit === 'auto'
+      && opNew.count === 2 && opNew.allVar && opStore === 0.4
+      && opInactive.bg.includes('0.4') && opInactive.inputHit === 'none',
+    JSON.stringify({ opFocused, opNew, opStore, opInactive }));
+
   // 持久化:刷新后任务仍在(会话恢复在 e2e 模式被刻意禁用,恢复链路以
   // 真实浏览器手动验证:窗口清单带 boardId,restoreIfSaved 按 params 原样开回)
   await fresh();

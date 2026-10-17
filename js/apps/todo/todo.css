@@ -16,6 +16,22 @@
 }
 .win[data-app=todo]::after { content: none !important; }
 .win[data-app=todo] .win-body > * { animation: none !important; }   /* 皮肤开场动画(如霓虹内容淡入)也不进便签 */
+
+/* ---- 动画 ----
+ * 激活/失焦:底色与阴影平滑过渡(不透明淡黄 ↔ 半透明、大阴影 ↔ 无);
+ * 开启:淡入 + 轻微上浮缩放;关闭/最小化:WM 通用淡出(显式接管过渡,
+ * 防被本规则的过渡清单覆盖)。opacity 不进基础过渡 —— 透明度滑杆要跟手 */
+.win[data-app=todo] {
+  transition: background-color 0.22s ease, box-shadow 0.28s ease;
+}
+.win[data-app=todo].dragging { transition: none; }
+.win[data-app=todo].anim {
+  transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease,
+    background-color 0.22s ease, box-shadow 0.28s ease;
+}
+.win[data-app=todo].closing { transition: transform 0.16s ease-in, opacity 0.16s ease-in; }
+.win[data-app=todo].minimizing { transition: transform 0.18s ease-in, opacity 0.18s ease-in; }
+.win[data-app=todo].opening { animation: winIn 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1) !important; }   /* 复用「现代」主题的 winIn(window.css 全局关键帧) */
 .win[data-app=todo].focused {
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.22),
@@ -23,7 +39,7 @@
     0 30px 80px -6px rgba(0, 0, 0, 0.34) !important;
 }
 .win[data-app=todo]:not(.focused) {
-  background: color-mix(in srgb, var(--note-bg, #fef9e0) 60%, transparent) !important;
+  background: color-mix(in srgb, var(--note-bg, #fef9e0) calc(var(--note-alpha, 0.6) * 100%), transparent) !important;
 }
 .win[data-app=todo] .win-body,
 .win[data-app=todo] .win-skeleton { background: transparent !important; }
@@ -73,6 +89,9 @@
   white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
 }
 .win[data-app=todo]:not(.focused) .todo-input::placeholder { color: transparent; }
+/* 失焦态输入框不可交互:点击落回顶栏(激活/拖动),先激活才能进输入态
+ * (否则想拖窗时容易误点进输入模式) */
+.win[data-app=todo]:not(.focused) .todo-input { pointer-events: none; }
 .todo-input.filled { max-width: min(1000px, 100%); }
 .todo-bar.editing .todo-input { flex: 1 1 auto; max-width: min(1000px, 100%); background: rgba(255, 255, 255, 0.55); }
 .todo-bar.editing .todo-bar-spacer { flex: 0 0 0; min-width: 0; }
@@ -189,7 +208,7 @@
 .todo-menu {
   position: fixed; z-index: 3000;
   min-width: 172px; padding: 5px;
-  background: #fffdf3;
+  background: var(--note-bg, #fffdf3);
   border: 1px solid rgba(0, 0, 0, 0.10); border-radius: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15), 0 2px 5px rgba(0, 0, 0, 0.07);
   display: flex; flex-direction: column; gap: 1px;
@@ -213,9 +232,38 @@
   transition: transform 0.1s;
 }
 .tm-ball:hover { transform: scale(1.14); }
-.tm-ball.cur { box-shadow: 0 0 0 2px #fffdf3, 0 0 0 3.5px rgba(70, 61, 46, 0.55); }
+.tm-ball.cur { box-shadow: 0 0 0 2px var(--note-bg, #fffdf3), 0 0 0 3.5px rgba(70, 61, 46, 0.55); }
 
 /* 「打开已有」板列表 */
 .tm-boards { display: flex; flex-direction: column; gap: 1px; max-height: 176px; overflow-y: auto; }
 .tm-board-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 148px; }
 .tm-empty-hint { padding: 5px 10px 6px; font-size: 11.5px; color: rgba(70, 61, 46, 0.4); }
+
+/* 透明度滑杆:一根细线(单色不分段)+ 纸色圆球,棕色描边带轻投影。
+ * 选择器带 .todo-menu 前缀抬高特异性,压过系统 .range 滑杆样式
+ * (shell.css 已收窄为专用类,不再越权覆盖全局 input[type=range]) */
+.todo-menu .tm-range {
+  -webkit-appearance: none; appearance: none;
+  width: calc(100% - 20px); margin: 4px 10px 8px;
+  height: 16px;
+  background: transparent;
+  cursor: pointer; outline: none;
+}
+.todo-menu .tm-range::-webkit-slider-runnable-track {
+  height: 2px; border-radius: 1px;
+  background: rgba(70, 61, 46, 0.28);
+}
+.todo-menu .tm-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; margin-top: -5.5px;
+  border-radius: 50%;
+  background: var(--note-bg, #fffdf3);
+  border: 1.5px solid rgba(70, 61, 46, 0.55);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.todo-menu .tm-range::-webkit-slider-thumb:hover { border-color: rgba(70, 61, 46, 0.8); }
+.todo-menu .tm-range::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--note-bg, #fffdf3);
+  border: 1.5px solid rgba(70, 61, 46, 0.55);
+}

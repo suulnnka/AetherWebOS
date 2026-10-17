@@ -60,7 +60,7 @@ export function paintVolIcon() {
 function buildVolumePanel() {
   const s = settings.get();
   const pct = el('span', { class: 'pct' }, s.muted ? t('静音') : s.volume + '%');
-  const range = el('input', { type: 'range', min: 0, max: 100, value: s.muted ? s.volume : s.volume });
+  const range = el('input', { class: 'range', type: 'range', min: 0, max: 100, value: s.muted ? s.volume : s.volume });
   const paint = () => range.style.setProperty('--fill', range.value + '%');
   paint();
   range.addEventListener('input', () => {
