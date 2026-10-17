@@ -5,6 +5,7 @@ import { register } from '../../core/registry.js';
 import manifest from './manifest.js';
 import './trash.css';
 import { restoreItems, purgeItems, emptyTrash, listTrash } from '../../core/trash.js';
+import { registerTarget, trashPaths } from '../../core/dragdrop.js';
 
 /** 与文件管家同口径的条目图标(简化版:目录 / 图片 / 音视频 / 文本) */
 function itemIcon(it) {
@@ -120,7 +121,13 @@ register({
     // 回收站内容变化(fs-changed 覆盖还原/删除后的目录变化,双保险)
     const off1 = bus.onSys('trash-changed', () => render());
     const off2 = bus.onSys('fs-changed', () => render());
+    // 接收拖入 = 移入回收站(可还原);筒内条目不提供拖出 —— 还原走「还原」按钮/双击
+    const offDrop = registerTarget({
+      cls: 'drop-hint',
+      accepts: (hit, s) => (s?.paths?.length && root.contains(hit) ? root : null),
+      drop: (el, s) => trashPaths(s.paths, s.user),
+    });
     render();
-    return { onClose() { off1(); off2(); return true; } };
+    return { onClose() { off1(); off2(); offDrop(); return true; } };
   },
 });

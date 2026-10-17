@@ -13,6 +13,7 @@ import { inplaceRename } from '../../core/rename.js';
 import { CODE_EXT_RE } from '../../lib/chl.js';
 import { moveToTrash } from '../../core/trash.js';
 import * as clip from '../../core/clipboard.js';
+import { startFileDrag, registerTarget, movePaths } from '../../core/dragdrop.js';
 import { openFs, askOpenWith, PREVIEW_EXT } from '../../core/openwith.js';
 
 /** 快捷入口:随执行用户家目录变化 */
@@ -334,6 +335,16 @@ register({
           const linkApp = appLinkApp(item.path);
           if (linkApp) hoverPrefetch(node, linkApp.id);
         }
+        // 行可拖(系统文件拖放协议):5px 起拖,拖入任何目标 = 移动
+        node.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          startFileDrag(e, () => ({
+            paths: [item.path],
+            user,
+            originEls: [node],
+            ghost: { icon: fi.name, color: fi.color, label: item.name },
+          }));
+        });
         grid.append(node);
       }
     }
@@ -356,6 +367,30 @@ register({
     const offClip = bus.onSys('clipboard-changed', () => render());
     const offReq = bus.on('refresh', (p, msg) => { render(); msg.reply?.({ ok: true }); });
     const offParams = bus.on('params', (p) => { if (p?.path && fs.isDir(p.path)) { cwd = fs.normPath(p.path); render(); } });
+
+    /* ---- 接收拖入(系统文件拖放协议)----
+     * 文件夹行 = 移入该文件夹(注册在前,先于窗口体命中);
+     * 窗口内容区 = 移入当前目录 —— 拖回本窗口所在目录会按协议报错。
+     * 目标只认本窗口内的命中;多实例窗口各自注册、互不干扰,
+     * 被其他窗口盖住的区域物理上收不到投放(elementFromPoint 裁决)*/
+    const offDropRow = registerTarget({
+      cls: 'drop-hint',
+      accepts: (hit, s) => {
+        if (!s?.paths?.length) return null;
+        const row = hit.closest('.fitem[data-dir="1"]');
+        return row && root.contains(row) ? row : null;
+      },
+      drop: (row, s) => movePaths(s.paths, row.dataset.path, s.user),
+    });
+    const offDropBody = registerTarget({
+      cls: 'drop-hint',
+      accepts: (hit, s) => {
+        if (!s?.paths?.length) return null;
+        const body = hit.closest('.app-body');
+        return body && root.contains(body) ? body : null;
+      },
+      drop: (body, s) => movePaths(s.paths, cwd, s.user),
+    });
 
     // 键盘:Ctrl+C/X 复制剪切选中项,Ctrl+V 粘贴到当前目录
     const onKey = (e) => {
@@ -430,6 +465,7 @@ register({
     return {
       onClose() {
         offFs(); offClip(); offReq(); offParams();
+        offDropRow(); offDropBody();
         root.removeEventListener('keydown', onKey);
         return true;
       },

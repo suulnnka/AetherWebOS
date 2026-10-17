@@ -1,5 +1,5 @@
 /* ============================================================
- * AetherWebOS e2e 用例组 · 文件与存储(T8 T21 T29 T31 T53 T60 T63)
+ * AetherWebOS e2e 用例组 · 文件与存储(T8 T21 T29 T31 T53 T60 T63 T66)
  * 自原 e2e.mjs 单文件按域拆出;公共助手见 tools/e2e-harness.mjs。
  * 本文件只做 group() 注册(被入口 tools/e2e.mjs import),不要直接运行。
  * ============================================================ */
@@ -943,6 +943,226 @@ group('T63', '落盘分层(结构档微防抖 / 懒档写放大 / batch 合并 /
       '/home/' + u + '/documents/mtime-guard.txt',
       '/home/' + u + '/documents/shadow.bin',
     ]) fs.rm(p, { as: 'root' });
+    await fs.flush();
+    return true;
+  })()`);
+});
+
+/* ============================================================
+ * T66 系统文件拖放协议:桌面 / 文件管家 / 回收站互拖
+ * (core/dragdrop.js;真实 UI 驱动 —— 合成指针事件,WebOS.* 仅造数据与断言)
+ * ============================================================ */
+group('T66', '文件拖放协议(桌面⇄文件管家⇄回收站 / 同目录报错 / 重名跳过 / 层级)', async () => {
+  await fresh();
+  const HOME = await ev(`WebOS.fs.homePath()`);
+  const P = (p) => JSON.stringify(HOME + p);
+  const SEL = (p) => JSON.stringify(`.dicon[data-key="fs:${HOME}${p}"]`);
+  await ev(`WebOS.trash.emptyTrash()`);
+  // 造数据(先清残留再建):桌面两个文件 + 桌面文件夹 + documents 下两个带同名文件的文件夹
+  await ev(`(async () => {
+    const fs = WebOS.fs;
+    for (const p of ['/desktop/e2e-drag.txt', '/desktop/e2e-repos.txt', '/documents/e2e-drag.txt',
+      '/pictures/e2e-drag.txt', '/desktop/e2e-dfolder', '/documents/e2eA', '/documents/e2eB', '/desktop/e2e-temp.txt'])
+      fs.rm('${HOME}' + p, { as: 'root' });
+    fs.write('${HOME}/desktop/e2e-drag.txt', 'D');
+    fs.write('${HOME}/desktop/e2e-repos.txt', 'R');
+    fs.mkdir('${HOME}/desktop/e2e-dfolder');
+    fs.mkdir('${HOME}/documents/e2eA'); fs.write('${HOME}/documents/e2eA/a.txt', 'A');
+    fs.mkdir('${HOME}/documents/e2eB'); fs.write('${HOME}/documents/e2eB/a.txt', 'B');
+    await fs.flush();
+    return true;
+  })()`);
+  await waitFor(`!!document.querySelector(${SEL('/desktop/e2e-drag.txt')}) && !!document.querySelector(${SEL('/desktop/e2e-dfolder')})`, 5000);
+
+  /* 合成拖拽:抓 from 选择器中心,拖到 (x,y) 松手;probe=true 在松手前读现场 */
+  const dragXY = (fromSel, x, y, probe) => ev(`(() => {
+    const from = document.querySelector(${fromSel});
+    if (!from) return { err: 'from' };
+    const r0 = from.getBoundingClientRect();
+    const x0 = r0.left + r0.width / 2, y0 = r0.top + r0.height / 2;
+    from.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x0, clientY: y0, pointerId: 7 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: x0 + 9, clientY: y0 + 9, pointerId: 7 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, pointerId: 7 }));
+    let mid = null;
+    if (${probe ? 'true' : 'false'}) {
+      const g = document.getElementById('drag-ghost');
+      const hit = document.elementFromPoint(${x}, ${y});
+      mid = {
+        ghost: !!g,
+        ok: g?.classList.contains('ok') || false,
+        hintFilesBody: !!document.querySelector('.win[data-app=files] .app-body.drop-hint'),
+        originDim: getComputedStyle(from).opacity,
+        hit: hit ? (hit.tagName + '#' + hit.id + '.' + String(hit.className).slice(0, 40)) : null,
+        inFilesWin: !!document.querySelector('.win[data-app=files]')?.contains(hit),
+      };
+    }
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, pointerId: 7 }));
+    return { ok: true, mid, ghostGone: !document.getElementById('drag-ghost'), calm: !document.body.classList.contains('file-drag') };
+  })()`);
+  /* 指定目录的文件管家窗口内容区投放点(底部空白:必落在网格区而非某一行) */
+  const bodyPoint = (cwdSuffix) => ev(`(() => {
+    const w = [...document.querySelectorAll('.win[data-app=files]')]
+      .find(x => (x.querySelector('.app-status .mono')?.textContent || '').endsWith(${JSON.stringify(cwdSuffix)}));
+    if (!w) return null;
+    const r = w.querySelector('.app-body').getBoundingClientRect();
+    return { x: Math.round(r.left + 60), y: Math.round(r.bottom - 18) };
+  })()`);
+  const centerOf = (sel) => ev(`(() => {
+    const n = document.querySelector(${sel});
+    if (!n) return null;
+    const r = n.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  const rowSel = (p) => JSON.stringify(`.win[data-app=files] .fitem[data-path="${HOME}${p}"]`);
+  /* 无头 Chrome 的合成器命中测试滞后:窗口 opening 动画类保留的 950ms 内
+   * 动画不跑、无新帧产出,elementFromPoint 还是旧帧的命中数据(窗口不在命中
+   * 区)。凡要作为投放目标的窗口,先等 opening 摘除再拖,再补双 rAF 兜底 */
+  const waitCalm = () => ev(`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`);
+  const waitWinSettled = () => waitFor(
+    `[...document.querySelectorAll('.win[data-app=files]')].every(w => !w.classList.contains('opening'))`, 5000);
+
+  /* ---- 1) 桌面图标 → 文件管家窗口 = 移动 ---- */
+  await ev(`WebOS.wm.open('files', { params: { path: ${P('/documents')} } })`);
+  await waitFor(`!!document.querySelector(${rowSel('/documents/e2eA')})`, 6000);
+  await waitWinSettled(); await waitCalm();
+  const pt1 = await bodyPoint('/documents');
+  const r1 = await dragXY(SEL('/desktop/e2e-drag.txt'), pt1.x, pt1.y, true);
+  await waitFor(`WebOS.fs.exists(${P('/documents/e2e-drag.txt')}) && !WebOS.fs.exists(${P('/desktop/e2e-drag.txt')}) && !!document.querySelector(${rowSel('/documents/e2e-drag.txt')})`, 5000);
+  const s1 = await ev(`(() => ({ moved: WebOS.fs.exists(${P('/documents/e2e-drag.txt')}), gone: !WebOS.fs.exists(${P('/desktop/e2e-drag.txt')}), row: !!document.querySelector(${rowSel('/documents/e2e-drag.txt')}) }))()`);
+  t('T66.1 桌面→文件管家窗口 = 移动(悬停高亮 + 幽灵 + 松手后收尾)',
+    s1.moved && s1.gone && s1.row && r1.mid?.ghost && r1.mid?.ok && r1.mid?.hintFilesBody && r1.ghostGone && r1.calm,
+    JSON.stringify({ r1, s1 }));
+
+  /* ---- 2) 文件管家拖回本窗口所在目录 = 移动到原始文件夹 → 报错 ---- */
+  const pt2 = await bodyPoint('/documents');
+  await dragXY(rowSel('/documents/e2e-drag.txt'), pt2.x, pt2.y, false);
+  await waitFor(`!!document.querySelector('.win[data-app=sysdialog]')`, 5000);
+  const s2 = await ev(`(() => ({
+    title: document.querySelector('.win[data-app=sysdialog] .dlg-title')?.textContent || '',
+    msg: document.querySelector('.win[data-app=sysdialog] .dlg-msg')?.textContent || '',
+    kept: WebOS.fs.exists(${P('/documents/e2e-drag.txt')}),
+  }))()`);
+  await ev(`document.querySelector('.win[data-app=sysdialog] .dlg-btns .btn').click()`);
+  await waitFor(`!document.querySelector('.win[data-app=sysdialog]')`, 3000);
+  t('T66.2 拖回原始文件夹报错(错误弹窗 + 文件原地不动)',
+    s2.title.includes('无法移动') && s2.msg.includes('e2e-drag.txt') && s2.kept, JSON.stringify(s2));
+
+  /* ---- 3) 文件管家 → 另一文件管家窗口(pictures)= 移动 ---- */
+  await ev(`WebOS.wm.open('files', { params: { path: ${P('/pictures')} } })`);
+  await waitFor(`[...document.querySelectorAll('.win[data-app=files] .app-status .mono')].some(n => n.textContent.endsWith('/pictures'))`, 6000);
+  await waitWinSettled(); await waitCalm();
+  const pt3 = await bodyPoint('/pictures');
+  await dragXY(rowSel('/documents/e2e-drag.txt'), pt3.x, pt3.y, false);
+  await waitFor(`WebOS.fs.exists(${P('/pictures/e2e-drag.txt')}) && !WebOS.fs.exists(${P('/documents/e2e-drag.txt')})`, 5000);
+  const s3 = await ev(`(() => ({ moved: WebOS.fs.exists(${P('/pictures/e2e-drag.txt')}), gone: !WebOS.fs.exists(${P('/documents/e2e-drag.txt')}) }))()`);
+  t('T66.3 文件管家→另一文件管家窗口 = 移动(多实例互拖)', s3.moved && s3.gone, JSON.stringify(s3));
+
+  /* ---- 4) 文件管家 → 桌面空白处 = 收进桌面目录 + 桌面图标出现 ---- */
+  const blank = await ev(`(() => {
+    const h = document.getElementById('desktop').getBoundingClientRect();
+    for (const [x, y] of [[60, h.height - 30], [h.width - 60, h.height - 30], [Math.round(h.width / 2), 40], [60, 40], [h.width - 60, 40]]) {
+      const el = document.elementFromPoint(x, y);
+      if (el && ['wallpaper', 'desktop', 'icons'].includes(el.id)) return { x, y };
+    }
+    return null;
+  })()`);
+  await dragXY(rowSel('/pictures/e2e-drag.txt'), blank.x, blank.y, false);
+  await waitFor(`WebOS.fs.exists(${P('/desktop/e2e-drag.txt')}) && !!document.querySelector(${SEL('/desktop/e2e-drag.txt')})`, 5000);
+  const s4 = await ev(`(() => ({ back: WebOS.fs.exists(${P('/desktop/e2e-drag.txt')}), icon: !!document.querySelector(${SEL('/desktop/e2e-drag.txt')}), gone: !WebOS.fs.exists(${P('/pictures/e2e-drag.txt')}) }))()`);
+  t('T66.4 文件管家→桌面空白 = 移到桌面目录(图标出现)', s4.back && s4.icon && s4.gone, JSON.stringify({ blank, s4 }));
+
+  /* ---- 5) 桌面图标 → 桌面文件夹图标 = 移入 ---- */
+  const c5 = await centerOf(SEL('/desktop/e2e-dfolder'));
+  await dragXY(SEL('/desktop/e2e-drag.txt'), c5.x, c5.y, false);
+  await waitFor(`WebOS.fs.exists(${P('/desktop/e2e-dfolder/e2e-drag.txt')}) && !WebOS.fs.exists(${P('/desktop/e2e-drag.txt')})`, 5000);
+  const s5 = await ev(`(() => ({ in: WebOS.fs.exists(${P('/desktop/e2e-dfolder/e2e-drag.txt')}), gone: !WebOS.fs.exists(${P('/desktop/e2e-drag.txt')}) }))()`);
+  t('T66.5 桌面→桌面文件夹图标 = 移入(目录整棵可拖)', s5.in && s5.gone, JSON.stringify(s5));
+
+  /* ---- 6) 文件夹拖入回收站图标 = 删除;回收站窗口「还原」放回 ---- */
+  const c6 = await centerOf(JSON.stringify('.dicon[data-trash="1"]'));
+  await dragXY(SEL('/desktop/e2e-dfolder'), c6.x, c6.y, false);
+  await waitFor(`WebOS.trash.listTrash().length === 1 && !WebOS.fs.exists(${P('/desktop/e2e-dfolder')})`, 5000);
+  const s6a = await ev(`(() => { const l = WebOS.trash.listTrash(); return { n: l.length, dir: !!l[0]?.dir, orig: l[0]?.orig || '' }; })()`);
+  await ev(`WebOS.wm.open('trash')`);
+  await waitFor(`document.querySelectorAll('.win[data-app=trash] .tr-item').length === 1`, 5000);
+  await ev(`document.querySelector('.win[data-app=trash] .tr-item .tr-act .btn').click()`);
+  await waitFor(`WebOS.fs.exists(${P('/desktop/e2e-dfolder/e2e-drag.txt')}) && !document.querySelector('.win[data-app=trash] .tr-item')`, 5000);
+  const s6 = await ev(`(() => ({ restored: WebOS.fs.read(${P('/desktop/e2e-dfolder/e2e-drag.txt')}) }))()`);
+  t('T66.6 文件夹入回收站 + 窗口「还原」整棵放回',
+    s6a.n === 1 && s6a.dir && s6a.orig === HOME + '/desktop/e2e-dfolder' && s6.restored === 'D',
+    JSON.stringify({ s6a, s6 }));
+
+  /* ---- 7) 回收站条目不可拖(按住拖动不产生幽灵) ---- */
+  await ev(`WebOS.fs.write(${P('/desktop/e2e-temp.txt')}, 'T'); WebOS.trash.moveToTrash([${P('/desktop/e2e-temp.txt')}])`);
+  await waitFor(`document.querySelectorAll('.win[data-app=trash] .tr-item').length === 1`, 5000);
+  const s7 = await ev(`(() => {
+    const row = document.querySelector('.win[data-app=trash] .tr-item');
+    const r = row.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y, pointerId: 8 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: x + 40, clientY: y + 40, pointerId: 8 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: x + 120, clientY: y + 60, pointerId: 8 }));
+    const ghost = !!document.getElementById('drag-ghost');
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: x + 120, clientY: y + 60, pointerId: 8 }));
+    return { ghost, still: WebOS.trash.listTrash().length === 1 };
+  })()`);
+  t('T66.7 回收站条目不可拖出(无幽灵会话;还原仍可用)', !s7.ghost && s7.still, JSON.stringify(s7));
+
+  /* ---- 8) 目标重名 → 跳过不覆盖 ---- */
+  const c8 = await centerOf(rowSel('/documents/e2eB'));
+  await dragXY(rowSel('/documents/e2eA/a.txt'), c8.x, c8.y, false);
+  await sleep(400);   // 无移动预期的环节:给一次调度余量再断言
+  const s8 = await ev(`(() => ({
+    kept: WebOS.fs.exists(${P('/documents/e2eA/a.txt')}),
+    a: WebOS.fs.read(${P('/documents/e2eA/a.txt')}),
+    b: WebOS.fs.read(${P('/documents/e2eB/a.txt')}),
+  }))()`);
+  t('T66.8 目标已有同名 → 跳过不覆盖(两侧内容原样)', s8.kept && s8.a === 'A' && s8.b === 'B', JSON.stringify(s8));
+
+  /* ---- 9) 层级:幽灵在窗口层之上(980>5)、源图标不越层、空白桌面仍可重排 ---- */
+  const blank2 = await ev(`(() => {
+    const h = document.getElementById('desktop').getBoundingClientRect();
+    for (const [x, y] of [[h.width - 80, h.height - 40], [80, h.height - 40], [Math.round(h.width / 2), 50]]) {
+      const el = document.elementFromPoint(x, y);
+      if (el && ['wallpaper', 'desktop', 'icons'].includes(el.id)) return { x, y };
+    }
+    return null;
+  })()`);
+  const before = await ev(`(() => { const n = document.querySelector(${SEL('/desktop/e2e-repos.txt')}); return { left: n.style.left, top: n.style.top }; })()`);
+  const s9 = await ev(`(() => {
+    const from = document.querySelector(${SEL('/desktop/e2e-repos.txt')});
+    const r0 = from.getBoundingClientRect();
+    const x0 = r0.left + r0.width / 2, y0 = r0.top + r0.height / 2;
+    from.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x0, clientY: y0, pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: x0 + 9, clientY: y0 + 9, pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: ${blank2.x}, clientY: ${blank2.y}, pointerId: 9 }));
+    const g = document.getElementById('drag-ghost');
+    const mid = {
+      ghost: !!g,
+      gz: g ? getComputedStyle(g).zIndex : '',
+      wz: getComputedStyle(document.getElementById('windows')).zIndex,
+      aboveWin: g ? +getComputedStyle(g).zIndex > +getComputedStyle(document.getElementById('windows')).zIndex : false,
+      originZ: getComputedStyle(from).zIndex,
+      originDim: getComputedStyle(from).opacity,
+      bodyDrag: document.body.classList.contains('file-drag'),
+    };
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: ${blank2.x}, clientY: ${blank2.y}, pointerId: 9 }));
+    const after = document.querySelector(${SEL('/desktop/e2e-repos.txt')});
+    return { ...mid, ghostGone: !document.getElementById('drag-ghost'), after: { left: after.style.left, top: after.style.top } };
+  })()`);
+  t('T66.9 层级与重排(幽灵 980>窗口层 5;源图标 z 恒 auto;空白桌面吸附换位)',
+    s9.ghost && s9.gz === '980' && s9.wz === '5' && s9.aboveWin && s9.originZ === 'auto' && s9.originDim === '0.4'
+    && s9.bodyDrag && s9.ghostGone && (s9.after.left !== before.left || s9.after.top !== before.top),
+    JSON.stringify({ before, s9 }));
+
+  /* ---- 清场 ---- */
+  await ev(`(async () => {
+    const fs = WebOS.fs;
+    WebOS.trash.emptyTrash();
+    for (const p of ['/desktop/e2e-drag.txt', '/desktop/e2e-repos.txt', '/desktop/e2e-dfolder',
+      '/documents/e2eA', '/documents/e2eB', '/documents/e2e-drag.txt', '/pictures/e2e-drag.txt'])
+      fs.rm('${HOME}' + p, { as: 'root' });
+    for (const w of WebOS.wm.taskList().filter(w => w.appId === 'files' || w.appId === 'trash')) WebOS.wm.close(w.id);
     await fs.flush();
     return true;
   })()`);

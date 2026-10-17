@@ -44,10 +44,42 @@
 }
 .dicon:hover { background: rgba(255, 255, 255, 0.12); }
 .dicon.selected { background: color-mix(in srgb, var(--accent) 38%, transparent); outline: 1px solid rgba(255, 255, 255, 0.35); }
-.dicon.dragging { opacity: 0.75; z-index: 10; }
+/* 拖动中的源图标:原地淡显即可 —— 不再提 z-index,旧值 10 会把图标
+ * 抬过整层 #windows(z-index 5),视觉上暗示能拖进窗口实际不能 */
+.dicon.dragging, .fitem.dragging { opacity: 0.4; }
 .dicon.cut { opacity: 0.55; }
 .dicon.cut .label { text-decoration: line-through; text-decoration-thickness: 1px; }
 .dicon.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 26%, transparent); border-radius: var(--radius-s); }
+
+/* ---- 系统文件拖放协议(js/core/dragdrop.js) ---- */
+/* 通用拖入高亮:文件管家窗口体/文件夹行、回收站窗口(桌面图标沿用 .drop-target) */
+.drop-hint {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--radius-s);
+}
+/* 幽灵图标:挂 body 根层叠上下文,z-index 980 —— 高于窗口层 #windows(5),
+ * 低于任务栏(1000)/右键菜单(1300)/toast(1200)/模态遮罩(1500+),
+ * 拖动中的文件永远看得见,又压不过系统级弹层 */
+#drag-ghost {
+  position: fixed; z-index: 980; pointer-events: none;
+  display: flex; align-items: center; gap: 8px;
+  max-width: 230px; padding: 5px 10px 5px 6px; border-radius: 10px;
+  background: var(--panel-solid); color: var(--text); font-size: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(128, 138, 160, 0.3);
+}
+#drag-ghost.ok { box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), 0 0 0 2px var(--accent); }
+#drag-ghost .dg-tile {
+  flex: none; width: 26px; height: 26px; border-radius: 7px;
+  display: grid; place-items: center; color: #fff;
+}
+#drag-ghost .dg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#drag-ghost .dg-count {
+  flex: none; font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent); color: #fff;
+}
+/* 会话期间:全屏抓取光标 + 禁文本选区 */
+body.file-drag, body.file-drag * { cursor: grabbing !important; user-select: none; }
 .dicon .tile {
   position: relative;
   width: var(--tile); height: var(--tile);

@@ -109,4 +109,13 @@ registerDict('en', {
   'AetherJS / CSS / HTML / JSON 高亮与运行': 'AetherJS / CSS / HTML / JSON highlighting and run',
   '图片、音视频与 PDF': 'Images, audio/video and PDF',
   '纯文本,任何文件都能看': 'Plain text, opens anything',
+  /* 系统文件拖放协议(core/dragdrop.js) */
+  '无法移动': 'Cannot Move',
+  '「{name}」已经在「{dir}」中,不能移动到它所在的文件夹。': '“{name}” is already in “{dir}”; a file cannot be moved into the folder it is already in.',
+  '不能把文件夹移动到它自己或它的子文件夹中。': 'A folder cannot be moved into itself or one of its own subfolders.',
+  '已移动 {n} 个项目': 'Moved {n} item(s)',
+  '已跳过 {n} 个同名项目': 'Skipped {n} item(s) with the same name',
+  '目标文件夹已有同名项目,未覆盖。': 'The destination folder already contains item(s) with the same name; nothing was overwritten.',
+  '已移入回收站 {n} 项': 'Moved {n} item(s) to the Recycle Bin',
+  '可在回收站窗口中还原。': 'You can restore them from the Recycle Bin window.',
 });

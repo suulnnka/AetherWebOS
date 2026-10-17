@@ -312,6 +312,33 @@ open('notes', { params: { path: '/home/documents/a.txt' } });
 目标应用在 `mount` 里读 `ctx.params`;**单实例应用**二次打开时不会重新挂载,
 要通过 `bus.on('params', ...)` 响应新参数(参考 browser 应用)。
 
+### 文件拖放(`core/dragdrop.js`,接收系统拖入)
+
+系统级文件拖放协议贯通桌面图标 / 文件管家 / 回收站(拖入 = 移动)。应用把自己的
+某个区域注册为投放目标即可接收来自任何源的拖入;悬停解析走 `elementFromPoint`,
+被其他窗口盖住的区域物理上收不到投放,层级天然正确:
+
+```js
+import { registerTarget, movePaths } from '../../core/dragdrop.js';
+
+const off = registerTarget({
+  cls: 'drop-hint',                        // 悬停时加到目标元素上的高亮类(自备样式)
+  accepts: (hit, session) =>               // hit = elementFromPoint 的命中元素
+    hit.closest('.my-drop-zone')?.isConnected && root.contains(hit)
+      ? hit.closest('.my-drop-zone') : null,   // 返回目标元素=接受,null=不接受
+  drop: (el, session) => movePaths(session.paths, destDir, session.user),
+});
+// onClose 里:off()
+```
+
+- `session.paths` 是被拖的路径数组;`movePaths` 负责移动语义(同目录报错、
+  目标重名跳过不覆盖、移入自身/子目录报错),要自己处理就别调它。
+- 想让应用里的条目可被拖走:在条目的 `pointerdown` 上调
+  `startFileDrag(e, () => ({ paths, originEls: [行元素], ghost: { icon, color, label } }))`,
+  5px 起拖阈值内松手就是普通点击,双击不受影响。
+- 拖动中的幽灵图标由系统渲染(z-index 980:窗口层之上、任务栏/菜单/模态之下),
+  应用只需处理 `accepts` / `drop`。回收站窗口即此模式(接收拖入 = 删除入筒)。
+
 ### 账号与数据隔离
 
 需要登录的应用(如任务、备忘录):

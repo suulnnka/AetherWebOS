@@ -13,6 +13,7 @@ import { accounts } from '../core/accounts.js';
 import { moveToTrash, trashCount, emptyTrash } from '../core/trash.js';
 import * as clip from '../core/clipboard.js';
 import { openFs, askOpenWith } from '../core/openwith.js';
+import { startFileDrag, registerTarget, movePaths, trashPaths } from '../core/dragdrop.js';
 import { appNames, appName } from '../core/registry.js';
 import { t } from '../core/i18n.js';
 
@@ -140,32 +141,38 @@ function desktopDelete(paths) {
   saveIconPos();
 }
 
-/* ---- 拖动图标放入文件夹 / 回收站 ---- */
-/** 光标处的放置目标(文件夹或回收站;排除被拖动的与已选中的) */
-function dropTargetAt(x, y, draggedNode) {
-  const sel = new Set(document.querySelectorAll('.dicon.selected'));
-  for (const n of document.querySelectorAll('.dicon[data-dir="1"], .dicon[data-trash="1"]')) {
-    if (n === draggedNode || sel.has(n)) continue;
-    const r = n.getBoundingClientRect();
-    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return n;
-  }
-  return null;
-}
-
-/** 把当前选中的桌面文件(含 .app 快捷方式)移入目标文件夹 */
-function moveToFolder(targetNode) {
-  const dir = targetNode.dataset.key.slice('fs:'.length);
-  const items = selectedItems().filter(s => s.kind === 'fs'
-    && s.path !== dir && fs.parentPath(s.path) !== dir);
-  let n = 0;
-  for (const it of items) {
-    const dest = fs.joinPath(dir, it.name);
-    if (fs.exists(dest)) continue;             // 目标重名时跳过,不做覆盖
-    if (fs.rename(it.path, dest)) { delete iconPos[it.key]; n++; }
-  }
-  saveIconPos();
-  return n;                                    // rename 触发 fs-changed → 自动重渲染
-}
+/* ---- 拖放目标(系统文件拖放协议,见 core/dragdrop.js) ----
+ * 悬停解析走 elementFromPoint:被窗口盖住的图标物理上收不到投放,
+ * 与真实层叠一致;空会话(纯重排,如拖回收站图标)不接受任何目标 */
+registerTarget({
+  cls: 'drop-target',
+  accepts: (hit, s) => {
+    if (!s?.paths?.length) return null;
+    const n = hit.closest('.dicon[data-dir="1"]');
+    return n && !s.originEls.includes(n) ? n : null;   // 被拖动/选中的图标不作目标
+  },
+  drop: (n, s) => movePaths(s.paths, n.dataset.key.slice('fs:'.length), s.user),   // 拖入 = 移动
+});
+registerTarget({
+  cls: 'drop-target',
+  accepts: (hit, s) => {
+    if (!s?.paths?.length) return null;
+    const n = hit.closest('.dicon[data-trash="1"]');
+    return n && !s.originEls.includes(n) ? n : null;
+  },
+  drop: (n, s) => trashPaths(s.paths, s.user),          // 拖进回收站 = 删除(可还原)
+});
+registerTarget({
+  cls: null,   // 空白桌面不加高亮
+  accepts: (hit) => {
+    const id = hit.id;
+    return id === 'wallpaper' || id === 'desktop' || id === 'icons' ? hit : null;
+  },
+  drop: (el, s, x, y) => {
+    if (s.onBlankDesktop) s.onBlankDesktop(x, y);          // 桌面源:原位重排
+    else movePaths(s.paths, DESKTOP_DIR(), s.user);        // 其他源:收进桌面目录(同目录会报错)
+  },
+});
 
 /* 桌面图标说明框:不用浏览器原生 title —— 悬停后出现在鼠标旁并跟随移动 */
 let tipEl = null;
@@ -220,6 +227,15 @@ export function renderDesktopIcons() {
   box.innerHTML = '';
   hideTip();
   const items = desktopItems();
+  // 位置簿记随条目清理(拖走/删除后不残留;未登录时桌面列表恒空,不背锅)
+  if (DESKTOP_DIR()) {
+    const live = new Set(items.map(it => it.key));
+    let pruned = false;
+    for (const k of Object.keys(iconPos)) {
+      if (k.startsWith('fs:') && !live.has(k)) { delete iconPos[k]; pruned = true; }
+    }
+    if (pruned) saveIconPos();
+  }
   // 回收站常驻图标:排在最后,默认钉在最后一列的底部(Windows 式右下角)
   items.push({ kind: 'trash', key: 'trash', name: '回收站', label: t('回收站'),
     icon: 'trash', color: 'linear-gradient(135deg,#64748b,#475569)' });
@@ -250,13 +266,8 @@ export function renderDesktopIcons() {
     }, tile, el('span', { class: 'label' }, item.label || item.name));
     bindIconTip(node, tipText);
 
-    const clearDropHover = () =>
-      box.querySelectorAll('.dicon.drop-target').forEach(d => d.classList.remove('drop-target'));
-
-    let moved = false;
     node.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      moved = false;
       if (e.ctrlKey || e.metaKey) node.classList.toggle('selected');
       else {
         if (!node.classList.contains('selected')) {
@@ -264,42 +275,29 @@ export function renderDesktopIcons() {
         }
         node.classList.add('selected');
       }
-      const sx = e.clientX - pos.x, sy = e.clientY - pos.y;
-      const move = (ev) => {
-        if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 5) return;
-        moved = true;
-        node.classList.add('dragging');
-        pos.x = clamp(ev.clientX - sx, 0, areaW - 84);
-        pos.y = clamp(ev.clientY - sy, 0, areaH - 96);
-        node.style.left = pos.x + 'px';
-        node.style.top = pos.y + 'px';
-        // 悬停在某文件夹/回收站图标上时高亮,提示松手即放入
-        clearDropHover();
-        dropTargetAt(ev.clientX, ev.clientY, node)?.classList.add('drop-target');
-      };
-      const up = (ev) => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-        clearDropHover();
-        if (moved) {
-          const target = dropTargetAt(ev.clientX, ev.clientY, node);
-          if (target?.dataset.trash) {            // 拖进回收站 = 删除
-            const paths = selectedItems().filter(s => s.kind === 'fs').map(s => s.path);
-            if (paths.length) { desktopDelete(paths); return; }
-          }
-          if (target && moveToFolder(target)) return;   // 移入成功:fs-changed 触发重渲染
-          // 网格吸附
-          pos.x = clamp(snap(pos.x, GRID.x, GRID.mx), 0, areaW - 84);
-          pos.y = clamp(snap(pos.y, GRID.y, GRID.my), 0, areaH - 96);
-          node.style.left = pos.x + 'px';
-          node.style.top = pos.y + 'px';
-          iconPos[item.key] = { ...pos };
-          saveIconPos();
-        }
-        node.classList.remove('dragging');
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
+      // 系统拖放协议:过 5px 阈值起拖 —— 原图标原地淡显,幽灵浮于窗口之上,
+      // 放置目标(文件夹/回收站图标、文件管家窗口、空白桌面)由 dragdrop 统一裁决
+      const offX = e.clientX - pos.x, offY = e.clientY - pos.y;
+      startFileDrag(e, () => {
+        const items = selectedItems().filter(s => s.kind === 'fs');
+        // 非文件图标(回收站)也可拖:空会话纯重排,任何放置目标都不接受
+        return {
+          paths: items.map(s => s.path),
+          originEls: [...box.querySelectorAll('.dicon.selected')],
+          ghost: items.length
+            ? { icon: items[0].icon, color: items[0].color, label: items[0].label || items[0].name }
+            : { icon: item.icon, color: item.color, label: item.label || item.name },
+          // 空白桌面 = 原位重排:抓取的图标吸附到松手点网格
+          onBlankDesktop: (x, y) => {
+            pos.x = clamp(snap(x - offX, GRID.x, GRID.mx), 0, areaW - 84);
+            pos.y = clamp(snap(y - offY, GRID.y, GRID.my), 0, areaH - 96);
+            node.style.left = pos.x + 'px';
+            node.style.top = pos.y + 'px';
+            iconPos[item.key] = { ...pos };
+            saveIconPos();
+          },
+        };
+      });
     });
 
     node.addEventListener('dblclick', () => {
@@ -382,6 +380,16 @@ subscribe('accounts:changed', (payload, msg) => {
     if (u) ensureDesktopShortcuts(u);
     renderDesktopIcons();
   }
+});
+
+/* ---- 点击桌面 → 取消窗口激活 ----
+ * 「操作落在窗口外」:活动窗口失焦(键盘焦点一并收回),与「点击窗口即激活」
+ * 相对,构成完整的焦点语义。任务栏/开始菜单是 shell 操作区,不在失焦范围。 */
+$('#desktop').addEventListener('pointerdown', (e) => {
+  const tgt = e.target;
+  if (tgt.id !== 'wallpaper' && tgt.id !== 'desktop' && tgt.id !== 'icons' &&
+      !tgt.closest?.('.dicon')) return;
+  wm.blur();
 });
 
 /* ---- 橡皮筋框选(空白处拖动) ---- */
