@@ -403,6 +403,10 @@ await copyText(text);   // Clipboard API + execCommand 回退
 
 - 专属样式写 `js/apps/<id>/<id>.css`,在应用 `index.js` 顶部 `import './<id>.css'`,
   样式随应用 chunk 按需加载/注入;
+- **自定义类名必须带应用前缀**(如 todo 用 `.todo-*`、接龙用 `.sol-*`):应用样式注入的是
+  主文档,裸通用名(`.card`、`.row` 这类)会与 AppKit 通用组件类同名互踩,后加载的应用
+  chunk 直接改写其他应用的渲染(空当接龙曾用 `.card` 定义扑克牌,开过一次后设置/
+  天气等应用的卡片全变成 64×90 小方块);
 - **只用系统的 CSS 变量,不要写死颜色**,亮暗主题与 8 套皮肤才能全部生效:
 
 | 变量 | 含义 |
@@ -443,6 +447,10 @@ await copyText(text);   // Clipboard API + execCommand 回退
 - `mount` 执行时窗口框架已进入 DOM(惰性应用为骨架回填),mount 里可直接测量布局;
 - `mount` 返回的 `onClose` 里回收资源(对象 URL、定时器、事件监听);
 - `onResize(w, h)` 跟随窗口拖拽/最大化/平铺/浏览器窗口缩放触发,canvas 类应用在这里重设尺寸;
+- `onFocus()` / `onBlur()` 跟随窗口激活 / 失焦触发(点击窗口、点击桌面、最小化、
+  Alt+Q 切换、关窗接棒都会走到);失焦时窗口内的输入框会被 WM 收回原生焦点,
+  需要在重新激活时把光标放回输入框的应用(终端类)在 `onFocus` 里自行 `focus()`;
+  document 级键盘监听仍请自查 `.focused`(事件源可能在别的窗口);
 - 应用挂载抛异常不会拖垮系统:窗口内会显示"应用启动失败"错误卡。
 
 ## 9. 调试与测试

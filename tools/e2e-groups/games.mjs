@@ -158,18 +158,18 @@ group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
   await sleep(700);
   const so1 = await ev(`(() => ({
     cols: document.querySelectorAll('.sol-col').length,
-    slots: document.querySelectorAll('.sol-top .card').length,
-    stockCards: (JSON.stringify(0), document.querySelectorAll('.sol-top .card').length),
+    slots: document.querySelectorAll('.sol-top .sol-card').length,
+    stockCards: (JSON.stringify(0), document.querySelectorAll('.sol-top .sol-card').length),
     title: document.querySelector('.win[data-app=solitaire] .win-title').textContent,
   }))()`);
   t('T35 接龙:界面(7列+6顶槽)', so1.cols === 7 && so1.slots === 6, JSON.stringify(so1));
 
   // 牌堆点击翻牌:点一次后弃牌堆有牌
   const so2 = await ev(`(async () => {
-    const stock = document.querySelector('.sol-top .card');
+    const stock = document.querySelector('.sol-top .sol-card');
     stock.click();
     await new Promise(r => setTimeout(r, 300));
-    const wasteHas = document.querySelectorAll('.sol-top .card.has').length >= 2;  // stock+waste
+    const wasteHas = document.querySelectorAll('.sol-top .sol-card.has').length >= 2;  // stock+waste
     return { wasteHas };
   })()`);
   t('T35.1 牌堆翻牌到弃牌堆', so2.wasteHas === true);
@@ -178,9 +178,9 @@ group('T35', '纸牌游戏(接龙 + 记忆翻牌)', async () => {
   const so3 = await ev(`(() => {
     const cols = [...document.querySelectorAll('.sol-col')];
     const ups = cols.map(col => {
-      const cards = [...col.querySelectorAll('.card')];
+      const cards = [...col.querySelectorAll('.sol-card')];
       const last = cards.at(-1);
-      return last ? !!last.querySelector('.card-face') : false;
+      return last ? !!last.querySelector('.sol-card-face') : false;
     });
     return { allTailsUp: ups.every(Boolean), ups };
   })()`);

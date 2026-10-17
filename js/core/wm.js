@@ -6,7 +6,7 @@
  * 层级模型(见 tierOf/restack):0 普通 < 1 置顶 < 2 应用模态 < 3 系统模态,
  *       档内按最近激活时间排;z-index 全量重排,不增量递增。
  * 所有窗口事件通过总线广播:sys:win-open / win-close /
- * win-focus / win-min / win-restore / win-max / win-unmax
+ * win-focus / win-blur / win-min / win-restore / win-max / win-unmax
  * ============================================================ */
 
 import { el, clamp } from './utils.js';
@@ -249,6 +249,10 @@ export async function open(appId, { params, level, owner } = {}) {
   // 惰性应用:骨架先行,chunk 到位后在同一窗口里回填真实内容
   const w = spawnWindow(m, { params, level, owner, mount: mountSkeleton });
   w.pending = true;
+  // 无边框应用骨架期不可见:骨架(转圈加载态)长得就不是无边框的样子,
+  // 且真挂载常要经水合决定去留(如便签的补齐/聚焦让位),可见一两帧
+  // 就是「一闪而过」;应用挂载后自行显形(便签在水合定留时清 visibility)
+  if (m.frameless) w.el.style.visibility = 'hidden';
   try {
     const app = await ensureLoaded(appId);
     if (wins.get(w.id) !== w) return w;   // 加载期间窗口已被关闭
@@ -523,11 +527,21 @@ export function close(id) {
   const w = wins.get(id);
   if (!w) return;
   if (w.hooks.onClose && w.hooks.onClose() === false) return; // 应用可拦截
+  const wasFocused = w.el.classList.contains('focused');
   w.bus.dispose();
   wins.delete(id);
   if (w.modalLevel >= 3) { modalWins.delete(w); raiseShade(); }
   if (w.modalLevel === 2) { appModalWins.delete(w); syncAppShades(); }
   restack();   // 模态窗口的遮罩槽位随窗口集合变化(raiseShade 内亦重排,此处兜底)
+  // 关的是活动窗口:焦点接棒给最近激活的剩余窗口,无人可接则广播失焦(无活动窗口)。
+  // 类立即摘掉 —— 关闭动画的 170ms 里别再被 focusedCount 计入
+  if (wasFocused) {
+    w.el.classList.remove('focused');
+    dropNativeFocus(w);
+    const next = nextFocusable();
+    if (next) focus(next.id);
+    else emit('blur', { id: w.id, appId: w.appId });
+  }
   emit('close', { id, appId: w.appId });
   w.el.classList.add('closing');
   setTimeout(() => w.el.remove(), 170);
@@ -544,18 +558,86 @@ subscribe('sys:apps-changed', (payload) => {
 });
 
 /* ---------------- 焦点与层级 ---------------- */
+
+/** 当前活动窗口(0 或 1 个;无活动窗口是合法状态 ——
+ *  点击桌面 / 最小化活动窗口 / 关窗无人接棒时进入) */
+function focusedWin() {
+  for (const w of wins.values()) if (w.el.classList.contains('focused')) return w;
+  return null;
+}
+
+/** 焦点资格:focus() 与关窗接棒(nextFocusable)共用的模态拒绝判断 */
+function canFocus(w) {
+  if (modalWins.size && w.modalLevel !== 3) return false;   // 系统模态期:只有对话框可激活
+  if (isAppLocked(w)) return false;   // 应用模态期:被二级弹框锁定的窗口不可激活
+  return true;
+}
+
+/** 收回窗口内的原生输入焦点:失焦窗口里的输入框不再接收键盘 */
+function dropNativeFocus(w) {
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && w.el.contains(ae)) ae.blur();
+}
+
+/** 失焦善后(类已摘/将摘):收原生焦点、通知应用、广播 sys:win-blur */
+function notifyBlur(w) {
+  dropNativeFocus(w);
+  w.hooks.onBlur?.();
+  emit('blur', { id: w.id, appId: w.appId });
+}
+
+/** 取消激活:所有窗口失焦(点击桌面等「操作落在窗口外」时)。
+ *  系统模态期拒绝 —— 活动对话框不因外部操作丢焦点锁。 */
+export function blur() {
+  const cur = focusedWin();
+  if (!cur || modalWins.size) return;
+  cur.el.classList.remove('focused');
+  notifyBlur(cur);
+}
+
+/** 当前活动窗口 id(无活动窗口为 null) */
+export function activeId() {
+  return focusedWin()?.id ?? null;
+}
+
 export function focus(id) {
   const w = wins.get(id);
   if (!w) return;
-  // 系统模态期:只有对话框可激活
-  if (modalWins.size && w.modalLevel !== 3) return;
-  // 应用模态期:被二级弹框锁定的窗口不可激活
-  if (isAppLocked(w)) return;
+  if (!canFocus(w)) return;
   if (w.state === 'min') restoreWin(id);
+  const prev = focusedWin();
   w.actSeq = ++actSeq;   // 同档内按激活时间排:刚激活的浮到本档最上
   for (const o of wins.values()) o.el.classList.toggle('focused', o === w);
+  if (prev !== w) {
+    if (prev) notifyBlur(prev);   // 焦点让位:旧窗口收键盘焦点、通知应用
+    w.hooks.onFocus?.();
+  }
   restack();
   emit('focus', { id, appId: w.appId });
+}
+
+/* 原生焦点 ↔ 窗口激活耦合:键盘焦点落进某个未激活窗口(Tab 越窗 / 应用
+ * 编程式 focus())时,像点击一样激活该窗口 —— 保证键盘焦点永远只在活动
+ * 窗口内(或窗口之外);被模态锁住的窗口不给激活,焦点元素一并收回。
+ * 挂载期(窗口尚未登记进 wins)的 autofocus 放行,spawnWindow 随后会 focus。 */
+document.addEventListener('focusin', (e) => {
+  const winEl = e.target?.closest?.('.win');
+  if (!winEl || winEl.classList.contains('focused')) return;
+  const w = wins.get(winEl.dataset.id);
+  if (!w) return;
+  if (canFocus(w)) focus(w.id);
+  else e.target.blur();
+});
+
+/** 焦点接棒候选:可见且有资格激活的窗口里最近激活的一个
+ *  (关活动窗口 / 「显示桌面」还原后由它接棒;关对话框时 owner 因 actSeq 最高自然回焦) */
+function nextFocusable() {
+  let best = null;
+  for (const w of wins.values()) {
+    if (w.state === 'min' || !canFocus(w)) continue;
+    if (!best || w.actSeq > best.actSeq) best = w;
+  }
+  return best;
 }
 
 /* ---------------- 最小化 / 还原 ---------------- */
@@ -566,6 +648,11 @@ export function minimize(id) {
   w.prevState = w.state;
   w.state = 'min';
   w.el.classList.add('minimizing');
+  // 活动窗口被收起 → 失焦(不转移:逐个收起与「显示桌面」都自然进入无活动状态)
+  if (w.el.classList.contains('focused')) {
+    w.el.classList.remove('focused');
+    notifyBlur(w);
+  }
   setTimeout(() => {
     if (w.state === 'min') { w.el.style.display = 'none'; w.el.classList.remove('minimizing'); }
   }, 190);
@@ -770,6 +857,8 @@ export function toggleShowDesktop() {
     if (anyVisible) minimize(w.id);
     else restoreWin(w.id);
   }
+  // 全部还原后回到此前的活动窗口(minimize 时焦点已清空,还原不另猜)
+  if (!anyVisible) { const n = nextFocusable(); if (n) focus(n.id); }
 }
 
 /** 浏览器窗口尺寸变化后重新约束所有窗口:

@@ -187,30 +187,30 @@ register({
 
     /* ---------- 渲染 ---------- */
     function cardEl(card, onClick, selected) {
-      const cls = 'card' + (card.up ? '' : ' down') + (selected ? ' sel' : '');
+      const cls = 'sol-card' + (card.up ? '' : ' down') + (selected ? ' sel' : '');
       return el('button', { class: cls, onClick },
-        card.up ? el('span', { class: 'card-face' + (isRed(card.suit) ? ' red' : '') },
+        card.up ? el('span', { class: 'sol-card-face' + (isRed(card.suit) ? ' red' : '') },
           el('b', {}, RANKS[card.rank]),
-          el('i', {}, card.suit)) : el('span', { class: 'card-back' }, '✦'));
+          el('i', {}, card.suit)) : el('span', { class: 'sol-card-back' }, '✦'));
     }
 
     function render() {
       top.innerHTML = '';
       // 牌堆
       top.append(el('button', {
-        class: 'card slot' + (stock.length ? ' has' : ''),
+        class: 'sol-card slot' + (stock.length ? ' has' : ''),
         onClick: () => onCardClick('stock'),
         title: '翻牌',
-      }, stock.length ? el('span', { class: 'card-back' }, '✦') : el('span', { class: 'slot-mark' }, '↻')));
+      }, stock.length ? el('span', { class: 'sol-card-back' }, '✦') : el('span', { class: 'slot-mark' }, '↻')));
       // 弃牌堆
-      top.append(el('button', { class: 'card slot' + (waste.length ? ' has' : ''), onClick: () => onCardClick('waste', 0, waste.length - 1) },
+      top.append(el('button', { class: 'sol-card slot' + (waste.length ? ' has' : ''), onClick: () => onCardClick('waste', 0, waste.length - 1) },
         waste.length ? cardFace(waste.at(-1)) : el('span', { class: 'slot-mark' }, ' ')));
       top.append(el('div', { style: { flex: 1 } }));
       // 4 个 foundation
       for (let i = 0; i < 4; i++) {
         const f = foundations[i];
         top.append(el('button', {
-          class: 'card slot' + (f.length ? ' has' : ''),
+          class: 'sol-card slot' + (f.length ? ' has' : ''),
           onClick: () => onCardClick('foundation', i),
         }, f.length ? cardFace(f.at(-1)) : el('span', { class: 'slot-mark' }, SUITS[i])));
       }
@@ -220,16 +220,16 @@ register({
       tableau.forEach((col, ci) => {
         const colEl = el('div', { class: 'sol-col' });
         if (!col.length) {
-          colEl.append(el('button', { class: 'card slot', onClick: () => onCardClick('tableau', ci) }, el('span', { class: 'slot-mark' }, 'K')));
+          colEl.append(el('button', { class: 'sol-card slot', onClick: () => onCardClick('tableau', ci) }, el('span', { class: 'slot-mark' }, 'K')));
         } else {
           col.forEach((card, ri) => {
             const isLast = ri === col.length - 1;
             const inSeq = sel?.zone === 'tableau' && sel.index === ci && ri >= sel.cardIndex;
             colEl.append(el('button', {
-              class: 'card tab' + (card.up ? '' : ' down') + (inSeq ? ' sel' : ''),
+              class: 'sol-card tab' + (card.up ? '' : ' down') + (inSeq ? ' sel' : ''),
               style: { top: `${ri * 24}px` },
               onClick: () => onCardClick('tableau', ci, ri),
-            }, card.up ? cardFace(card) : el('span', { class: 'card-back' }, '✦')));
+            }, card.up ? cardFace(card) : el('span', { class: 'sol-card-back' }, '✦')));
           });
         }
         columns.append(colEl);
@@ -253,7 +253,7 @@ register({
     let stopWinWatch = false;
 
     function cardFace(card) {
-      return el('span', { class: 'card-face' + (isRed(card.suit) ? ' red' : '') },
+      return el('span', { class: 'sol-card-face' + (isRed(card.suit) ? ' red' : '') },
         el('b', {}, RANKS[card.rank]),
         el('i', {}, card.suit));
     }

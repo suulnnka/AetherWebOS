@@ -5,3 +5,4 @@ dist/
 .diag*.mjs
 .workbuddy/
 .prof/
+.zcode/

@@ -345,11 +345,10 @@ group('T27', '便签(Todo)应用', async () => {
     await new Promise(r => setTimeout(r, 150));
     return { edited: [...document.querySelectorAll('.todo-t')].some(x => x.textContent.includes('已编辑')) };
   })()`);
-  await sleep(600);
-  const stored3 = await ev(`(async () => {
+  const stored3 = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text.includes('已编辑'));
-  })()`);
+    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text.includes('已编辑')) || null;
+  })()`, 4000);
   t('T27.3 双击编辑任务文本(保存+持久化)', td3.edited && stored3 === true, JSON.stringify(td3));
 
   // 双击空白处新建:空内容失焦不创建;有内容失焦创建
@@ -413,11 +412,12 @@ group('T27', '便签(Todo)应用', async () => {
   })()`);
   await sleep(600);
   const orderAfter = await ev(`[...document.querySelectorAll('.todo-t')].map(x => x.textContent)`);
-  const stored4 = await ev(`(async () => {
-    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).map(x => x.text);
-  })()`);
   const di = orderBefore.indexOf('写周报');   // 目标行索引(第 1 条拖到它前面)
+  const stored4 = await waitFor(`(async () => {
+    const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
+    const texts = ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).map(x => x.text);
+    return texts[IDX] === WANT ? texts : null;
+  })()`.replace('IDX', String(di)).replace('WANT', JSON.stringify(orderBefore[0])), 4000);
   t('T27.4 拖拽排序(DOM+持久化)',
     di > 0 && orderAfter[di] === orderBefore[0] && orderAfter[0] === orderBefore[1] && stored4[di] === orderBefore[0],
     JSON.stringify({ before: orderBefore, after: orderAfter }));
@@ -429,11 +429,12 @@ group('T27', '便签(Todo)应用', async () => {
     await new Promise(r => setTimeout(r, 150));
     return { gone: ![...document.querySelectorAll('.todo-t')].some(x => x.textContent === '写周报') };
   })()`);
-  await sleep(600);
-  const stored5 = await ev(`(async () => {
+  const stored5 = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return ((s?.boards || []).find(b => b.type === 'todo')?.tasks || []).some(t => t.text === '写周报');
-  })()`);
+    const dom = [...document.querySelectorAll('.todo-t')].map(x => x.textContent).join('|');
+    const st = (((s?.boards || []).find(b => b.type === 'todo')?.tasks) || []).map(t => t.text).join('|');
+    return st === dom && !st.includes('写周报') ? false : null;   // 存储追平 DOM 且写周报已消失 → false(不存在)
+  })()`, 4000);
   t('T27.5 删除任务(列表+持久化)', td5.gone && stored5 === false, JSON.stringify(td5));
 
   // 创建新便签:☰ 菜单 → 新窗口(无输入框/勾选框,点进去就写)→ 持久化 → 菜单删除
@@ -457,11 +458,10 @@ group('T27', '便签(Todo)应用', async () => {
     ta.value = '便签内容测试';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
-  await sleep(700);
-  const noteStore = await ev(`(async () => {
+  const noteStore = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return ((s?.boards || []).some(b => b.type === 'note' && b.text === '便签内容测试'));
-  })()`);
+    return ((s?.boards || []).some(b => b.type === 'note' && b.text === '便签内容测试')) || null;
+  })()`, 4000);
   // ☰菜单「打开已有」列出其他板(刚建的便签应在列);点击已开的板 = 聚焦不重复开
   const listed = await ev(`(() => {
     document.querySelector('.win[data-app=todo] .todo-menu-btn').click();
@@ -490,10 +490,10 @@ group('T27', '便签(Todo)应用', async () => {
     winGone: ![...document.querySelectorAll('.win[data-app=todo]')].some(w => w.querySelector('.todo-note-text')),
     mainAlive: !!document.querySelector('.win[data-app=todo] .todo-input'),
   }))()`);
-  const noteStoreGone = await ev(`(async () => {
+  const noteStoreGone = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
-    return (s?.boards || []).filter(b => b.type === 'note').length;
-  })()`);
+    return (s?.boards || []).filter(b => b.type === 'note').length === 0 ? 0 : null;
+  })()`, 4000);
   t('T27.5b 创建/删除便签窗口(速记+持久化+菜单列板/已开聚焦)',
     note0.count === 2 && !note0.hasInput && !note0.hasCheck && note0.ta === 'TEXTAREA'
       && noteStore === true && listed.length >= 1 && listed.some(n => n.includes('便签内容测试'))
@@ -745,17 +745,19 @@ group('T27', '便签(Todo)应用', async () => {
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   await sleep(700);
-  const isolation = await ev(`(async () => {
+  const isolation = await waitFor(`(async () => {
     const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
     const nw = mains[mains.length - 1];
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
     const boards = s?.boards || [];
+    const onlyInOne = boards.filter(b => (b.tasks || []).some(t => t.text === '隔离板专属任务')).length === 1;
+    if (!onlyInOne) return null;
     return {
       inNew: [...nw.querySelectorAll('.todo-t')].some(x => x.textContent === '隔离板专属任务'),
       othersClean: mains.slice(0, -1).every(m => ![...m.querySelectorAll('.todo-t')].some(x => x.textContent === '隔离板专属任务')),
-      onlyInOne: boards.filter(b => (b.tasks || []).some(t => t.text === '隔离板专属任务')).length === 1,
+      onlyInOne,
     };
-  })()`);
+  })()`, 5000);
   // 删除新清单:只删它自己,原数据原封不动
   await ev(`(() => {
     const mains = [...document.querySelectorAll('.win[data-app=todo]')].filter(w => w.querySelector('.todo-input'));
@@ -763,15 +765,17 @@ group('T27', '便签(Todo)应用', async () => {
     [...document.querySelectorAll('.todo-menu .tm-item')].find(b => b.textContent.includes('删除待办')).click();
   })()`);
   await sleep(700);
-  const cleared = await ev(`(async () => {
+  const cleared = await waitFor(`(async () => {
     const s = await WebOS.appdata.loadState('todo', WebOS.accounts.current());
     const todos = (s?.boards || []).filter(b => b.type === 'todo');
+    const goneTask = todos.every(b => !(b.tasks || []).some(t => t.text === '隔离板专属任务'));
+    if (!goneTask) return null;
     return {
       count: document.querySelectorAll('.win[data-app=todo]').length,   // 少一个窗口
       oldKept: todos.some(b => (b.tasks || []).some(t => t.text === '锁定后任务A')),
-      goneTask: todos.every(b => !(b.tasks || []).some(t => t.text === '隔离板专属任务')),
+      goneTask,
     };
-  })()`);
+  })()`, 5000);
   t('T27.10b 桌面打开=现有全部/再点聚焦不新建 + 板间隔离 + 删除只删自己',
     before === 0 && opened.count === opened.boardsN && opened.allBoards && opened.showsOld && opened.refocusSame
       && wNew.count === opened.count + 2 && wNew.mains >= 2
@@ -807,6 +811,7 @@ group('T27', '便签(Todo)应用', async () => {
   t('T27.11b 全关后桌面打开全部便签', regrp.count === regrp.boardsN && regrp.count >= 1 && regrp.restored, JSON.stringify(regrp));
   await ev(`[...document.querySelectorAll('.win[data-app=todo]')].forEach(w => WebOS.wm.close(w.dataset.id))`);
   await sleep(300);
+
 
   const errs27 = await ev(`window.__errs.length`);
   t('T27.12 全程无错误', errs27 === 0, `errs=${errs27}`);
@@ -1177,23 +1182,26 @@ group('T38', '账号系统', async () => {
   t('T38 注册账号(重复注册被拒)', reg.r1?.ok === true && reg.dupRejected === true, JSON.stringify(reg));
 
   // 打开 todo(未登录状态:alice 已登录) → 添加任务 → 数据落在 alice 命名空间
+  // (落库走 1.5s 防抖,存储断言用 waitFor 轮询而非固定 sleep)
   await ev(`WebOS.wm.open('todo')`);
   await sleep(700);
-  const iso = await ev(`(async () => {
+  const gate = await ev(`(() => {
     const inp = document.querySelector('.win[data-app=todo] .todo-input');
     if (!inp) return { noInput: true, errs: window.__errs.slice(0, 2) };
     inp.value = 'alice 的任务';
     inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await new Promise(r => setTimeout(r, 600));
-    const { loadState } = WebOS.appdata;
-    const alice = await loadState('todo', 'alice');
-    const bob = await loadState('todo', 'bob').catch(() => null);
-    const at = (s) => ((s?.boards || [])).filter(b => b.type === 'todo').flatMap(b => b.tasks || []);
-    return {
-      inStore: at(alice).some(t => t.text === 'alice 的任务'),
-      bobTask: at(bob).some(t => t.text === 'alice 的任务'),
-    };
+    return {};
   })()`);
+  const iso = gate.noInput ? gate : {
+    inStore: await waitFor(`(async () => {
+      const s = await WebOS.appdata.loadState('todo', 'alice');
+      return ((s?.boards || [])).filter(b => b.type === 'todo').flatMap(b => b.tasks || []).some(t => t.text === 'alice 的任务') || null;
+    })()`, 5000),
+    bobTask: await ev(`(async () => {
+      const bob = await WebOS.appdata.loadState('todo', 'bob').catch(() => null);
+      return ((bob?.boards || [])).filter(b => b.type === 'todo').flatMap(b => b.tasks || []).some(t => t.text === 'alice 的任务');
+    })()`),
+  };
   t('T38.1 每用户数据隔离(alice 命名空间)', iso.inStore === true && iso.bobTask === false, JSON.stringify(iso));
 
   // 库文件冻结:x=管理位的语义下,冻结 = 无 x —— 开库归一后 todo.awdb 与
@@ -1267,11 +1275,8 @@ group('T38', '账号系统', async () => {
     panel.querySelectorAll('.input')[1].value = 'alice1234';
     [...panel.querySelectorAll('.btn')].find(b => b.textContent === '登录').click();
   })()`);
-  await sleep(900);
-  const restored = await ev(`(() => ({
-    tasks: [...document.querySelectorAll('.todo-t')].some(t => t.textContent === 'alice 的任务'),
-  }))()`);
-  t('T38.3 重新登录数据恢复', restored.tasks === true);
+  const restored = await waitFor(`[...document.querySelectorAll('.todo-t')].some(t => t.textContent === 'alice 的任务') || null`, 6000);
+  t('T38.3 重新登录数据恢复', restored === true);
 
   // 错误密码登录被拒
   await ev(`(async () => {

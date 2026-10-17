@@ -129,6 +129,22 @@ export async function openAppData(app, user = accounts.current()) {
   return db;
 }
 
+/** 重置(删除)某应用的库文件:库已损坏到打不开(目录链坏/密文不可解,
+ *  数据实际不可达)时的自愈手段 —— 弃缓存的文件后端与打开句柄,
+ *  删文件(root:库文件冻结无管理位,属主删不动),下次 openAppData 重建新库。
+ *  @returns {Promise<boolean>} 是否删除了文件(false = 本就没有或删不掉) */
+export async function resetAppData(app, user = accounts.current()) {
+  if (!user) return false;
+  await fsReady();
+  const p = appDataPath(app, user);
+  backends.delete(p);   // 弃缓存:旧后端/句柄绑着损坏文件,复用会一直坏
+  try {
+    return !!fs.rm(p, { as: 'root' });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 遗留模式归一:
  *  · 库文件 —— 收归 **rw----**:属主 rw(应用以用户身份读写照常),

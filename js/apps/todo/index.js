@@ -25,7 +25,7 @@ import './todo.css';
 import { accounts } from '../../core/accounts.js';
 import { open, reopen, taskList, get as getWin, focus as focusWin } from '../../core/wm.js';
 import { requireLogin } from '../../core/loginpanel.js';
-import { loadState, saveState, migrateFromLocalStorage } from '../../core/appdata.js';
+import { loadState, saveState, migrateFromLocalStorage, resetAppData } from '../../core/appdata.js';
 import fs from '../../core/fs.js';
 
 const KEY = 'webos.todo.v1';
@@ -41,6 +41,18 @@ const PALETTE = [
 
 let state = null;        // { seq, boards: Board[] } —— 文档形态,所有窗口共享的「盘面缓存」
 let hydrated = false;    // appdata 水合完成(窗口据此判断「数据里真没有我这块板」)
+let healed = false;      // 水合时库损坏已重置:播种内容换成告知,而非演示数据
+
+/** 种子转正;若经历过「库损坏重置」,播种改为一条告知(用户应知道
+ *  旧数据为何消失,而不是看到一条来路不明的演示任务) */
+function finalizeSeed(b) {
+  delete b.pending;
+  if (healed) {
+    b.tasks = [{ id: 't1', text: '数据库损坏,已重置便签数据', done: false }];
+    b.seq = 2;
+    healed = false;
+  }
+}
 let writeQ = Promise.resolve();   // 落盘串行化:读-合并-写 依次进行,防交错丢写
 
 const boardOf = (id) => state?.boards.find(b => b.id === id) || null;
@@ -91,7 +103,9 @@ function normalize(raw) {
   return null;
 }
 
-/** 异步水合:appdata / 旧 localStorage 迁移(migrate 对已存数据原样返回,normalize 兜底降级) */
+/** 异步水合:appdata / 旧 localStorage 迁移(migrate 对已存数据原样返回,normalize 兜底降级)。
+ *  库不可读(目录链坏/密文解不开,数据实际已不可达)时自愈:重置损坏
+ *  文件后按空库处理 —— 否则表现就是「保存不了数据、重载后窗口打不开」 */
 async function loadAsync() {
   const user = accounts.current();
   if (!user) return null;
@@ -99,8 +113,10 @@ async function loadAsync() {
     const data = normalize(await migrateFromLocalStorage('todo', accounts.userKey(KEY), normalize, user));
     return data ?? normalize(await loadState('todo', user));
   } catch (e) {
-    console.warn('[todo] 加载失败', e);
-    return null;
+    console.warn('[todo] 数据库不可读,重置损坏文件自愈:', e?.message || e);
+    healed = true;
+    try { await resetAppData('todo', user); } catch { /* 忽略 */ }
+    try { return normalize(await loadState('todo', user)); } catch { return null; }
   }
 }
 
@@ -379,7 +395,7 @@ function hydrate(ctx, ref, boardId, render) {
         let b = state.boards.find(x => x.type === 'todo');
         if (!b) {
           b = ref.board;
-          delete b.pending;   // 种子转正
+          finalizeSeed(b);
           state.boards.push(b);
           ctx.params.boardId = b.id;
           flushBoard(b);
@@ -391,7 +407,7 @@ function hydrate(ctx, ref, boardId, render) {
         return;
       } else {
         const b = ref.board;
-        delete b.pending;   // 首次使用:种子转正
+        finalizeSeed(b);
         state.boards.push(b);
         ctx.params.boardId = b.id;
         flushBoard(b);
@@ -431,7 +447,7 @@ function mountMain(ctx, ref, boardId, startPinned) {
   let pinned = startPinned;     // 置顶创建者开的新窗继承置顶
   // 防抖落盘本窗「当前板」(板对象可能被同步采纳换过引用,须现取)
   let flushT = 0;
-  const persist = () => { clearTimeout(flushT); flushT = setTimeout(() => flushBoard(ref.board), 200); };
+  const persist = () => { clearTimeout(flushT); flushT = setTimeout(() => flushBoard(ref.board), 1500); };
 
   // 右键:任务行 → 完成 / 删除(文本选中时系统自动附加「复制」)
   onContextMenu(({ target }) => {
@@ -759,7 +775,7 @@ function mountNote(ctx, ref, boardId, startPinned) {
   let pinned = startPinned;     // 置顶创建者开的新窗继承置顶
   // 防抖落盘本窗「当前板」(同 mountMain:现取引用)
   let flushT = 0;
-  const persist = () => { clearTimeout(flushT); flushT = setTimeout(() => flushBoard(ref.board), 200); };
+  const persist = () => { clearTimeout(flushT); flushT = setTimeout(() => flushBoard(ref.board), 1500); };
   const lockBtn = bar.querySelector('.todo-lock');
   bar.querySelector('.todo-min').addEventListener('click', () => ctx.minimize());
   lockBtn.addEventListener('click', () => {

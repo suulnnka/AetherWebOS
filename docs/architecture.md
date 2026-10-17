@@ -199,7 +199,7 @@ WebOS.__errs                      // index.html 捕获的运行期错误
 
 | 脚本 | 用途 |
 |---|---|
-| `e2e.mjs` / `e2e-harness.mjs` / `e2e-groups/` | 端到端测试:CDP 驱动本机 Chrome,63 组用例,默认 6 并发,产出 PASS/FAIL 清单与 `.shots/` 截图。入口 `e2e.mjs` 只管 CLI、用例筛选与并行调度;`e2e-harness.mjs` 是公共设施(`t()` 断言、`group()` 注册表、浏览器连接与 `ev()`、`fresh()` 等共享助手);用例组按域分 7 个文件(shell / themes / files / net / apps / editors / games),新增用例放对应域文件即可;`E2E_PORT` 可指向另一端口的 Vite(如 worktree 检出的 HEAD 快照,避开本目录编辑触发的 HMR 重载) |
+| `e2e.mjs` / `e2e-harness.mjs` / `e2e-groups/` | 端到端测试:CDP 驱动本机 Chrome,65 组用例,默认 6 并发,产出 PASS/FAIL 清单与 `.shots/` 截图。入口 `e2e.mjs` 只管 CLI、用例筛选与并行调度;`e2e-harness.mjs` 是公共设施(`t()` 断言、`group()` 注册表、浏览器连接与 `ev()`、`fresh()` 等共享助手);用例组按域分 7 个文件(shell / themes / files / net / apps / editors / games),新增用例放对应域文件即可;`E2E_PORT` 可指向另一端口的 Vite(如 worktree 检出的 HEAD 快照,避开本目录编辑触发的 HMR 重载) |
 | `apps-manifest.mjs` | 扫描 dist 生成商店包清单 `apps.json`(`npm run build` 的一环) |
 | `aether-sites-smoke.mjs` | 内网 AetherJS 站点冒烟(Node 直跑,无需浏览器) |
 | `md-smoke.mjs` | Markdown 内核(`lib/md.js`)解析渲染冒烟,纯函数 |

@@ -35,12 +35,22 @@ section.win
 ### 窗口生命周期事件
 
 窗口生命周期事件通过总线广播(载荷 `{ id, appId, title? }`):
-`sys:win-open / win-close / win-focus / win-min / win-restore / win-max /
+`sys:win-open / win-close / win-focus / win-blur / win-min / win-restore / win-max /
 win-unmax / win-title`,任务栏即基于这些事件驱动。
 
 ### 多窗口模式
 
-系统始终保证**同一时刻最多一个活动窗口**(焦点独占,`wm.focusedCount()`)。
+系统始终保证**同一时刻最多一个活动窗口**(焦点独占,`wm.focusedCount()`),
+**零个也是合法状态**。焦点语义:
+
+- 点击窗口任意位置即激活,该次点击照常穿透到内容;
+- 点击桌面(壁纸/空白/图标)→ 活动窗口失焦(`wm.blur()`),窗口内的键盘焦点一并收回;
+- 最小化活动窗口(含「显示桌面」)→ 失焦;任务栏按钮还原 → 还原并激活;
+- 关闭活动窗口 → 焦点接棒给最近激活的剩余可见窗口(关对话框时所属应用自然回焦),
+  无人可接则进入无活动窗口状态;
+- 键盘焦点与激活绑定:原生焦点落进未激活窗口时该窗口随之激活;失焦窗口内的
+  输入框被收回焦点,打字不会漏进后台窗口;
+- 窗口失焦时应用收到 `onBlur` 钩子与 `sys:win-blur` 事件。
 
 | 能力 | 入口 | 说明 |
 |---|---|---|
@@ -53,7 +63,8 @@ win-unmax / win-title`,任务栏即基于这些事件驱动。
 | 拖拽贴边分屏 | 拖窗口到屏幕左/右边缘 | 自动吸附为半屏;拖到顶部最大化 |
 | 切换活动窗口 | `Alt+Q` / 布局菜单 | 按最近使用顺序循环 |
 
-API:`wm.tile()` / `wm.cascade()` / `wm.focusCycle()` / `wm.focusedCount()`。
+API:`wm.tile()` / `wm.cascade()` / `wm.focusCycle()` / `wm.focusedCount()` /
+`wm.blur()`(取消激活)/ `wm.activeId()`(当前活动窗口 id,无则 null)。
 
 ## 二、IPC 消息总线详解
 

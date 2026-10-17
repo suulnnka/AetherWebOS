@@ -41,7 +41,7 @@ export function renderPinned() {
         if (open.length) {
           const active = open.find(w => w.state !== 'min');
           if (active) { if (active.id === focusedId) wm.minimize(active.id); else wm.focus(active.id); }
-          else wm.restoreWin(open[0].id);
+          else wm.focus(open[0].id);   // 全在最小化:focus 会先还原再激活
         } else wm.open(id);
       },
       onContextmenu: (e) => {
@@ -66,11 +66,10 @@ export function renderPinned() {
 let focusedId = null;
 const tasksBox = $('#tb-tasks');
 
-/* 任务按钮点击语义(按钮本体与溢出菜单共用):已聚焦则最小化,否则还原/聚焦 */
+/* 任务按钮点击语义(按钮本体与溢出菜单共用):已聚焦则最小化,否则还原并聚焦 */
 function activateTask(w) {
   if (w.id === focusedId && w.state !== 'min') wm.minimize(w.id);
-  else if (w.state === 'min') wm.restoreWin(w.id);
-  else wm.focus(w.id);
+  else wm.focus(w.id);   // focus 对最小化窗口先还原再激活
 }
 
 function taskButton(w) {
@@ -82,7 +81,7 @@ function taskButton(w) {
       e.preventDefault();
       const pinned = pinnedApps().includes(w.appId);
       showMenu(e.clientX, e.clientY, [
-        { label: w.state === 'min' ? t('还原') : t('最小化'), icon: 'minus', fn: () => (w.state === 'min' ? wm.restoreWin(w.id) : wm.minimize(w.id)) },
+        { label: w.state === 'min' ? t('还原') : t('最小化'), icon: 'minus', fn: () => (w.state === 'min' ? wm.focus(w.id) : wm.minimize(w.id)) },
         { label: t('发送到桌面'), icon: 'monitor', fn: () => sendAppToDesktop(w.appId) },
         { label: pinned ? t('从任务栏取消固定') : t('固定到任务栏'), icon: 'check', fn: () => togglePin(w.appId) },
         { sep: true },
@@ -138,9 +137,10 @@ export function renderTasks() {
 /* 视口/固定区变化 → 任务区可用宽变了,重算藏几个 */
 new ResizeObserver(() => renderTasks()).observe(tasksBox);
 
-for (const ev of ['open', 'close', 'focus', 'min', 'restore', 'max', 'unmax', 'title']) {
+for (const ev of ['open', 'close', 'focus', 'blur', 'min', 'restore', 'max', 'unmax', 'title']) {
   subscribe(`sys:win-${ev}`, (p) => {
     if (ev === 'focus') focusedId = p?.id ?? null;
+    if (ev === 'blur' && p?.id === focusedId) focusedId = null;   // 无活动窗口:清除高亮
     renderTasks();
   });
 }

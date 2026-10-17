@@ -80,6 +80,8 @@ export function openGamePopup() {
       };
 
       const onKey = (e) => {
+        // 只在本窗口激活时响应(与 browser/todo 等应用的键盘守卫一致)
+        if (!root.closest('.win')?.classList.contains('focused')) return;
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { S.keys[e.key] = e.type === 'keydown'; e.preventDefault(); }
       };
       const onMove = (e) => {

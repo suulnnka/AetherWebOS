@@ -212,15 +212,17 @@ group('T22', '多窗口模式:平铺/层叠/贴边/焦点', async () => {
   t('T22.2 Alt+Q 切换活动窗口', beforeFocus !== afterFocus, `${beforeFocus} → ${afterFocus}`);
 
   // 焦点:非活动窗口任意一次点击既激活又穿透到内容(关闭按钮一下就关)
+  // 激活态在 pointerdown 后立即读:click 会同步关窗,关窗即摘 .focused
   const targetApp = 'monitor';
   const oneClick = await ev(`(() => {
     const w = document.querySelector('.win[data-app=monitor]');
     const btn = w.querySelector('.wbtn.close');
     btn.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
+    const activated = w.classList.contains('focused');
     btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     return {
-      activated: w.classList.contains('focused'),
+      activated,
       bodies: [...document.querySelectorAll('.win .win-body')]
         .map(b => +getComputedStyle(b).opacity),
     };
@@ -268,6 +270,136 @@ group('T22', '多窗口模式:平铺/层叠/贴边/焦点', async () => {
 
   const errs22 = await ev(`window.__errs.length`);
   t('T22.8 全程无错误', errs22 === 0, `errs=${errs22}`);
+
+});
+
+group('T65', '窗口焦点语义:桌面失焦/最小化失焦/关窗接棒/键盘焦点随激活', async () => {
+  /* ---- T65 焦点语义:操作落在窗口外 → 失焦;键盘焦点不留在非激活窗口 ---- */
+  await ev(`[...document.querySelectorAll('.win')].forEach(w => WebOS.wm.close(w.dataset.id))`);
+  await sleep(500);
+  await ev(`(async () => { await WebOS.wm.open('files'); return true; })()`);
+  await ev(`(async () => { await WebOS.wm.open('terminal'); return true; })()`);
+  await sleep(900);   // 终端挂载后 80ms 自动 focus 输入框
+
+  // 初始:terminal 后开即活动窗口,原生输入焦点在其输入框内
+  const st0 = await ev(`(() => {
+    const f = document.querySelector('.win.focused');
+    const ae = document.activeElement;
+    return {
+      focusedApp: f?.dataset.app,
+      activeId: WebOS.wm.activeId(),
+      caretInFocused: !!(f && ae && f.contains(ae) && ae !== document.body),
+    };
+  })()`);
+  t('T65.0 活动窗口持有原生输入焦点', st0.focusedApp === 'terminal' && !!st0.activeId && st0.caretInFocused, JSON.stringify(st0));
+
+  // 点击桌面壁纸 → 无活动窗口:类清零 / activeId null / 任务栏无高亮 / 键盘焦点收回
+  const afterDesk = await ev(`(() => {
+    document.getElementById('wallpaper').dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
+    const ae = document.activeElement;
+    return {
+      focused: document.querySelectorAll('.win.focused').length,
+      activeId: WebOS.wm.activeId(),
+      caretOutsideWins: !(ae && ae.closest('.win')),
+      taskActive: document.querySelectorAll('#tb-tasks .tbtn.active').length,
+    };
+  })()`);
+  t('T65.1 点击桌面 → 无活动窗口(任务栏高亮清除/键盘焦点收回)',
+    afterDesk.focused === 0 && afterDesk.activeId === null && afterDesk.caretOutsideWins && afterDesk.taskActive === 0,
+    JSON.stringify(afterDesk));
+
+  // 点击桌面图标同样失焦
+  const iconClick = await ev(`(() => {
+    const icon = document.querySelector('.dicon');
+    if (!icon) return { skipped: true, focused: 0 };
+    icon.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
+    return { skipped: false, focused: document.querySelectorAll('.win.focused').length };
+  })()`);
+  t('T65.1b 点击桌面图标 → 失焦', iconClick.focused === 0, JSON.stringify(iconClick));
+
+  // 点击窗口(捕获相 pointerdown)恢复激活
+  const back = await ev(`(() => {
+    const w = document.querySelector('.win[data-app=files]');
+    w.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }));
+    return { app: document.querySelector('.win.focused')?.dataset.app, mine: WebOS.wm.activeId() === w.dataset.id };
+  })()`);
+  t('T65.2 点击窗口恢复激活', back.app === 'files' && back.mine, JSON.stringify(back));
+
+  // 原生焦点 ↔ 激活耦合:程序式聚焦非激活窗口的输入框,该窗口随之激活
+  // (e2e 的 Chrome 对 .focus() 不派发 focusin,须合成 —— 同 T27.3b 对 blur 的处理)
+  const coup = await ev(`(() => {
+    const inp = document.querySelector('.win[data-app=terminal] input');
+    inp.focus();
+    inp.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    return { focusedApp: document.querySelector('.win.focused')?.dataset.app, caret: document.activeElement === inp };
+  })()`);
+  t('T65.3 程序式聚焦非激活窗口输入框 → 窗口随之激活', coup.focusedApp === 'terminal' && coup.caret, JSON.stringify(coup));
+
+  // Alt+Q 切走后,原窗口的输入框不再是 activeElement(键盘不漏给失焦窗口)
+  await ev(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', altKey: true, bubbles: true }))`);
+  await sleep(250);
+  const sw = await ev(`(() => {
+    const term = document.querySelector('.win[data-app=terminal]');
+    const ae = document.activeElement;
+    return { now: document.querySelector('.win.focused')?.dataset.app, caretLeft: !(ae && term.contains(ae) && ae !== document.body) };
+  })()`);
+  t('T65.4 Alt+Q 切走后键盘焦点不留在原窗口', sw.now === 'files' && sw.caretLeft, JSON.stringify(sw));
+
+  // 最小化活动窗口 → 失焦(不转移)
+  const min = await ev(`(() => {
+    const f = document.querySelector('.win.focused');
+    WebOS.wm.minimize(f.dataset.id);
+    return { focused: document.querySelectorAll('.win.focused').length, activeId: WebOS.wm.activeId() };
+  })()`);
+  t('T65.5 最小化活动窗口 → 失焦', min.focused === 0 && min.activeId === null, JSON.stringify(min));
+
+  // 任务栏按钮:还原并激活(focus 对最小化窗口先还原再激活)
+  await sleep(300);
+  const rst = await ev(`(() => {
+    const list = WebOS.wm.taskList();
+    const i = list.findIndex(w => w.appId === 'files');
+    document.querySelectorAll('#tb-tasks .tbtn')[i].click();
+    const w = document.querySelector('.win[data-app=files]');
+    return { focusedApp: document.querySelector('.win.focused')?.dataset.app, shown: w.style.display !== 'none', mine: WebOS.wm.activeId() === w.dataset.id };
+  })()`);
+  t('T65.6 任务栏按钮还原 → 还原并激活', rst.focusedApp === 'files' && rst.shown && rst.mine, JSON.stringify(rst));
+
+  // 关闭活动窗口 → 焦点接棒给最近激活的剩余窗口
+  const succ = await ev(`(() => {
+    const files = document.querySelector('.win[data-app=files]');
+    WebOS.wm.close(files.dataset.id);
+    return { focusedApp: document.querySelector('.win.focused')?.dataset.app };
+  })()`);
+  t('T65.7 关闭活动窗口 → 焦点接棒给剩余窗口', succ.focusedApp === 'terminal', JSON.stringify(succ));
+
+  // 关最后一个窗口 → 无活动窗口 + 广播 sys:win-blur
+  const lastBlur = await ev(`(async () => {
+    let blurEvt = null;
+    const off = WebOS.bus.subscribe('sys:win-blur', (p) => { blurEvt = p; });
+    const term = document.querySelector('.win[data-app=terminal]');
+    WebOS.wm.close(term.dataset.id);
+    await new Promise(r => setTimeout(r, 150));
+    off();
+    return { focused: document.querySelectorAll('.win.focused').length, activeId: WebOS.wm.activeId(), blurApp: blurEvt?.appId };
+  })()`);
+  t('T65.8 关最后一窗 → 无活动窗口并广播 sys:win-blur',
+    lastBlur.focused === 0 && lastBlur.activeId === null && lastBlur.blurApp === 'terminal', JSON.stringify(lastBlur));
+
+  // 显示桌面 → 无活动;再切 → 回到此前活动窗口
+  await ev(`(async () => { await WebOS.wm.open('files'); await WebOS.wm.open('terminal'); return true; })()`);
+  await sleep(900);
+  const sd = await ev(`(async () => {
+    WebOS.wm.toggleShowDesktop();
+    await new Promise(r => setTimeout(r, 350));
+    const afterHide = document.querySelectorAll('.win.focused').length;
+    WebOS.wm.toggleShowDesktop();
+    await new Promise(r => setTimeout(r, 350));
+    return { afterHide, afterShow: document.querySelector('.win.focused')?.dataset.app };
+  })()`);
+  t('T65.9 显示桌面 → 无活动;还原 → 回到此前活动窗口', sd.afterHide === 0 && sd.afterShow === 'terminal', JSON.stringify(sd));
+
+  const errs65 = await ev(`window.__errs.length`);
+  t('T65.10 全程无错误', errs65 === 0, `errs=${errs65}`);
 
 });
 
